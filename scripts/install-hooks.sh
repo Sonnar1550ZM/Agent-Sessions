@@ -1,0 +1,177 @@
+#!/bin/bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+ROOT="$ROOT" /usr/bin/python3 - <<'PY'
+import json
+import os
+import pathlib
+import shutil
+from datetime import datetime
+
+root = pathlib.Path(os.environ["ROOT"])
+home = pathlib.Path.home()
+stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+codex_hooks_path = home / ".codex" / "hooks.json"
+codex_config_path = home / ".codex" / "config.toml"
+claude_settings_path = home / ".claude" / "settings.json"
+
+codex_script = root / "scripts" / "agentsbar-codex-hook.sh"
+claude_script = root / "scripts" / "agentsbar-claude-hook.sh"
+
+
+def backup(path: pathlib.Path) -> None:
+    if path.exists():
+        shutil.copy2(path, path.with_name(path.name + f".bak.{stamp}"))
+
+
+def load_json(path: pathlib.Path) -> dict:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def save_json(path: pathlib.Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
+def replace_managed_hook(entry: dict, new_command: str, markers: tuple[str, ...]) -> None:
+    hooks = entry.setdefault("hooks", [])
+    kept = []
+    for hook in hooks:
+        command = hook.get("command", "") if isinstance(hook, dict) else ""
+        if any(marker in command for marker in markers):
+            continue
+        kept.append(hook)
+    kept.append({"type": "command", "command": new_command})
+    entry["hooks"] = kept
+
+
+def ensure_codex_hooks() -> None:
+    backup(codex_hooks_path)
+    data = load_json(codex_hooks_path)
+    hooks = data.setdefault("hooks", {})
+    command = f"'{codex_script}' # agentsbar-codex-hook"
+    markers = (
+        "notchbar-agents-codex-hook",
+        "agentsbar-codex-hook",
+        "NotchBar/AgentStatus/hooks/codex-notify-hook.sh",
+    )
+
+    defaults = {
+        "PostToolUse": {},
+        "PreToolUse": {},
+        "SessionStart": {"matcher": "startup|resume"},
+        "Stop": {},
+        "UserPromptSubmit": {},
+    }
+
+    for event_name, default_entry in defaults.items():
+        entries = hooks.setdefault(event_name, [])
+        if not entries:
+            entries.append(dict(default_entry))
+        for entry in entries:
+            if event_name in ("PostToolUse", "PreToolUse") and entry.get("matcher") == "Bash":
+                entry.pop("matcher", None)
+            for key, value in default_entry.items():
+                entry.setdefault(key, value)
+            replace_managed_hook(entry, command, markers)
+
+    save_json(codex_hooks_path, data)
+
+
+def ensure_claude_hooks() -> None:
+    backup(claude_settings_path)
+    data = load_json(claude_settings_path)
+    hooks = data.setdefault("hooks", {})
+    markers = (
+        "notchbar-agents-claude-hook",
+        "agentsbar-claude-hook",
+        "NotchBar/AgentStatus/hooks/claude-event-hook.sh",
+    )
+    states = {
+        "SessionEnd": "Ended",
+        "Notification": "Waiting",
+        "PostToolUseFailure": "ToolFail",
+        "SessionStart": "Idle",
+        "Stop": "Idle",
+        "PreToolUse": "Working",
+        "UserPromptSubmit": "Working",
+        "PostToolUse": "Auto",
+    }
+
+    for event_name, state in states.items():
+        entries = hooks.setdefault(event_name, [])
+        if not entries:
+            entries.append({})
+        command = f"'{claude_script}' {state} # agentsbar-claude-hook"
+        for entry in entries:
+            replace_managed_hook(entry, command, markers)
+
+    save_json(claude_settings_path, data)
+
+
+def ensure_codex_config() -> None:
+    backup(codex_config_path)
+    codex_config_path.parent.mkdir(parents=True, exist_ok=True)
+    text = codex_config_path.read_text(encoding="utf-8") if codex_config_path.exists() else ""
+    lines = text.splitlines()
+
+    features_index = None
+    for index, line in enumerate(lines):
+        if line.strip() == "[features]":
+            features_index = index
+            break
+
+    if features_index is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(["[features]", "codex_hooks = true  # agentsbar-managed-codex-hooks"])
+    else:
+        next_section = len(lines)
+        for index in range(features_index + 1, len(lines)):
+            stripped = lines[index].strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                next_section = index
+                break
+
+        codex_hooks_index = None
+        for index in range(features_index + 1, next_section):
+            if lines[index].split("#", 1)[0].strip().startswith("codex_hooks"):
+                codex_hooks_index = index
+                break
+
+        if codex_hooks_index is None:
+            lines.insert(features_index + 1, "codex_hooks = true  # agentsbar-managed-codex-hooks")
+        else:
+            lines[codex_hooks_index] = "codex_hooks = true  # agentsbar-managed-codex-hooks"
+
+    codex_config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def ensure_agentsbar_project_trust() -> None:
+    text = codex_config_path.read_text(encoding="utf-8") if codex_config_path.exists() else ""
+    project_header = f'[projects."{root}"]'
+    if project_header in text:
+        return
+    with codex_config_path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+        handle.write(project_header + "\n")
+        handle.write('trust_level = "trusted"\n')
+
+
+ensure_codex_hooks()
+ensure_claude_hooks()
+ensure_codex_config()
+ensure_agentsbar_project_trust()
+
+print(f"Updated {codex_hooks_path}")
+print(f"Updated {codex_config_path}")
+print(f"Updated {claude_settings_path}")
+PY
