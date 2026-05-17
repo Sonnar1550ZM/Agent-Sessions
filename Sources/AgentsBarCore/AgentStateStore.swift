@@ -61,19 +61,16 @@ public final class AgentStateStore: ObservableObject {
     }
 
     public func visibleSessions(for agent: AgentKind, now: Date = Date()) -> [AgentSession] {
-        let agentSessions = sessions
+        let visible = sessions
             .filter { $0.agent == agent }
             .map { sessionForDisplay($0, now: now) }
-        let active = agentSessions
-            .filter(\.state.isActive)
             .sorted(by: sessionSort)
-
-        let history = agentSessions
-            .filter { !$0.state.isActive && now.timeIntervalSince($0.updatedAt) <= historyVisibilityInterval }
-            .sorted(by: sessionSort)
+            .filter { session in
+                session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyVisibilityInterval
+            }
             .prefix(maxHistoryPerAgent)
 
-        return active + history
+        return Array(visible)
     }
 
     public func aggregateState(for agent: AgentKind, now: Date = Date()) -> AgentState {
@@ -138,13 +135,13 @@ public final class AgentStateStore: ObservableObject {
 
         for agent in AgentKind.allCases {
             let agentSessions = sessions.filter { $0.agent == agent }
-            let active = agentSessions.filter(\.state.isActive)
-            let history = agentSessions
-                .filter { !$0.state.isActive && now.timeIntervalSince($0.updatedAt) <= historyVisibilityInterval }
+                .map { sessionForDisplay($0, now: now) }
+                .filter { session in
+                    session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyVisibilityInterval
+                }
                 .sorted(by: sessionSort)
                 .prefix(maxHistoryPerAgent)
-            retained.append(contentsOf: active)
-            retained.append(contentsOf: history)
+            retained.append(contentsOf: agentSessions)
         }
 
         sessions = retained.sorted(by: sessionSort)

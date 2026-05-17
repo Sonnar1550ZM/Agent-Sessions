@@ -6,11 +6,30 @@ public enum ClaudeSessionTitleResolver {
             for: sessionId,
             projectsRoot: FileManager.default
                 .homeDirectoryForCurrentUser
-                .appendingPathComponent(".claude/projects", isDirectory: true)
+                .appendingPathComponent(".claude/projects", isDirectory: true),
+            appSessionsRoot: FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Claude/claude-code-sessions", isDirectory: true)
         )
     }
 
     static func title(for sessionId: String, projectsRoot: URL) -> String? {
+        title(for: sessionId, projectsRoot: projectsRoot, appSessionsRoot: nil)
+    }
+
+    static func title(for sessionId: String, projectsRoot: URL, appSessionsRoot: URL?) -> String? {
+        guard !sessionId.isEmpty else {
+            return nil
+        }
+
+        if let appTitle = appSessionTitle(for: sessionId, sessionsRoot: appSessionsRoot) {
+            return appTitle
+        }
+
+        return transcriptTitle(for: sessionId, projectsRoot: projectsRoot)
+    }
+
+    private static func transcriptTitle(for sessionId: String, projectsRoot: URL) -> String? {
         guard !sessionId.isEmpty,
               let file = transcriptFile(for: sessionId, projectsRoot: projectsRoot),
               let text = transcriptText(from: file) else {
@@ -63,6 +82,42 @@ public enum ClaudeSessionTitleResolver {
         }
 
         return customTitle ?? generatedTitle ?? lastPrompt ?? latestUserPrompt ?? queuedPrompt
+    }
+
+    private static func appSessionTitle(for sessionId: String, sessionsRoot: URL?) -> String? {
+        guard let sessionsRoot,
+              let enumerator = FileManager.default.enumerator(
+                  at: sessionsRoot,
+                  includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                  options: [.skipsHiddenFiles]
+              ) else {
+            return nil
+        }
+
+        var bestMatch: (title: String, score: Double)?
+
+        for case let url as URL in enumerator {
+            guard url.pathExtension == "json",
+                  let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                  values.isRegularFile == true,
+                  let data = try? Data(contentsOf: url),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["cliSessionId"] as? String == sessionId,
+                  let rawTitle = object["title"] as? String,
+                  let title = sanitizedTitle(rawTitle) else {
+                continue
+            }
+
+            let score = timestampScore(from: object)
+                ?? values.contentModificationDate?.timeIntervalSince1970
+                ?? 0
+
+            if bestMatch == nil || score >= bestMatch!.score {
+                bestMatch = (title, score)
+            }
+        }
+
+        return bestMatch?.title
     }
 
     private static func transcriptFile(for sessionId: String, projectsRoot: URL) -> URL? {
@@ -125,5 +180,25 @@ public enum ClaudeSessionTitleResolver {
             return nil
         }
         return String(title.prefix(160))
+    }
+
+    private static func timestampScore(from object: [String: Any]) -> Double? {
+        for key in ["lastActivityAt", "updatedAt", "createdAt"] {
+            if let value = object[key] as? NSNumber {
+                return value.doubleValue
+            }
+
+            if let value = object[key] as? String {
+                if let number = Double(value) {
+                    return number
+                }
+
+                if let date = AgentsBarDates.date(from: value) {
+                    return date.timeIntervalSince1970
+                }
+            }
+        }
+
+        return nil
     }
 }
