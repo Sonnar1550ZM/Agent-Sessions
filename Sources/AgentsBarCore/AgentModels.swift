@@ -194,6 +194,33 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
         return parts.isEmpty ? sessionId : parts.joined(separator: " · ")
     }
 
+    public var subagentSessionTitle: String {
+        let explicitTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !explicitTitle.isEmpty {
+            return explicitTitle
+        }
+
+        let fallbackTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallbackTitle.isEmpty ? sessionId : fallbackTitle
+    }
+
+    public var subagentNameAndRoleLabel: String {
+        let name = subagentNickname?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let role = Self.formattedSubagentRole(subagentRole)
+        var parts: [String] = []
+
+        if !name.isEmpty {
+            parts.append(name)
+        }
+
+        if !role.isEmpty,
+           !parts.contains(where: { Self.normalizedSubagentLabel($0) == Self.normalizedSubagentLabel(role) }) {
+            parts.append(role)
+        }
+
+        return parts.isEmpty ? sessionId : parts.joined(separator: " · ")
+    }
+
     private static func formattedSubagentRole(_ role: String?) -> String {
         let trimmedRole = role?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmedRole.isEmpty else {

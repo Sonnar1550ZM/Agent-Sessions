@@ -513,6 +513,36 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(session.subagentDisplayLabel, "Session Count実装を確認 · Explorer · Rawls")
     }
 
+    func testSubagentSessionTitleUsesExplicitTitle() {
+        let session = AgentSession(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            title: "Session Count実装を確認",
+            parentSessionId: "parent",
+            subagentNickname: "Rawls",
+            subagentRole: "explorer",
+            subagentDepth: 1
+        )
+
+        XCTAssertEqual(session.subagentSessionTitle, "Session Count実装を確認")
+    }
+
+    func testSubagentNameAndRoleLabelShowsNameBeforeRole() {
+        let session = AgentSession(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            title: "Session Count実装を確認",
+            parentSessionId: "parent",
+            subagentNickname: "Rawls",
+            subagentRole: "explorer",
+            subagentDepth: 1
+        )
+
+        XCTAssertEqual(session.subagentNameAndRoleLabel, "Rawls · Explorer")
+    }
+
     func testSubagentDisplayLabelDeduplicatesRoleTitle() {
         let session = AgentSession(
             agent: .claudeCode,

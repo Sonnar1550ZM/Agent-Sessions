@@ -1705,13 +1705,13 @@ private struct SessionMenuRow: View {
                     .frame(width: symbolWidth, alignment: .leading)
                 Text(titleText)
                     .font(.system(size: titleFontSize))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(titleColor)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(detailText)
                 .font(.system(size: detailFontSize))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(detailColor)
                 .lineLimit(1)
         }
         .frame(width: 320, alignment: .leading)
@@ -1765,7 +1765,23 @@ private struct SessionMenuRow: View {
         }
     }
 
+    private var titleColor: Color {
+        session.state == .idle ? .primary.opacity(0.88) : .primary
+    }
+
+    private var detailColor: Color {
+        session.state == .idle ? .primary.opacity(0.56) : .secondary
+    }
+
     private var detailText: String {
+        if session.isSubagent {
+            return [
+                session.state.displayName,
+                session.subagentNameAndRoleLabel,
+                Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: now)
+            ].joined(separator: " · ")
+        }
+
         var parts: [String] = [session.state.displayName]
         if !session.terminal.isEmpty {
             parts.append(session.terminal)
@@ -1778,7 +1794,7 @@ private struct SessionMenuRow: View {
     }
 
     private var titleText: String {
-        session.isSubagent ? session.subagentDisplayLabel : session.displayTitle
+        session.isSubagent ? session.subagentSessionTitle : session.displayTitle
     }
 
     private var helpText: String {
