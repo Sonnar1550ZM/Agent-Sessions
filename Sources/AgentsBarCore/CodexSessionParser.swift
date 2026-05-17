@@ -11,6 +11,8 @@ public struct CodexParsedSession: Equatable, Sendable {
     public var subagentNickname: String?
     public var subagentRole: String?
     public var subagentDepth: Int?
+    public var latestResponseText: String?
+    public var latestResponsePhase: String?
 
     public init(
         sessionId: String,
@@ -22,7 +24,9 @@ public struct CodexParsedSession: Equatable, Sendable {
         parentSessionId: String? = nil,
         subagentNickname: String? = nil,
         subagentRole: String? = nil,
-        subagentDepth: Int? = nil
+        subagentDepth: Int? = nil,
+        latestResponseText: String? = nil,
+        latestResponsePhase: String? = nil
     ) {
         self.sessionId = sessionId
         self.state = state
@@ -34,6 +38,8 @@ public struct CodexParsedSession: Equatable, Sendable {
         self.subagentNickname = subagentNickname
         self.subagentRole = subagentRole
         self.subagentDepth = subagentDepth
+        self.latestResponseText = latestResponseText
+        self.latestResponsePhase = latestResponsePhase
     }
 }
 
@@ -49,6 +55,8 @@ public enum CodexSessionParser {
         var subagentNickname: String?
         var subagentRole: String?
         var subagentDepth: Int?
+        var latestResponseText: String?
+        var latestResponsePhase: String?
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             let lineText = String(line)
@@ -119,6 +127,11 @@ public enum CodexSessionParser {
                 if itemType == "message", let role = payload["role"] as? String, role == "user" {
                     state = .working
                 }
+                if itemType == "message", let role = payload["role"] as? String, role == "assistant",
+                   let responseText = responseText(from: payload) {
+                    latestResponseText = responseText
+                    latestResponsePhase = trimmedString(payload["phase"], limit: 80)
+                }
                 if itemType == "message", payload["phase"] as? String == "final_answer" {
                     state = .idle
                 }
@@ -131,6 +144,11 @@ public enum CodexSessionParser {
                 }
                 if ["exec_command_begin", "mcp_tool_call_begin", "patch_apply_begin", "web_search_begin", "agent_message"].contains(eventType) {
                     state = .working
+                }
+                if eventType == "agent_message",
+                   let responseText = sanitizedResponseText(payload["message"] as? String) {
+                    latestResponseText = responseText
+                    latestResponsePhase = trimmedString(payload["phase"], limit: 80)
                 }
                 if ["task_complete", "turn_complete", "shutdown_complete", "turn_aborted"].contains(eventType) {
                     state = .idle
@@ -151,8 +169,44 @@ public enum CodexSessionParser {
             parentSessionId: parentSessionId,
             subagentNickname: subagentNickname,
             subagentRole: subagentRole,
-            subagentDepth: subagentDepth
+            subagentDepth: subagentDepth,
+            latestResponseText: latestResponseText,
+            latestResponsePhase: latestResponsePhase
         )
+    }
+
+    private static func responseText(from payload: [String: Any]) -> String? {
+        if let content = payload["content"] as? [[String: Any]] {
+            let text = content.compactMap { item -> String? in
+                guard (item["type"] as? String) == "output_text" else {
+                    return nil
+                }
+                return item["text"] as? String
+            }
+            .joined(separator: "\n")
+            return sanitizedResponseText(text)
+        }
+
+        if let text = payload["content"] as? String {
+            return sanitizedResponseText(text)
+        }
+
+        return sanitizedResponseText(payload["message"] as? String)
+    }
+
+    private static func sanitizedResponseText(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let text = value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            return nil
+        }
+        return String(text.prefix(1000))
     }
 
     private static func subagentMetadata(from payload: [String: Any]) -> (

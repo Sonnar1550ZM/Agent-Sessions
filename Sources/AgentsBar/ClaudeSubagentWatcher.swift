@@ -78,7 +78,9 @@ final class ClaudeSubagentWatcher {
             subagentNickname: metadata.subagentNickname,
             subagentRole: metadata.subagentRole,
             subagentDepth: metadata.subagentDepth,
-            transcriptPath: file.path
+            transcriptPath: file.path,
+            latestResponseText: parsed.latestResponseText,
+            latestResponsePhase: parsed.latestResponseText == nil ? nil : "assistant"
         )
 
         return Snapshot(
@@ -92,7 +94,8 @@ final class ClaudeSubagentWatcher {
                 metadata.parentSessionId,
                 metadata.subagentNickname,
                 metadata.subagentRole,
-                metadata.subagentDepth.description
+                metadata.subagentDepth.description,
+                parsed.latestResponseText ?? ""
             ].joined(separator: "|")
         )
     }

@@ -133,6 +133,9 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     public var subagentNickname: String?
     public var subagentRole: String?
     public var subagentDepth: Int?
+    public var transcriptPath: String?
+    public var latestResponseText: String?
+    public var latestResponsePhase: String?
 
     public var id: String {
         "\(agent.rawValue):\(sessionId)"
@@ -155,7 +158,10 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
         parentSessionId: String? = nil,
         subagentNickname: String? = nil,
         subagentRole: String? = nil,
-        subagentDepth: Int? = nil
+        subagentDepth: Int? = nil,
+        transcriptPath: String? = nil,
+        latestResponseText: String? = nil,
+        latestResponsePhase: String? = nil
     ) {
         self.agent = agent
         self.sessionId = sessionId
@@ -170,6 +176,9 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
         self.subagentNickname = subagentNickname
         self.subagentRole = subagentRole
         self.subagentDepth = subagentDepth
+        self.transcriptPath = transcriptPath
+        self.latestResponseText = latestResponseText
+        self.latestResponsePhase = latestResponsePhase
     }
 
     public var displayTitle: String {
@@ -304,6 +313,8 @@ public struct AgentEvent: Codable, Equatable, Sendable {
     public var subagentRole: String?
     public var subagentDepth: Int?
     public var transcriptPath: String?
+    public var latestResponseText: String?
+    public var latestResponsePhase: String?
 
     public var isSubagent: Bool {
         parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -332,6 +343,10 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         case subagent_depth
         case transcriptPath
         case transcript_path
+        case latestResponseText
+        case latest_response_text
+        case latestResponsePhase
+        case latest_response_phase
     }
 
     public init(
@@ -348,7 +363,9 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         subagentNickname: String? = nil,
         subagentRole: String? = nil,
         subagentDepth: Int? = nil,
-        transcriptPath: String? = nil
+        transcriptPath: String? = nil,
+        latestResponseText: String? = nil,
+        latestResponsePhase: String? = nil
     ) {
         self.agent = agent
         self.sessionId = sessionId
@@ -364,6 +381,8 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         self.subagentRole = subagentRole
         self.subagentDepth = subagentDepth
         self.transcriptPath = transcriptPath
+        self.latestResponseText = latestResponseText
+        self.latestResponsePhase = latestResponsePhase
     }
 
     public init(from decoder: Decoder) throws {
@@ -409,6 +428,18 @@ public struct AgentEvent: Codable, Equatable, Sendable {
             fallbackKey: .transcript_path,
             limit: 1024
         )
+        latestResponseText = try Self.decodeTrimmedOptionalString(
+            from: container,
+            primaryKey: .latestResponseText,
+            fallbackKey: .latest_response_text,
+            limit: 1000
+        )
+        latestResponsePhase = try Self.decodeTrimmedOptionalString(
+            from: container,
+            primaryKey: .latestResponsePhase,
+            fallbackKey: .latest_response_phase,
+            limit: 80
+        )
 
         if let date = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
             ?? container.decodeIfPresent(Date.self, forKey: .updated_at) {
@@ -439,6 +470,8 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         try container.encodeIfPresent(subagentRole, forKey: .subagentRole)
         try container.encodeIfPresent(subagentDepth, forKey: .subagentDepth)
         try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
+        try container.encodeIfPresent(latestResponseText, forKey: .latestResponseText)
+        try container.encodeIfPresent(latestResponsePhase, forKey: .latestResponsePhase)
     }
 
     private static func decodeTrimmedOptionalString(

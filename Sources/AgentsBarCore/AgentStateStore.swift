@@ -67,7 +67,10 @@ public final class AgentStateStore: ObservableObject {
             parentSessionId: event.parentSessionId ?? existing?.parentSessionId,
             subagentNickname: event.subagentNickname ?? existing?.subagentNickname,
             subagentRole: event.subagentRole ?? existing?.subagentRole,
-            subagentDepth: event.subagentDepth ?? existing?.subagentDepth
+            subagentDepth: event.subagentDepth ?? existing?.subagentDepth,
+            transcriptPath: event.transcriptPath ?? existing?.transcriptPath,
+            latestResponseText: event.latestResponseText ?? existing?.latestResponseText,
+            latestResponsePhase: event.latestResponsePhase ?? existing?.latestResponsePhase
         )
 
         if let index = sessions.firstIndex(where: { Self.key(agent: $0.agent, sessionId: $0.sessionId) == key }) {

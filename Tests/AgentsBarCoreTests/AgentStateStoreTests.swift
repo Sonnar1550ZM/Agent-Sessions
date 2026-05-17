@@ -27,6 +27,26 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(Set(sessionIds), ["a", "b"])
     }
 
+    func testLatestResponsePersistsAcrossMetadataOnlyUpdates() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, clock: { now })
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "a",
+            state: .working,
+            transcriptPath: "/tmp/a.jsonl",
+            latestResponseText: "確認しています。",
+            latestResponsePhase: "commentary"
+        ))
+        store.apply(AgentEvent(agent: .codex, sessionId: "a", state: .idle, title: "Updated title"))
+
+        let session = store.visibleSessions(for: .codex, now: now).first
+        XCTAssertEqual(session?.transcriptPath, "/tmp/a.jsonl")
+        XCTAssertEqual(session?.latestResponseText, "確認しています。")
+        XCTAssertEqual(session?.latestResponsePhase, "commentary")
+    }
+
     func testActiveSessionsSortBeforeHistoryThenByRecency() {
         let store = AgentStateStore(persistence: nil)
         let base = Date(timeIntervalSince1970: 1_000)
@@ -484,7 +504,9 @@ final class AgentStateStoreTests: XCTestCase {
           "subagent_nickname": "Sagan",
           "subagent_role": "explorer",
           "subagent_depth": 1,
-          "transcript_path": "/tmp/parent/subagents/agent-a.jsonl"
+          "transcript_path": "/tmp/parent/subagents/agent-a.jsonl",
+          "latest_response_text": "進めています。",
+          "latest_response_phase": "commentary"
         }
         """.data(using: .utf8)!
 
@@ -498,6 +520,8 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(decoded.subagentRole, "explorer")
         XCTAssertEqual(decoded.subagentDepth, 1)
         XCTAssertEqual(decoded.transcriptPath, "/tmp/parent/subagents/agent-a.jsonl")
+        XCTAssertEqual(decoded.latestResponseText, "進めています。")
+        XCTAssertEqual(decoded.latestResponsePhase, "commentary")
     }
 
     func testDecodesSnakeCaseSessionIdAndNormalizesClaude() throws {

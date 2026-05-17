@@ -85,6 +85,8 @@ enum ProviderPlacement: String, CaseIterable, Identifiable {
 
 private enum ProviderPreferenceDefaults {
     static let sessionDisplayCount = 5
+    static let latestResponseLineLimit = 2
+    static let subagentLatestResponseLineLimit = 2
     static let showsSubagents = true
     static let subagentHideAfterInterval: TimeInterval = 3 * 60
     static let subagentHideAfterOptions: [TimeInterval] = [
@@ -108,6 +110,14 @@ private enum ProviderPreferenceDefaults {
 
     static func sanitizedSessionDisplayCount(_ count: Int?) -> Int {
         min(max(count ?? sessionDisplayCount, 3), 10)
+    }
+
+    static func sanitizedLatestResponseLineLimit(_ count: Int?) -> Int {
+        min(max(count ?? latestResponseLineLimit, 1), 5)
+    }
+
+    static func sanitizedSubagentLatestResponseLineLimit(_ count: Int?) -> Int {
+        min(max(count ?? subagentLatestResponseLineLimit, 1), 5)
     }
 
     static func sanitizedHideAfterInterval(_ interval: TimeInterval?) -> TimeInterval {
@@ -173,6 +183,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var dropdownMenuOrder: [String]
     var usesColorDropdownIcons: Bool
     var sessionDisplayCount: Int
+    var latestResponseLineLimit: Int
+    var subagentLatestResponseLineLimit: Int
     var showsSubagents: Bool
     var subagentHideAfterInterval: TimeInterval
     var hideAfterInterval: TimeInterval
@@ -183,6 +195,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         dropdownMenuOrder: [String],
         usesColorDropdownIcons: Bool = false,
         sessionDisplayCount: Int = ProviderPreferenceDefaults.sessionDisplayCount,
+        latestResponseLineLimit: Int = ProviderPreferenceDefaults.latestResponseLineLimit,
+        subagentLatestResponseLineLimit: Int = ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
         showsSubagents: Bool = ProviderPreferenceDefaults.showsSubagents,
         subagentHideAfterInterval: TimeInterval = ProviderPreferenceDefaults.subagentHideAfterInterval,
         hideAfterInterval: TimeInterval = ProviderPreferenceDefaults.hideAfterInterval
@@ -192,6 +206,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.dropdownMenuOrder = dropdownMenuOrder
         self.usesColorDropdownIcons = usesColorDropdownIcons
         self.sessionDisplayCount = sessionDisplayCount
+        self.latestResponseLineLimit = latestResponseLineLimit
+        self.subagentLatestResponseLineLimit = subagentLatestResponseLineLimit
         self.showsSubagents = showsSubagents
         self.subagentHideAfterInterval = subagentHideAfterInterval
         self.hideAfterInterval = hideAfterInterval
@@ -203,6 +219,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case dropdownMenuOrder
         case usesColorDropdownIcons
         case sessionDisplayCount
+        case latestResponseLineLimit
+        case subagentLatestResponseLineLimit
         case subagentDisplayCount
         case showsSubagents
         case subagentHideAfterInterval
@@ -218,6 +236,12 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
             ?? values.values.contains { $0.usesColorDropdownIcon }
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(
             try container.decodeIfPresent(Int.self, forKey: .sessionDisplayCount)
+        )
+        latestResponseLineLimit = ProviderPreferenceDefaults.sanitizedLatestResponseLineLimit(
+            try container.decodeIfPresent(Int.self, forKey: .latestResponseLineLimit)
+        )
+        subagentLatestResponseLineLimit = ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(
+            try container.decodeIfPresent(Int.self, forKey: .subagentLatestResponseLineLimit)
         )
         if let showsSubagents = try container.decodeIfPresent(Bool.self, forKey: .showsSubagents) {
             self.showsSubagents = showsSubagents
@@ -241,6 +265,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(dropdownMenuOrder, forKey: .dropdownMenuOrder)
         try container.encode(usesColorDropdownIcons, forKey: .usesColorDropdownIcons)
         try container.encode(sessionDisplayCount, forKey: .sessionDisplayCount)
+        try container.encode(latestResponseLineLimit, forKey: .latestResponseLineLimit)
+        try container.encode(subagentLatestResponseLineLimit, forKey: .subagentLatestResponseLineLimit)
         try container.encode(showsSubagents, forKey: .showsSubagents)
         try container.encode(subagentHideAfterInterval, forKey: .subagentHideAfterInterval)
         try container.encode(hideAfterInterval, forKey: .hideAfterInterval)
@@ -256,6 +282,8 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var dropdownMenuOrder: [String]
     @Published private(set) var usesColorDropdownIcons: Bool
     @Published private(set) var sessionDisplayCount: Int
+    @Published private(set) var latestResponseLineLimit: Int
+    @Published private(set) var subagentLatestResponseLineLimit: Int
     @Published private(set) var showsSubagents: Bool
     @Published private(set) var subagentHideAfterInterval: TimeInterval
     @Published private(set) var hideAfterInterval: TimeInterval
@@ -276,6 +304,10 @@ final class ProviderVisibilityStore: ObservableObject {
         dropdownMenuOrder = Self.sanitizedOrder(document.dropdownMenuOrder)
         usesColorDropdownIcons = document.usesColorDropdownIcons
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(document.sessionDisplayCount)
+        latestResponseLineLimit = ProviderPreferenceDefaults.sanitizedLatestResponseLineLimit(document.latestResponseLineLimit)
+        subagentLatestResponseLineLimit = ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(
+            document.subagentLatestResponseLineLimit
+        )
         showsSubagents = document.showsSubagents
         subagentHideAfterInterval = ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval)
         hideAfterInterval = ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval)
@@ -313,6 +345,16 @@ final class ProviderVisibilityStore: ObservableObject {
 
     func setSessionDisplayCount(_ count: Int) {
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(count)
+        save()
+    }
+
+    func setLatestResponseLineLimit(_ count: Int) {
+        latestResponseLineLimit = ProviderPreferenceDefaults.sanitizedLatestResponseLineLimit(count)
+        save()
+    }
+
+    func setSubagentLatestResponseLineLimit(_ count: Int) {
+        subagentLatestResponseLineLimit = ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(count)
         save()
     }
 
@@ -393,6 +435,8 @@ final class ProviderVisibilityStore: ObservableObject {
             dropdownMenuOrder: dropdownMenuOrder,
             usesColorDropdownIcons: usesColorDropdownIcons,
             sessionDisplayCount: sessionDisplayCount,
+            latestResponseLineLimit: latestResponseLineLimit,
+            subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
             showsSubagents: showsSubagents,
             subagentHideAfterInterval: subagentHideAfterInterval,
             hideAfterInterval: hideAfterInterval
@@ -418,6 +462,8 @@ final class ProviderVisibilityStore: ObservableObject {
                 dropdownMenuOrder: defaultOrder,
                 usesColorDropdownIcons: values.values.contains { $0.usesColorDropdownIcon },
                 sessionDisplayCount: ProviderPreferenceDefaults.sessionDisplayCount,
+                latestResponseLineLimit: ProviderPreferenceDefaults.latestResponseLineLimit,
+                subagentLatestResponseLineLimit: ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
                 showsSubagents: ProviderPreferenceDefaults.showsSubagents,
                 subagentHideAfterInterval: ProviderPreferenceDefaults.subagentHideAfterInterval,
                 hideAfterInterval: ProviderPreferenceDefaults.hideAfterInterval
@@ -430,6 +476,10 @@ final class ProviderVisibilityStore: ObservableObject {
             dropdownMenuOrder: sanitizedOrder(document.dropdownMenuOrder),
             usesColorDropdownIcons: document.usesColorDropdownIcons,
             sessionDisplayCount: ProviderPreferenceDefaults.sanitizedSessionDisplayCount(document.sessionDisplayCount),
+            latestResponseLineLimit: ProviderPreferenceDefaults.sanitizedLatestResponseLineLimit(document.latestResponseLineLimit),
+            subagentLatestResponseLineLimit: ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(
+                document.subagentLatestResponseLineLimit
+            ),
             showsSubagents: document.showsSubagents,
             subagentHideAfterInterval: ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval),
             hideAfterInterval: ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval)
@@ -638,6 +688,30 @@ private struct GeneralSettingsView: View {
                     range: 3...10
                 ) { count in
                     providerVisibility.setSessionDisplayCount(count)
+                }
+
+                Divider()
+                    .padding(.leading, 18)
+
+                SettingsStepperRow(
+                    title: "Latest Response Lines",
+                    subtitle: "Maximum lines shown below each session title.",
+                    value: providerVisibility.latestResponseLineLimit,
+                    range: 1...5
+                ) { count in
+                    providerVisibility.setLatestResponseLineLimit(count)
+                }
+
+                Divider()
+                    .padding(.leading, 18)
+
+                SettingsStepperRow(
+                    title: "Sub-agent Response Lines",
+                    subtitle: "Maximum response lines shown for sub-agent rows.",
+                    value: providerVisibility.subagentLatestResponseLineLimit,
+                    range: 1...5
+                ) { count in
+                    providerVisibility.setSubagentLatestResponseLineLimit(count)
                 }
 
                 Divider()
@@ -1106,7 +1180,8 @@ final class AppController: ObservableObject {
     }
 
     private func applyEvent(_ event: AgentEvent) {
-        let enrichedEvent = eventWithClaudeSubagentMetadata(event)
+        let responseEvent = eventWithClaudeLatestResponse(event)
+        let enrichedEvent = eventWithClaudeSubagentMetadata(responseEvent)
         let resolvedEvent = eventWithResolvedTitle(enrichedEvent)
 
         guard !shouldHideSession(resolvedEvent) else {
@@ -1117,14 +1192,97 @@ final class AppController: ObservableObject {
         store.apply(resolvedEvent)
     }
 
+    private func eventWithClaudeLatestResponse(_ event: AgentEvent) -> AgentEvent {
+        guard event.agent == .claudeCode,
+              event.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+              let transcriptPath = Self.claudeTranscriptPath(
+                  sessionId: event.sessionId,
+                  transcriptPath: event.transcriptPath
+              ),
+              let text = Self.tailText(from: URL(fileURLWithPath: transcriptPath)),
+              let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text) else {
+            return event
+        }
+
+        return AgentEvent(
+            agent: event.agent,
+            sessionId: event.sessionId,
+            state: event.state,
+            title: event.title,
+            cwd: event.cwd,
+            event: event.event,
+            terminal: event.terminal,
+            pid: event.pid,
+            updatedAt: event.updatedAt,
+            parentSessionId: event.parentSessionId,
+            subagentNickname: event.subagentNickname,
+            subagentRole: event.subagentRole,
+            subagentDepth: event.subagentDepth,
+            transcriptPath: transcriptPath,
+            latestResponseText: latestResponseText,
+            latestResponsePhase: "assistant"
+        )
+    }
+
+    private static func claudeTranscriptPath(sessionId: String, transcriptPath: String?) -> String? {
+        if let path = transcriptPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !path.isEmpty {
+            return path
+        }
+
+        return ClaudeSessionTitleResolver.transcriptPath(for: sessionId)
+    }
+
+    private static func latestClaudeResponse(
+        for sessionId: String,
+        transcriptPath: String?
+    ) -> (text: String, transcriptPath: String)? {
+        guard let transcriptPath = claudeTranscriptPath(sessionId: sessionId, transcriptPath: transcriptPath),
+              let text = tailText(from: URL(fileURLWithPath: transcriptPath)),
+              let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text) else {
+            return nil
+        }
+
+        return (latestResponseText, transcriptPath)
+    }
+
+    private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return nil
+        }
+        defer { try? handle.close() }
+
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > limit ? size - limit : 0
+        try? handle.seek(toOffset: start)
+        let data = (try? handle.readToEnd()) ?? Data()
+        guard var text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        if start > 0, let newline = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: newline)...])
+        }
+        return text
+    }
+
     private func refreshSessionTitles() {
         pruneHiddenSessions()
         store.expireStaleActiveSessions()
 
         for session in store.sessions {
             let title = resolvedTitle(for: session) ?? fallbackTitle(for: session)
+            let latestClaudeResponse = session.agent == .claudeCode
+                ? Self.latestClaudeResponse(for: session.sessionId, transcriptPath: session.transcriptPath)
+                : nil
+            let latestResponseText = latestClaudeResponse?.text ?? session.latestResponseText
+            let latestResponsePhase = latestClaudeResponse == nil ? session.latestResponsePhase : "assistant"
+            let transcriptPath = latestClaudeResponse?.transcriptPath ?? session.transcriptPath
 
-            guard title != session.title else {
+            guard title != session.title
+                || latestResponseText != session.latestResponseText
+                || latestResponsePhase != session.latestResponsePhase
+                || transcriptPath != session.transcriptPath else {
                 continue
             }
 
@@ -1141,7 +1299,10 @@ final class AppController: ObservableObject {
                 parentSessionId: session.parentSessionId,
                 subagentNickname: session.subagentNickname,
                 subagentRole: session.subagentRole,
-                subagentDepth: session.subagentDepth
+                subagentDepth: session.subagentDepth,
+                transcriptPath: transcriptPath,
+                latestResponseText: latestResponseText,
+                latestResponsePhase: latestResponsePhase
             ))
         }
     }
@@ -1166,7 +1327,9 @@ final class AppController: ObservableObject {
             subagentNickname: event.subagentNickname ?? metadata.subagentNickname,
             subagentRole: event.subagentRole ?? metadata.subagentRole,
             subagentDepth: event.subagentDepth ?? metadata.subagentDepth,
-            transcriptPath: event.transcriptPath
+            transcriptPath: event.transcriptPath,
+            latestResponseText: event.latestResponseText,
+            latestResponsePhase: event.latestResponsePhase
         )
     }
 
@@ -1192,7 +1355,9 @@ final class AppController: ObservableObject {
             subagentNickname: event.subagentNickname,
             subagentRole: event.subagentRole,
             subagentDepth: event.subagentDepth,
-            transcriptPath: event.transcriptPath
+            transcriptPath: event.transcriptPath,
+            latestResponseText: event.latestResponseText,
+            latestResponsePhase: event.latestResponsePhase
         )
     }
 
@@ -1512,6 +1677,22 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             }
             .store(in: &cancellables)
 
+        providerVisibility.$latestResponseLineLimit
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.setNeedsMenuRebuild()
+                self?.resizeMenuIfOpen()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$subagentLatestResponseLineLimit
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.setNeedsMenuRebuild()
+                self?.resizeMenuIfOpen()
+            }
+            .store(in: &cancellables)
+
         providerVisibility.$showsSubagents
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -1764,6 +1945,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             store: controller.store,
             agent: agent,
             usesColorIcon: providerVisibility.usesColorDropdownIcons,
+            latestResponseLineLimit: providerVisibility.latestResponseLineLimit,
+            subagentLatestResponseLineLimit: providerVisibility.subagentLatestResponseLineLimit,
             onLayoutMayChange: { [weak self] in
                 self?.resizeMenuIfOpen()
             }
@@ -1834,6 +2017,8 @@ private struct AgentSectionView: View {
     @ObservedObject var store: AgentStateStore
     let agent: AgentKind
     let usesColorIcon: Bool
+    let latestResponseLineLimit: Int
+    let subagentLatestResponseLineLimit: Int
     let onLayoutMayChange: () -> Void
     @State private var now = Date()
 
@@ -1851,7 +2036,13 @@ private struct AgentSectionView: View {
                 ForEach(rows) { row in
                     switch row {
                     case .session(let session, let indentLevel):
-                        SessionMenuRow(session: session, indentLevel: indentLevel, now: now)
+                        SessionMenuRow(
+                            session: session,
+                            indentLevel: indentLevel,
+                            now: now,
+                            latestResponseLineLimit: latestResponseLineLimit,
+                            subagentLatestResponseLineLimit: subagentLatestResponseLineLimit
+                        )
                     }
                 }
             }
@@ -1898,6 +2089,8 @@ private struct SessionMenuRow: View {
     let session: AgentSession
     let indentLevel: Int
     let now: Date
+    let latestResponseLineLimit: Int
+    let subagentLatestResponseLineLimit: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1914,6 +2107,21 @@ private struct SessionMenuRow: View {
                     .foregroundStyle(titleColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
+            }
+            if let latestResponseText {
+                HStack(alignment: .top, spacing: 0) {
+                    Color.clear
+                        .frame(width: titleTextLeadingOffset, height: 0)
+
+                    Text(latestResponseText)
+                        .font(.system(size: detailFontSize))
+                        .foregroundStyle(titleColor)
+                        .lineLimit(effectiveLatestResponseLineLimit)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 1)
             }
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Color.clear
@@ -2070,6 +2278,19 @@ private struct SessionMenuRow: View {
         session.isSubagent ? session.subagentSessionTitle : session.displayTitle
     }
 
+    private var latestResponseText: String? {
+        guard effectiveLatestResponseLineLimit > 0,
+              let text = session.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            return nil
+        }
+        return text
+    }
+
+    private var effectiveLatestResponseLineLimit: Int {
+        session.isSubagent ? subagentLatestResponseLineLimit : latestResponseLineLimit
+    }
+
     private var helpText: String {
         [
             session.agent.displayName,
@@ -2078,7 +2299,8 @@ private struct SessionMenuRow: View {
             session.subagentRole.map { "role: \($0)" },
             session.subagentNickname.map { "nickname: \($0)" },
             session.cwd.isEmpty ? nil : session.cwd,
-            session.event.isEmpty ? nil : "event: \(session.event)"
+            session.event.isEmpty ? nil : "event: \(session.event)",
+            session.latestResponsePhase.map { "response: \($0)" }
         ]
         .compactMap { $0 }
         .joined(separator: "\n")

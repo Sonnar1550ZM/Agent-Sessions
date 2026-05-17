@@ -50,6 +50,7 @@ final class ClaudeSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed?.state, .idle)
         XCTAssertEqual(parsed?.title, "Inspect")
         XCTAssertEqual(parsed?.cwd, "/tmp/project")
+        XCTAssertEqual(parsed?.latestResponseText, "Done")
     }
 
     func testParsesSubagentTitleFromFirstPromptLine() {
@@ -78,5 +79,18 @@ final class ClaudeSessionParserTests: XCTestCase {
         )
 
         XCTAssertEqual(parsed?.state, .working)
+        XCTAssertNil(parsed?.latestResponseText)
+    }
+
+    func testParsesLatestAssistantResponseTextFromTranscript() {
+        let text = """
+        {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"古い応答"}],"stop_reason":"end_turn"},"sessionId":"parent-session"}
+        {"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"}],"stop_reason":"end_turn"},"sessionId":"parent-session"}
+        {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"最新の応答です\\n2行目"}],"stop_reason":"end_turn"},"sessionId":"parent-session"}
+        """
+
+        let response = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text)
+
+        XCTAssertEqual(response, "最新の応答です\n2行目")
     }
 }

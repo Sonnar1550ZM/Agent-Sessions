@@ -73,4 +73,30 @@ final class CodexSessionParserTests: XCTestCase {
 
         XCTAssertEqual(parsed.title, "Fix menu bar layout spacing")
     }
+
+    func testParsesLatestAssistantResponseFromResponseItems() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"作業中の応答"}],"phase":"commentary"}}
+        {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"最終応答です"}],"phase":"final_answer"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.latestResponseText, "最終応答です")
+        XCTAssertEqual(parsed.latestResponsePhase, "final_answer")
+        XCTAssertEqual(parsed.state, .idle)
+    }
+
+    func testParsesLatestAgentMessageEvent() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"agent_message","message":"現在確認しています。","phase":"commentary"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.latestResponseText, "現在確認しています。")
+        XCTAssertEqual(parsed.latestResponsePhase, "commentary")
+    }
 }

@@ -103,7 +103,9 @@ final class CodexSessionWatcher {
             parentSessionId: parsed.parentSessionId,
             subagentNickname: parsed.subagentNickname,
             subagentRole: parsed.subagentRole,
-            subagentDepth: parsed.subagentDepth
+            subagentDepth: parsed.subagentDepth,
+            latestResponseText: parsed.latestResponseText,
+            latestResponsePhase: parsed.latestResponsePhase
         )
 
         return Snapshot(
@@ -117,7 +119,9 @@ final class CodexSessionWatcher {
                 parsed.parentSessionId ?? "",
                 parsed.subagentNickname ?? "",
                 parsed.subagentRole ?? "",
-                parsed.subagentDepth.map(String.init) ?? ""
+                parsed.subagentDepth.map(String.init) ?? "",
+                parsed.latestResponseText ?? "",
+                parsed.latestResponsePhase ?? ""
             ].joined(separator: "|")
         )
     }

@@ -41,6 +41,22 @@ public enum ClaudeSessionTitleResolver {
         return transcriptTitle(for: sessionId, projectsRoot: projectsRoot)
     }
 
+    public static func transcriptPath(for sessionId: String) -> String? {
+        transcriptPath(
+            for: sessionId,
+            projectsRoot: FileManager.default
+                .homeDirectoryForCurrentUser
+                .appendingPathComponent(".claude/projects", isDirectory: true)
+        )
+    }
+
+    static func transcriptPath(for sessionId: String, projectsRoot: URL) -> String? {
+        guard !sessionId.isEmpty else {
+            return nil
+        }
+        return transcriptFile(for: sessionId, projectsRoot: projectsRoot)?.path
+    }
+
     public static func isArchived(sessionId: String) -> Bool {
         appSessionStatus(
             sessionId: sessionId,

@@ -27,12 +27,20 @@ public struct ClaudeParsedSubagent: Equatable, Sendable {
     public var state: AgentState
     public var title: String
     public var cwd: String
+    public var latestResponseText: String?
 
-    public init(metadata: ClaudeSubagentMetadata, state: AgentState, title: String, cwd: String) {
+    public init(
+        metadata: ClaudeSubagentMetadata,
+        state: AgentState,
+        title: String,
+        cwd: String,
+        latestResponseText: String? = nil
+    ) {
         self.metadata = metadata
         self.state = state
         self.title = title
         self.cwd = cwd
+        self.latestResponseText = latestResponseText
     }
 }
 
@@ -82,6 +90,7 @@ public enum ClaudeSessionParser {
         var title = ""
         var cwd = ""
         var role = ""
+        var latestResponseText: String?
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let data = line.data(using: .utf8),
@@ -107,6 +116,9 @@ public enum ClaudeSessionParser {
             let type = object["type"] as? String ?? ""
             if type == "assistant",
                let message = object["message"] as? [String: Any] {
+                if let responseText = assistantResponseText(from: message) {
+                    latestResponseText = responseText
+                }
                 if containsToolUse(message["content"]) {
                     state = .working
                 } else if message["stop_reason"] as? String == "end_turn" {
@@ -127,8 +139,27 @@ public enum ClaudeSessionParser {
             metadata: metadata,
             state: state,
             title: title.isEmpty ? role : title,
-            cwd: cwd
+            cwd: cwd,
+            latestResponseText: latestResponseText
         )
+    }
+
+    public static func latestAssistantResponseText(fromTranscript text: String) -> String? {
+        var latestResponseText: String?
+
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["type"] as? String == "assistant",
+                  let message = object["message"] as? [String: Any],
+                  let responseText = assistantResponseText(from: message) else {
+                continue
+            }
+
+            latestResponseText = responseText
+        }
+
+        return latestResponseText
     }
 
     private static func fileStem(_ filename: String) -> String {
@@ -147,6 +178,24 @@ public enum ClaudeSessionParser {
         return parts.contains { part in
             part["type"] as? String == "tool_use"
         }
+    }
+
+    private static func assistantResponseText(from message: [String: Any]) -> String? {
+        guard message["role"] as? String == "assistant",
+              let parts = message["content"] as? [[String: Any]] else {
+            return nil
+        }
+
+        let text = parts.compactMap { part -> String? in
+            guard part["type"] as? String == "text",
+                  let text = part["text"] as? String else {
+                return nil
+            }
+            return text
+        }
+        .joined(separator: "\n")
+
+        return sanitizedResponseText(text)
     }
 
     private static func promptTitle(from message: Any?) -> String? {
@@ -199,5 +248,23 @@ public enum ClaudeSessionParser {
         }
 
         return String(collapsed.prefix(limit)) + "..."
+    }
+
+    private static func sanitizedResponseText(_ value: String) -> String? {
+        let text = value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !text.isEmpty else {
+            return nil
+        }
+
+        let limit = 1_000
+        guard text.count > limit else {
+            return text
+        }
+
+        return String(text.prefix(limit))
     }
 }

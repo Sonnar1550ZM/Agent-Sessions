@@ -81,6 +81,24 @@ final class ClaudeSessionTitleResolverTests: XCTestCase {
         )
     }
 
+    func testFindsTranscriptPathForSessionId() throws {
+        let root = try makeProjectsRoot()
+        let sessionId = "path-session"
+        let file = try writeTranscript(
+            root: root,
+            sessionId: sessionId,
+            lines: [
+                #"{"type":"user","message":{"role":"user","content":"Prompt"},"sessionId":"path-session"}"#
+            ]
+        )
+
+        XCTAssertEqual(
+            ClaudeSessionTitleResolver.transcriptPath(for: sessionId, projectsRoot: root)
+                .map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            file.standardizedFileURL.path
+        )
+    }
+
     func testDetectsArchivedClaudeAppSession() throws {
         let appRoot = try makeProjectsRoot()
         let sessionId = "archived"
@@ -133,11 +151,13 @@ final class ClaudeSessionTitleResolverTests: XCTestCase {
         return root
     }
 
-    private func writeTranscript(root: URL, sessionId: String, lines: [String]) throws {
+    @discardableResult
+    private func writeTranscript(root: URL, sessionId: String, lines: [String]) throws -> URL {
         let project = root.appendingPathComponent("-tmp-project", isDirectory: true)
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let file = project.appendingPathComponent("\(sessionId).jsonl")
         try lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        return file
     }
 
     private func writeAppSession(
