@@ -77,6 +77,7 @@ payload = {
     "event": hook_event,
     "terminal": term_map.get(os.environ.get("TERM_PROGRAM") or "", os.environ.get("TERM_PROGRAM") or ""),
     "pid": pid,
+    "transcriptPath": transcript_path,
 }
 sys.stdout.write(json.dumps(payload, separators=(",", ":")))
 PY

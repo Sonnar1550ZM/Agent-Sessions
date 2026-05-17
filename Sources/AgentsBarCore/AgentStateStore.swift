@@ -3,14 +3,11 @@ import Foundation
 
 public enum AgentSessionDisplayRow: Equatable, Identifiable, Sendable {
     case session(AgentSession, indentLevel: Int)
-    case header(String)
 
     public var id: String {
         switch self {
         case .session(let session, let indentLevel):
             "\(session.id):\(indentLevel)"
-        case .header(let title):
-            "header:\(title)"
         }
     }
 }
@@ -19,6 +16,8 @@ public final class AgentStateStore: ObservableObject {
     @Published public private(set) var sessions: [AgentSession]
 
     public var maxHistoryPerAgent: Int
+    public var showsSubagents: Bool
+    public var subagentHideAfterInterval: TimeInterval
     public var historyVisibilityInterval: TimeInterval
     public var activeStaleInterval: TimeInterval
 
@@ -28,12 +27,16 @@ public final class AgentStateStore: ObservableObject {
     public init(
         persistence: StatePersistence? = StatePersistence(),
         maxHistoryPerAgent: Int = 5,
+        showsSubagents: Bool = true,
+        subagentHideAfterInterval: TimeInterval = 3 * 60,
         historyVisibilityInterval: TimeInterval = 24 * 60 * 60,
         activeStaleInterval: TimeInterval = 10 * 60,
         clock: @escaping () -> Date = Date.init
     ) {
         self.persistence = persistence
         self.maxHistoryPerAgent = maxHistoryPerAgent
+        self.showsSubagents = showsSubagents
+        self.subagentHideAfterInterval = subagentHideAfterInterval
         self.historyVisibilityInterval = historyVisibilityInterval
         self.activeStaleInterval = activeStaleInterval
         self.clock = clock
@@ -92,10 +95,23 @@ public final class AgentStateStore: ObservableObject {
     }
 
     public func displayRows(for agent: AgentKind, now: Date = Date()) -> [AgentSessionDisplayRow] {
-        let visible = visibleSessions(for: agent, now: now)
         let allAgentSessions = sessions
             .filter { $0.agent == agent }
             .map { sessionForDisplay($0, now: now) }
+        let eligibleSessions = displayEligibleSessions(from: allAgentSessions, now: now)
+        let visibleParents = Array(
+            eligibleSessions
+                .filter { !$0.isSubagent }
+                .sorted(by: sessionSort)
+                .prefix(maxHistoryPerAgent)
+        )
+        let visibleSubagents = displayEligibleSubagents(
+            from: eligibleSessions.filter(\.isSubagent),
+            now: now,
+            visibleParentIds: Set(visibleParents.map(\.sessionId)),
+            allSessionIds: Set(allAgentSessions.map(\.sessionId))
+        )
+        let visible = (visibleParents + visibleSubagents).sorted(by: sessionSort)
 
         return Self.displayRows(visibleSessions: visible, allSessions: allAgentSessions)
     }
@@ -106,7 +122,6 @@ public final class AgentStateStore: ObservableObject {
     ) -> [AgentSessionDisplayRow] {
         var rows: [AgentSessionDisplayRow] = []
         var renderedSessionIds: Set<String> = []
-        var orphanSubagents: [AgentSession] = []
 
         let allBySessionId = Dictionary(uniqueKeysWithValues: allSessions.map { ($0.sessionId, $0) })
         let topLevelSessions = visibleSessions.filter { !$0.isSubagent }
@@ -131,22 +146,12 @@ public final class AgentStateStore: ObservableObject {
 
         for subagent in subagents where !renderedSessionIds.contains(subagent.sessionId) {
             guard let parentSessionId = subagent.parentSessionId, !parentSessionId.isEmpty else {
-                orphanSubagents.append(subagent)
                 continue
             }
 
             if let parent = allBySessionId[parentSessionId], !renderedSessionIds.contains(parent.sessionId) {
                 append(parent, indentLevel: 0)
                 appendSubagents(parentSessionId: parent.sessionId)
-            } else if allBySessionId[parentSessionId] == nil {
-                orphanSubagents.append(subagent)
-            }
-        }
-
-        if !orphanSubagents.isEmpty {
-            rows.append(.header("Sub-agents"))
-            for subagent in orphanSubagents where !renderedSessionIds.contains(subagent.sessionId) {
-                append(subagent, indentLevel: 1)
             }
         }
 
@@ -154,7 +159,20 @@ public final class AgentStateStore: ObservableObject {
     }
 
     public func aggregateState(for agent: AgentKind, now: Date = Date()) -> AgentState {
-        let visible = visibleSessions(for: agent, now: now)
+        let allAgentSessions = sessions
+            .filter { $0.agent == agent }
+            .map { sessionForDisplay($0, now: now) }
+        let allSessionIds = Set(allAgentSessions.map(\.sessionId))
+        let visibleParents = displayEligibleSessions(from: allAgentSessions, now: now)
+            .filter { !$0.isSubagent }
+        let visibleSubagents = displayEligibleSubagents(
+            from: displayEligibleSessions(from: allAgentSessions, now: now).filter(\.isSubagent),
+            now: now,
+            visibleParentIds: Set(visibleParents.map(\.sessionId)),
+            allSessionIds: allSessionIds
+        )
+        let visible = visibleParents + visibleSubagents
+
         if visible.contains(where: { $0.state == .waiting }) {
             return .waiting
         }
@@ -216,14 +234,27 @@ public final class AgentStateStore: ObservableObject {
         for agent in AgentKind.allCases {
             let allAgentSessions = sessions.filter { $0.agent == agent }
                 .map { sessionForDisplay($0, now: now) }
-            var agentSessions = allAgentSessions
-                .filter { session in
-                    session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyVisibilityInterval
-                }
-                .sorted(by: sessionSort)
-                .prefix(maxHistoryPerAgent)
-                .map { $0 }
+            let eligibleSessions = displayEligibleSessions(from: allAgentSessions, now: now)
+            let visibleParents = Array(
+                eligibleSessions
+                    .filter { !$0.isSubagent }
+                    .sorted(by: sessionSort)
+                    .prefix(maxHistoryPerAgent)
+            )
+            let retainedSubagents = subagentsForRetention(
+                from: eligibleSessions.filter(\.isSubagent),
+                now: now,
+                retainedParentIds: Set(visibleParents.map(\.sessionId)),
+                allSessionIds: Set(allAgentSessions.map(\.sessionId))
+            )
+            var agentSessions = visibleParents + retainedSubagents
             var retainedIds = Set(agentSessions.map(\.sessionId))
+
+            for activeSession in allAgentSessions where activeSession.state.isActive && !retainedIds.contains(activeSession.sessionId) {
+                agentSessions.append(activeSession)
+                retainedIds.insert(activeSession.sessionId)
+            }
+
             let parentIds = agentSessions.compactMap(\.parentSessionId)
             for parentId in parentIds where !retainedIds.contains(parentId) {
                 if let parent = allAgentSessions.first(where: { $0.sessionId == parentId }) {
@@ -235,6 +266,87 @@ public final class AgentStateStore: ObservableObject {
         }
 
         sessions = retained.sorted(by: sessionSort)
+    }
+
+    private func displayEligibleSessions(from sessions: [AgentSession], now: Date) -> [AgentSession] {
+        sessions.filter { session in
+            session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyVisibilityInterval
+        }
+    }
+
+    private func displayEligibleSubagents(
+        from subagents: [AgentSession],
+        now: Date,
+        visibleParentIds: Set<String>,
+        allSessionIds: Set<String>
+    ) -> [AgentSession] {
+        guard showsSubagents else {
+            return []
+        }
+
+        let groupedSubagents = Dictionary(grouping: subagents.sorted(by: sessionSort)) { subagent in
+            subagent.parentSessionId ?? ""
+        }
+
+        return groupedSubagents.values
+            .flatMap { group -> [AgentSession] in
+                let parentSessionId = group.first?.parentSessionId ?? ""
+                let shouldDisplayGroup = visibleParentIds.contains(parentSessionId)
+                    || group.contains { shouldDisplaySubagent($0, now: now) }
+                guard hasKnownParent(group[0], allSessionIds: allSessionIds),
+                      shouldDisplayGroup else {
+                    return []
+                }
+                return group.filter { subagent in
+                    shouldDisplaySubagent(subagent, now: now)
+                }
+            }
+            .sorted(by: sessionSort)
+    }
+
+    private func shouldDisplaySubagent(_ session: AgentSession, now: Date) -> Bool {
+        guard showsSubagents else {
+            return false
+        }
+
+        if session.state == .working {
+            return true
+        }
+
+        return isRecentSubagentTimestamp(session, now: now)
+    }
+
+    private func subagentsForRetention(
+        from subagents: [AgentSession],
+        now: Date,
+        retainedParentIds: Set<String>,
+        allSessionIds: Set<String>
+    ) -> [AgentSession] {
+        subagents
+            .filter { subagent in
+                guard hasKnownParent(subagent, allSessionIds: allSessionIds) else {
+                    return false
+                }
+
+                let parentSessionId = subagent.parentSessionId ?? ""
+                return retainedParentIds.contains(parentSessionId)
+                    || subagent.state.isActive
+                    || isRecentSubagentTimestamp(subagent, now: now)
+            }
+            .sorted(by: sessionSort)
+    }
+
+    private func isRecentSubagentTimestamp(_ session: AgentSession, now: Date) -> Bool {
+        now.timeIntervalSince(session.updatedAt) < subagentHideAfterInterval
+    }
+
+    private func hasKnownParent(_ session: AgentSession, allSessionIds: Set<String>) -> Bool {
+        guard let parentSessionId = session.parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !parentSessionId.isEmpty else {
+            return false
+        }
+
+        return allSessionIds.contains(parentSessionId)
     }
 
     private func sessionForDisplay(_ session: AgentSession, now: Date) -> AgentSession {

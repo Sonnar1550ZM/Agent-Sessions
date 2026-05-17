@@ -52,6 +52,11 @@ Accepted fields:
 - `terminal`
 - `pid`
 - `updatedAt` or `updated_at`
+- `parentSessionId` or `parent_session_id`
+- `subagentNickname` or `subagent_nickname`
+- `subagentRole` or `subagent_role`
+- `subagentDepth` or `subagent_depth`
+- `transcriptPath` or `transcript_path` for Claude transcript/subagent detection
 
 ## Hooks
 

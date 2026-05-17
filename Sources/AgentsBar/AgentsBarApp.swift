@@ -85,6 +85,17 @@ enum ProviderPlacement: String, CaseIterable, Identifiable {
 
 private enum ProviderPreferenceDefaults {
     static let sessionDisplayCount = 5
+    static let showsSubagents = true
+    static let subagentHideAfterInterval: TimeInterval = 3 * 60
+    static let subagentHideAfterOptions: [TimeInterval] = [
+        60,
+        3 * 60,
+        5 * 60,
+        10 * 60,
+        30 * 60,
+        60 * 60,
+        3 * 60 * 60
+    ]
     static let hideAfterInterval: TimeInterval = 24 * 60 * 60
     static let hideAfterOptions: [TimeInterval] = [
         15 * 60,
@@ -105,6 +116,35 @@ private enum ProviderPreferenceDefaults {
             return hideAfterInterval
         }
         return nearest
+    }
+
+    static func sanitizedSubagentHideAfterInterval(_ interval: TimeInterval?) -> TimeInterval {
+        guard let interval,
+              let nearest = subagentHideAfterOptions.min(by: { abs($0 - interval) < abs($1 - interval) }) else {
+            return subagentHideAfterInterval
+        }
+        return nearest
+    }
+
+    static func subagentHideAfterLabel(for interval: TimeInterval) -> String {
+        switch sanitizedSubagentHideAfterInterval(interval) {
+        case 60:
+            "1 minute"
+        case 3 * 60:
+            "3 minutes"
+        case 5 * 60:
+            "5 minutes"
+        case 10 * 60:
+            "10 minutes"
+        case 30 * 60:
+            "30 minutes"
+        case 60 * 60:
+            "1 hour"
+        case 3 * 60 * 60:
+            "3 hours"
+        default:
+            "3 minutes"
+        }
     }
 
     static func hideAfterLabel(for interval: TimeInterval) -> String {
@@ -133,6 +173,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var dropdownMenuOrder: [String]
     var usesColorDropdownIcons: Bool
     var sessionDisplayCount: Int
+    var showsSubagents: Bool
+    var subagentHideAfterInterval: TimeInterval
     var hideAfterInterval: TimeInterval
 
     init(
@@ -141,6 +183,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         dropdownMenuOrder: [String],
         usesColorDropdownIcons: Bool = false,
         sessionDisplayCount: Int = ProviderPreferenceDefaults.sessionDisplayCount,
+        showsSubagents: Bool = ProviderPreferenceDefaults.showsSubagents,
+        subagentHideAfterInterval: TimeInterval = ProviderPreferenceDefaults.subagentHideAfterInterval,
         hideAfterInterval: TimeInterval = ProviderPreferenceDefaults.hideAfterInterval
     ) {
         self.values = values
@@ -148,6 +192,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.dropdownMenuOrder = dropdownMenuOrder
         self.usesColorDropdownIcons = usesColorDropdownIcons
         self.sessionDisplayCount = sessionDisplayCount
+        self.showsSubagents = showsSubagents
+        self.subagentHideAfterInterval = subagentHideAfterInterval
         self.hideAfterInterval = hideAfterInterval
     }
 
@@ -157,6 +203,9 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case dropdownMenuOrder
         case usesColorDropdownIcons
         case sessionDisplayCount
+        case subagentDisplayCount
+        case showsSubagents
+        case subagentHideAfterInterval
         case hideAfterInterval
     }
 
@@ -170,9 +219,31 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(
             try container.decodeIfPresent(Int.self, forKey: .sessionDisplayCount)
         )
+        if let showsSubagents = try container.decodeIfPresent(Bool.self, forKey: .showsSubagents) {
+            self.showsSubagents = showsSubagents
+        } else if let legacyCount = try container.decodeIfPresent(Int.self, forKey: .subagentDisplayCount) {
+            showsSubagents = legacyCount > 0
+        } else {
+            showsSubagents = ProviderPreferenceDefaults.showsSubagents
+        }
+        subagentHideAfterInterval = ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(
+            try container.decodeIfPresent(TimeInterval.self, forKey: .subagentHideAfterInterval)
+        )
         hideAfterInterval = ProviderPreferenceDefaults.sanitizedHideAfterInterval(
             try container.decodeIfPresent(TimeInterval.self, forKey: .hideAfterInterval)
         )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(values, forKey: .values)
+        try container.encode(menuBarOrder, forKey: .menuBarOrder)
+        try container.encode(dropdownMenuOrder, forKey: .dropdownMenuOrder)
+        try container.encode(usesColorDropdownIcons, forKey: .usesColorDropdownIcons)
+        try container.encode(sessionDisplayCount, forKey: .sessionDisplayCount)
+        try container.encode(showsSubagents, forKey: .showsSubagents)
+        try container.encode(subagentHideAfterInterval, forKey: .subagentHideAfterInterval)
+        try container.encode(hideAfterInterval, forKey: .hideAfterInterval)
     }
 }
 
@@ -185,6 +256,8 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var dropdownMenuOrder: [String]
     @Published private(set) var usesColorDropdownIcons: Bool
     @Published private(set) var sessionDisplayCount: Int
+    @Published private(set) var showsSubagents: Bool
+    @Published private(set) var subagentHideAfterInterval: TimeInterval
     @Published private(set) var hideAfterInterval: TimeInterval
 
     private let defaults: UserDefaults
@@ -203,6 +276,8 @@ final class ProviderVisibilityStore: ObservableObject {
         dropdownMenuOrder = Self.sanitizedOrder(document.dropdownMenuOrder)
         usesColorDropdownIcons = document.usesColorDropdownIcons
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(document.sessionDisplayCount)
+        showsSubagents = document.showsSubagents
+        subagentHideAfterInterval = ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval)
         hideAfterInterval = ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval)
         save()
     }
@@ -238,6 +313,16 @@ final class ProviderVisibilityStore: ObservableObject {
 
     func setSessionDisplayCount(_ count: Int) {
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(count)
+        save()
+    }
+
+    func setShowsSubagents(_ shows: Bool) {
+        showsSubagents = shows
+        save()
+    }
+
+    func setSubagentHideAfterInterval(_ interval: TimeInterval) {
+        subagentHideAfterInterval = ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(interval)
         save()
     }
 
@@ -308,6 +393,8 @@ final class ProviderVisibilityStore: ObservableObject {
             dropdownMenuOrder: dropdownMenuOrder,
             usesColorDropdownIcons: usesColorDropdownIcons,
             sessionDisplayCount: sessionDisplayCount,
+            showsSubagents: showsSubagents,
+            subagentHideAfterInterval: subagentHideAfterInterval,
             hideAfterInterval: hideAfterInterval
         )
 
@@ -331,6 +418,8 @@ final class ProviderVisibilityStore: ObservableObject {
                 dropdownMenuOrder: defaultOrder,
                 usesColorDropdownIcons: values.values.contains { $0.usesColorDropdownIcon },
                 sessionDisplayCount: ProviderPreferenceDefaults.sessionDisplayCount,
+                showsSubagents: ProviderPreferenceDefaults.showsSubagents,
+                subagentHideAfterInterval: ProviderPreferenceDefaults.subagentHideAfterInterval,
                 hideAfterInterval: ProviderPreferenceDefaults.hideAfterInterval
             )
         }
@@ -341,6 +430,8 @@ final class ProviderVisibilityStore: ObservableObject {
             dropdownMenuOrder: sanitizedOrder(document.dropdownMenuOrder),
             usesColorDropdownIcons: document.usesColorDropdownIcons,
             sessionDisplayCount: ProviderPreferenceDefaults.sanitizedSessionDisplayCount(document.sessionDisplayCount),
+            showsSubagents: document.showsSubagents,
+            subagentHideAfterInterval: ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval),
             hideAfterInterval: ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval)
         )
     }
@@ -542,12 +633,48 @@ private struct GeneralSettingsView: View {
 
                 SettingsStepperRow(
                     title: "Session Count",
-                    subtitle: "Maximum recent sessions shown per provider.",
+                    subtitle: "Maximum parent sessions shown per provider.",
                     value: providerVisibility.sessionDisplayCount,
                     range: 3...10
                 ) { count in
                     providerVisibility.setSessionDisplayCount(count)
                 }
+
+                Divider()
+                    .padding(.leading, 18)
+
+                SettingsToggleRow(
+                    title: "Sub-agents",
+                    subtitle: "Show active sub-agent sessions in the drop-down menu.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.showsSubagents
+                        },
+                        set: { showsSubagents in
+                            providerVisibility.setShowsSubagents(showsSubagents)
+                        }
+                    )
+                )
+
+                Divider()
+                    .padding(.leading, 18)
+
+                SettingsPickerRow(
+                    title: "Sub-agent Hide After",
+                    subtitle: "Hide inactive sub-agents by timestamp.",
+                    selection: Binding(
+                        get: {
+                            providerVisibility.subagentHideAfterInterval
+                        },
+                        set: { interval in
+                            providerVisibility.setSubagentHideAfterInterval(interval)
+                        }
+                    ),
+                    options: ProviderPreferenceDefaults.subagentHideAfterOptions,
+                    labelProvider: ProviderPreferenceDefaults.subagentHideAfterLabel
+                )
+                .disabled(!providerVisibility.showsSubagents)
+                .opacity(providerVisibility.showsSubagents ? 1 : 0.55)
 
                 Divider()
                     .padding(.leading, 18)
@@ -562,7 +689,9 @@ private struct GeneralSettingsView: View {
                         set: { interval in
                             providerVisibility.setHideAfterInterval(interval)
                         }
-                    )
+                    ),
+                    options: ProviderPreferenceDefaults.hideAfterOptions,
+                    labelProvider: ProviderPreferenceDefaults.hideAfterLabel
                 )
             }
             .background(
@@ -764,6 +893,8 @@ private struct SettingsPickerRow: View {
     let title: String
     let subtitle: String
     @Binding var selection: TimeInterval
+    let options: [TimeInterval]
+    let labelProvider: (TimeInterval) -> String
 
     var body: some View {
         HStack(spacing: 14) {
@@ -779,8 +910,8 @@ private struct SettingsPickerRow: View {
             Spacer()
 
             Picker("", selection: $selection) {
-                ForEach(ProviderPreferenceDefaults.hideAfterOptions, id: \.self) { interval in
-                    Text(ProviderPreferenceDefaults.hideAfterLabel(for: interval))
+                ForEach(options, id: \.self) { interval in
+                    Text(labelProvider(interval))
                         .tag(interval)
                 }
             }
@@ -874,6 +1005,7 @@ final class AppController: ObservableObject {
     private let providerVisibility = ProviderVisibilityStore.shared
     private var server: EventServer?
     private var codexWatcher: CodexSessionWatcher?
+    private var claudeSubagentWatcher: ClaudeSubagentWatcher?
     private var maintenanceTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -882,6 +1014,7 @@ final class AppController: ObservableObject {
         observeDisplayPreferences()
         startServer()
         startCodexWatcher()
+        startClaudeSubagentWatcher()
         startMaintenanceTimer()
     }
 
@@ -915,11 +1048,27 @@ final class AppController: ObservableObject {
 
     func applyDisplayPreferences() {
         store.maxHistoryPerAgent = providerVisibility.sessionDisplayCount
+        store.showsSubagents = providerVisibility.showsSubagents
+        store.subagentHideAfterInterval = providerVisibility.subagentHideAfterInterval
         store.historyVisibilityInterval = providerVisibility.hideAfterInterval
     }
 
     private func observeDisplayPreferences() {
         providerVisibility.$sessionDisplayCount
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.applyDisplayPreferences()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$showsSubagents
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.applyDisplayPreferences()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$subagentHideAfterInterval
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.applyDisplayPreferences()
@@ -945,13 +1094,26 @@ final class AppController: ObservableObject {
         refreshSessionTitles()
     }
 
+    private func startClaudeSubagentWatcher() {
+        let watcher = ClaudeSubagentWatcher { [weak self] event in
+            Task { @MainActor in
+                self?.applyEvent(event)
+            }
+        }
+        watcher.start()
+        claudeSubagentWatcher = watcher
+        refreshSessionTitles()
+    }
+
     private func applyEvent(_ event: AgentEvent) {
-        guard !shouldHideSession(event) else {
+        let enrichedEvent = eventWithClaudeSubagentMetadata(event)
+
+        guard !shouldHideSession(enrichedEvent) else {
             pruneHiddenSessions()
             return
         }
 
-        store.apply(eventWithResolvedTitle(event))
+        store.apply(eventWithResolvedTitle(enrichedEvent))
     }
 
     private func refreshSessionTitles() {
@@ -983,6 +1145,30 @@ final class AppController: ObservableObject {
         }
     }
 
+    private func eventWithClaudeSubagentMetadata(_ event: AgentEvent) -> AgentEvent {
+        guard event.agent == .claudeCode,
+              let metadata = ClaudeSessionParser.subagentMetadata(transcriptPath: event.transcriptPath) else {
+            return event
+        }
+
+        return AgentEvent(
+            agent: event.agent,
+            sessionId: metadata.sessionId,
+            state: event.state,
+            title: event.title,
+            cwd: event.cwd,
+            event: event.event,
+            terminal: event.terminal,
+            pid: event.pid,
+            updatedAt: event.updatedAt,
+            parentSessionId: event.parentSessionId ?? metadata.parentSessionId,
+            subagentNickname: event.subagentNickname ?? metadata.subagentNickname,
+            subagentRole: event.subagentRole ?? metadata.subagentRole,
+            subagentDepth: event.subagentDepth ?? metadata.subagentDepth,
+            transcriptPath: event.transcriptPath
+        )
+    }
+
     private func eventWithResolvedTitle(_ event: AgentEvent) -> AgentEvent {
         guard event.title.isEmpty || event.agent == .claudeCode else {
             return event
@@ -1004,7 +1190,8 @@ final class AppController: ObservableObject {
             parentSessionId: event.parentSessionId,
             subagentNickname: event.subagentNickname,
             subagentRole: event.subagentRole,
-            subagentDepth: event.subagentDepth
+            subagentDepth: event.subagentDepth,
+            transcriptPath: event.transcriptPath
         )
     }
 
@@ -1025,12 +1212,18 @@ final class AppController: ObservableObject {
         guard session.agent != .codex else {
             return session.title
         }
+        guard !session.isSubagent else {
+            return session.title
+        }
 
         return fallbackTitle(cwd: session.cwd, sessionId: session.sessionId)
     }
 
     private func fallbackTitle(for event: AgentEvent) -> String {
         guard event.agent != .codex else {
+            return event.title
+        }
+        guard !event.isSubagent else {
             return event.title
         }
 
@@ -1180,6 +1373,24 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .store(in: &cancellables)
 
         providerVisibility.$sessionDisplayCount
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.controller.applyDisplayPreferences()
+                self?.updateStatusIcons()
+                self?.setNeedsMenuRebuild()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$showsSubagents
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.controller.applyDisplayPreferences()
+                self?.updateStatusIcons()
+                self?.setNeedsMenuRebuild()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$subagentHideAfterInterval
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.controller.applyDisplayPreferences()
@@ -1439,8 +1650,6 @@ private struct AgentSectionView: View {
                     switch row {
                     case .session(let session, let indentLevel):
                         SessionMenuRow(session: session, indentLevel: indentLevel, now: now)
-                    case .header(let title):
-                        SessionGroupHeaderRow(title: title)
                     }
                 }
             }
@@ -1482,22 +1691,6 @@ private struct EmptyAgentRow: View {
     }
 }
 
-private struct SessionGroupHeaderRow: View {
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
-            .frame(width: 320, alignment: .leading)
-            .padding(.leading, 30)
-            .padding(.trailing, 12)
-            .padding(.top, 5)
-            .padding(.bottom, 2)
-    }
-}
-
 private struct SessionMenuRow: View {
     let session: AgentSession
     let indentLevel: Int
@@ -1510,7 +1703,7 @@ private struct SessionMenuRow: View {
                     .font(.system(size: symbolFontSize, weight: .semibold))
                     .foregroundStyle(symbolColor)
                     .frame(width: symbolWidth, alignment: .leading)
-                Text(session.displayTitle)
+                Text(titleText)
                     .font(.system(size: titleFontSize))
                     .foregroundStyle(.primary)
                     .lineLimit(nil)
@@ -1533,27 +1726,27 @@ private struct SessionMenuRow: View {
     }
 
     private var horizontalSpacing: CGFloat {
-        session.isSubagent ? 2 : 4
+        4
     }
 
     private var symbolFontSize: CGFloat {
-        session.isSubagent ? 10 : 13
+        13
     }
 
     private var symbolWidth: CGFloat {
-        session.isSubagent ? 9 : 12
+        12
     }
 
     private var titleFontSize: CGFloat {
-        session.isSubagent ? 11 : 13
+        13
     }
 
     private var detailFontSize: CGFloat {
-        session.isSubagent ? 9 : 11
+        11
     }
 
     private var verticalPadding: CGFloat {
-        session.isSubagent ? 0.75 : 3
+        3
     }
 
     private var symbolColor: Color {
@@ -1573,19 +1766,6 @@ private struct SessionMenuRow: View {
     }
 
     private var detailText: String {
-        if session.isSubagent {
-            var parts: [String] = ["Sub-agent"]
-            if let role = session.subagentRole, !role.isEmpty {
-                parts.append(role)
-            }
-            if let nickname = session.subagentNickname, !nickname.isEmpty {
-                parts.append(nickname)
-            }
-            parts.append(session.state.displayName)
-            parts.append(Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: now))
-            return parts.joined(separator: " · ")
-        }
-
         var parts: [String] = [session.state.displayName]
         if !session.terminal.isEmpty {
             parts.append(session.terminal)
@@ -1595,6 +1775,10 @@ private struct SessionMenuRow: View {
         }
         parts.append(Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: now))
         return parts.joined(separator: " · ")
+    }
+
+    private var titleText: String {
+        session.isSubagent ? session.subagentDisplayLabel : session.displayTitle
     }
 
     private var helpText: String {

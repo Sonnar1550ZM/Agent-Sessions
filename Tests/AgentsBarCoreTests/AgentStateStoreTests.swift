@@ -143,6 +143,7 @@ final class AgentStateStoreTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_000)
         let store = AgentStateStore(persistence: nil, clock: { now })
 
+        store.apply(AgentEvent(agent: .codex, sessionId: "parent", state: .idle))
         store.apply(AgentEvent(
             agent: .codex,
             sessionId: "child",
@@ -154,7 +155,7 @@ final class AgentStateStoreTests: XCTestCase {
         ))
         store.apply(AgentEvent(agent: .codex, sessionId: "child", state: .idle))
 
-        let session = store.sessions.first
+        let session = store.sessions.first { $0.sessionId == "child" }
         XCTAssertEqual(session?.parentSessionId, "parent")
         XCTAssertEqual(session?.subagentNickname, "Sagan")
         XCTAssertEqual(session?.subagentRole, "explorer")
@@ -201,7 +202,7 @@ final class AgentStateStoreTests: XCTestCase {
         ])
     }
 
-    func testDisplayRowsFallsBackToSubagentsHeaderWhenParentIsMissing() {
+    func testDisplayRowsHidesOrphanSubagentsWhenParentIsMissing() {
         let base = Date(timeIntervalSince1970: 1_000)
         let child = AgentSession(
             agent: .codex,
@@ -213,10 +214,156 @@ final class AgentStateStoreTests: XCTestCase {
 
         let rows = AgentStateStore.displayRows(visibleSessions: [child], allSessions: [child])
 
-        XCTAssertEqual(rows, [
-            .header("Sub-agents"),
-            .session(child, indentLevel: 1)
+        XCTAssertEqual(rows, [])
+    }
+
+    func testDisplayRowsShowsWorkingSubagentsUnderVisibleParent() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, maxHistoryPerAgent: 1)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "parent", state: .idle, updatedAt: base))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "parent"
+        ))
+
+        let rows = store.displayRows(for: .codex, now: base.addingTimeInterval(2))
+        XCTAssertEqual(rows.map(\.id), [
+            "codex:parent:0",
+            "codex:child:1"
         ])
+    }
+
+    func testSubagentToggleHidesSubagentsAndTheirState() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, maxHistoryPerAgent: 1, showsSubagents: false)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "parent", state: .idle, updatedAt: base))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "parent"
+        ))
+
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(2)).map(\.id), [
+            "codex:parent:0",
+        ])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(2)), .idle)
+    }
+
+    func testSubagentToggleDoesNotDeleteStoredSubagents() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, maxHistoryPerAgent: 1, showsSubagents: false)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "parent", state: .idle, updatedAt: base))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "parent"
+        ))
+
+        XCTAssertEqual(Set(store.sessions.map(\.sessionId)), ["parent", "child"])
+        store.showsSubagents = true
+
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(2)).map(\.id), [
+            "codex:parent:0",
+            "codex:child:1"
+        ])
+    }
+
+    func testSubagentRowsHideWhenTimestampIsThreeMinutesOld() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, maxHistoryPerAgent: 1)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "parent", state: .idle, updatedAt: base))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "child",
+            state: .idle,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "parent"
+        ))
+
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(180)).map(\.id), [
+            "codex:parent:0",
+            "codex:child:1"
+        ])
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(181)).map(\.id), [
+            "codex:parent:0",
+        ])
+    }
+
+    func testSubagentRowsRespectConfiguredHideAfterInterval() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(
+            persistence: nil,
+            maxHistoryPerAgent: 1,
+            subagentHideAfterInterval: 5 * 60
+        )
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "parent", state: .idle, updatedAt: base))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "child",
+            state: .idle,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "parent"
+        ))
+
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(300)).map(\.id), [
+            "codex:parent:0",
+            "codex:child:1"
+        ])
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(301)).map(\.id), [
+            "codex:parent:0",
+        ])
+    }
+
+    func testDisplayRowsTemporarilyIncludesStoredParentForRecentInactiveSubagentOutsideParentLimit() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, maxHistoryPerAgent: 1)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "old-parent", state: .idle, updatedAt: base))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "recent-child",
+            state: .ended,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "old-parent"
+        ))
+        store.apply(AgentEvent(agent: .codex, sessionId: "recent-parent", state: .idle, updatedAt: base.addingTimeInterval(2)))
+
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(100)).map(\.id), [
+            "codex:recent-parent:0",
+            "codex:old-parent:0",
+            "codex:recent-child:1"
+        ])
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(181)).map(\.id), [
+            "codex:recent-parent:0"
+        ])
+    }
+
+    func testAggregateStateIgnoresOrphanSubagentWhenParentIsMissing() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            updatedAt: base,
+            parentSessionId: "missing"
+        ))
+
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(1)), .idle)
     }
 
     func testAggregateStateIncludesSubagentState() {
@@ -276,7 +423,8 @@ final class AgentStateStoreTests: XCTestCase {
           "parent_session_id": "parent",
           "subagent_nickname": "Sagan",
           "subagent_role": "explorer",
-          "subagent_depth": 1
+          "subagent_depth": 1,
+          "transcript_path": "/tmp/parent/subagents/agent-a.jsonl"
         }
         """.data(using: .utf8)!
 
@@ -289,6 +437,7 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(decoded.subagentNickname, "Sagan")
         XCTAssertEqual(decoded.subagentRole, "explorer")
         XCTAssertEqual(decoded.subagentDepth, 1)
+        XCTAssertEqual(decoded.transcriptPath, "/tmp/parent/subagents/agent-a.jsonl")
     }
 
     func testDecodesSnakeCaseSessionIdAndNormalizesClaude() throws {
@@ -332,5 +481,64 @@ final class AgentStateStoreTests: XCTestCase {
         )
 
         XCTAssertEqual(session.displayTitle, "project")
+    }
+
+    func testClaudeSubagentDisplayTitleUsesNickname() {
+        let session = AgentSession(
+            agent: .claudeCode,
+            sessionId: "parent/subagents/agent-a8142726721de1817",
+            state: .working,
+            cwd: "/tmp/project",
+            parentSessionId: "parent",
+            subagentNickname: "agent-a8142726721de1817",
+            subagentRole: "Claude",
+            subagentDepth: 1
+        )
+
+        XCTAssertEqual(session.displayTitle, "agent-a8142726721de1817")
+    }
+
+    func testSubagentDisplayLabelUsesRoleInsteadOfNickname() {
+        let session = AgentSession(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            title: "Session Count実装を確認",
+            parentSessionId: "parent",
+            subagentNickname: "Rawls",
+            subagentRole: "explorer",
+            subagentDepth: 1
+        )
+
+        XCTAssertEqual(session.subagentDisplayLabel, "Session Count実装を確認 · Explorer · Rawls")
+    }
+
+    func testSubagentDisplayLabelDeduplicatesRoleTitle() {
+        let session = AgentSession(
+            agent: .claudeCode,
+            sessionId: "parent/subagents/agent-a2d0709031a162f40",
+            state: .working,
+            title: "general-purpose",
+            parentSessionId: "parent",
+            subagentNickname: "a2d0709031a162f40",
+            subagentRole: "general-purpose",
+            subagentDepth: 1
+        )
+
+        XCTAssertEqual(session.subagentDisplayLabel, "General Purpose · a2d0709031a162f40")
+    }
+
+    func testSubagentDisplayLabelFallsBackToRoleWhenTitleIsMissing() {
+        let session = AgentSession(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            parentSessionId: "parent",
+            subagentNickname: "Rawls",
+            subagentRole: "explorer",
+            subagentDepth: 1
+        )
+
+        XCTAssertEqual(session.subagentDisplayLabel, "Explorer · Rawls")
     }
 }

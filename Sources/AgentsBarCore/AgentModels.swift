@@ -142,7 +142,7 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
             return title
         }
 
-        if agent == .codex,
+        if isSubagent,
            let subagentNickname = subagentNickname?.trimmingCharacters(in: .whitespacesAndNewlines),
            !subagentNickname.isEmpty {
             return subagentNickname
@@ -157,6 +157,73 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
         }
 
         return sessionId
+    }
+
+    public var subagentDisplayLabel: String {
+        let explicitTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let role = Self.formattedSubagentRole(subagentRole)
+        let name = subagentNickname?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var parts: [String] = []
+
+        if !explicitTitle.isEmpty {
+            if !role.isEmpty,
+               Self.normalizedSubagentLabel(explicitTitle) == Self.normalizedSubagentLabel(role) {
+                parts.append(role)
+            } else {
+                parts.append(explicitTitle)
+            }
+        } else {
+            let fallbackTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !fallbackTitle.isEmpty,
+               Self.normalizedSubagentLabel(fallbackTitle) != Self.normalizedSubagentLabel(name),
+               Self.normalizedSubagentLabel(fallbackTitle) != Self.normalizedSubagentLabel(role) {
+                parts.append(fallbackTitle)
+            }
+        }
+
+        if !role.isEmpty,
+           !parts.contains(where: { Self.normalizedSubagentLabel($0) == Self.normalizedSubagentLabel(role) }) {
+            parts.append(role)
+        }
+
+        if !name.isEmpty,
+           !parts.contains(where: { Self.normalizedSubagentLabel($0) == Self.normalizedSubagentLabel(name) }) {
+            parts.append(name)
+        }
+
+        return parts.isEmpty ? sessionId : parts.joined(separator: " · ")
+    }
+
+    private static func formattedSubagentRole(_ role: String?) -> String {
+        let trimmedRole = role?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmedRole.isEmpty else {
+            return ""
+        }
+
+        let normalized = trimmedRole
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        let words = normalized.split(separator: " ")
+        guard !words.isEmpty else {
+            return trimmedRole
+        }
+
+        return words
+            .map { word -> String in
+                let text = String(word)
+                guard text == text.lowercased() else {
+                    return text
+                }
+                return text.prefix(1).uppercased() + text.dropFirst()
+            }
+            .joined(separator: " ")
+    }
+
+    private static func normalizedSubagentLabel(_ value: String) -> String {
+        value
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .joined()
     }
 }
 
@@ -174,6 +241,11 @@ public struct AgentEvent: Codable, Equatable, Sendable {
     public var subagentNickname: String?
     public var subagentRole: String?
     public var subagentDepth: Int?
+    public var transcriptPath: String?
+
+    public var isSubagent: Bool {
+        parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
 
     private enum CodingKeys: String, CodingKey {
         case agent
@@ -196,6 +268,8 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         case subagent_role
         case subagentDepth
         case subagent_depth
+        case transcriptPath
+        case transcript_path
     }
 
     public init(
@@ -211,7 +285,8 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         parentSessionId: String? = nil,
         subagentNickname: String? = nil,
         subagentRole: String? = nil,
-        subagentDepth: Int? = nil
+        subagentDepth: Int? = nil,
+        transcriptPath: String? = nil
     ) {
         self.agent = agent
         self.sessionId = sessionId
@@ -226,6 +301,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         self.subagentNickname = subagentNickname
         self.subagentRole = subagentRole
         self.subagentDepth = subagentDepth
+        self.transcriptPath = transcriptPath
     }
 
     public init(from decoder: Decoder) throws {
@@ -265,6 +341,12 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         )
         subagentDepth = try container.decodeIfPresent(Int.self, forKey: .subagentDepth)
             ?? container.decodeIfPresent(Int.self, forKey: .subagent_depth)
+        transcriptPath = try Self.decodeTrimmedOptionalString(
+            from: container,
+            primaryKey: .transcriptPath,
+            fallbackKey: .transcript_path,
+            limit: 1024
+        )
 
         if let date = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
             ?? container.decodeIfPresent(Date.self, forKey: .updated_at) {
@@ -294,6 +376,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         try container.encodeIfPresent(subagentNickname, forKey: .subagentNickname)
         try container.encodeIfPresent(subagentRole, forKey: .subagentRole)
         try container.encodeIfPresent(subagentDepth, forKey: .subagentDepth)
+        try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
     }
 
     private static func decodeTrimmedOptionalString(
