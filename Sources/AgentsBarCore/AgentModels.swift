@@ -63,6 +63,33 @@ public enum AgentSessionVisibility {
     }
 }
 
+public enum AgentTextSanitizer {
+    public static func latestResponseText(_ value: String?, limit: Int = 1_000) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let text = value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !text.isEmpty else {
+            return nil
+        }
+
+        guard text.count > limit else {
+            return text
+        }
+
+        return String(text.prefix(limit))
+    }
+}
+
 public enum AgentState: String, Codable, CaseIterable, Sendable {
     case working
     case waiting
@@ -428,7 +455,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
             fallbackKey: .transcript_path,
             limit: 1024
         )
-        latestResponseText = try Self.decodeTrimmedOptionalString(
+        latestResponseText = try Self.decodeLatestResponseText(
             from: container,
             primaryKey: .latestResponseText,
             fallbackKey: .latest_response_text,
@@ -485,6 +512,17 @@ public struct AgentEvent: Codable, Equatable, Sendable {
             ?? ""
         let trimmed = value.trimmed(limit: limit)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func decodeLatestResponseText(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        primaryKey: CodingKeys,
+        fallbackKey: CodingKeys,
+        limit: Int
+    ) throws -> String? {
+        let value = try container.decodeIfPresent(String.self, forKey: primaryKey)
+            ?? container.decodeIfPresent(String.self, forKey: fallbackKey)
+        return AgentTextSanitizer.latestResponseText(value, limit: limit)
     }
 }
 

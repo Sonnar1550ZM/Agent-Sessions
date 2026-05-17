@@ -251,20 +251,6 @@ public enum ClaudeSessionParser {
     }
 
     private static func sanitizedResponseText(_ value: String) -> String? {
-        let text = value
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !text.isEmpty else {
-            return nil
-        }
-
-        let limit = 1_000
-        guard text.count > limit else {
-            return text
-        }
-
-        return String(text.prefix(limit))
+        AgentTextSanitizer.latestResponseText(value)
     }
 }

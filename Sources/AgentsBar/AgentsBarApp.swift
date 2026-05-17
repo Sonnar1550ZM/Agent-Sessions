@@ -2320,7 +2320,7 @@ private struct SessionMenuRow: View {
 
     private var latestResponseText: String? {
         guard effectiveLatestResponseLineLimit > 0,
-              let text = session.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let text = AgentTextSanitizer.latestResponseText(session.latestResponseText),
               !text.isEmpty else {
             return nil
         }

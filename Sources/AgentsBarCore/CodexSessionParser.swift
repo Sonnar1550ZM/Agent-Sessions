@@ -195,18 +195,7 @@ public enum CodexSessionParser {
     }
 
     private static func sanitizedResponseText(_ value: String?) -> String? {
-        guard let value else {
-            return nil
-        }
-
-        let text = value
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            return nil
-        }
-        return String(text.prefix(1000))
+        AgentTextSanitizer.latestResponseText(value)
     }
 
     private static func subagentMetadata(from payload: [String: Any]) -> (
