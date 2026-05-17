@@ -126,6 +126,10 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
             return title
         }
 
+        if agent == .codex {
+            return "Codex session"
+        }
+
         if !cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return URL(fileURLWithPath: cwd).lastPathComponent
         }

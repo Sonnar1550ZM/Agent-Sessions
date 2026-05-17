@@ -59,9 +59,7 @@ def ensure_codex_hooks() -> None:
     hooks = data.setdefault("hooks", {})
     command = f"'{codex_script}' # agentsbar-codex-hook"
     markers = (
-        "notchbar-agents-codex-hook",
         "agentsbar-codex-hook",
-        "NotchBar/AgentStatus/hooks/codex-notify-hook.sh",
     )
 
     defaults = {
@@ -91,9 +89,7 @@ def ensure_claude_hooks() -> None:
     data = load_json(claude_settings_path)
     hooks = data.setdefault("hooks", {})
     markers = (
-        "notchbar-agents-claude-hook",
         "agentsbar-claude-hook",
-        "NotchBar/AgentStatus/hooks/claude-event-hook.sh",
     )
     states = {
         "SessionEnd": "Ended",

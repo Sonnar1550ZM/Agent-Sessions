@@ -159,4 +159,26 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(event.state, .working)
         XCTAssertEqual(event.pid, 123)
     }
+
+    func testCodexDisplayTitleDoesNotFallBackToProjectName() {
+        let session = AgentSession(
+            agent: .codex,
+            sessionId: "abc",
+            state: .working,
+            cwd: "/tmp/project"
+        )
+
+        XCTAssertEqual(session.displayTitle, "Codex session")
+    }
+
+    func testClaudeDisplayTitleStillFallsBackToProjectName() {
+        let session = AgentSession(
+            agent: .claudeCode,
+            sessionId: "abc",
+            state: .working,
+            cwd: "/tmp/project"
+        )
+
+        XCTAssertEqual(session.displayTitle, "project")
+    }
 }

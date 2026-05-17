@@ -132,7 +132,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var menuBarOrder: [String]
     var dropdownMenuOrder: [String]
     var usesColorDropdownIcons: Bool
-    var animatesWorkingMenuBarHighlight: Bool
     var sessionDisplayCount: Int
     var hideAfterInterval: TimeInterval
 
@@ -141,7 +140,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         menuBarOrder: [String],
         dropdownMenuOrder: [String],
         usesColorDropdownIcons: Bool = false,
-        animatesWorkingMenuBarHighlight: Bool = true,
         sessionDisplayCount: Int = ProviderPreferenceDefaults.sessionDisplayCount,
         hideAfterInterval: TimeInterval = ProviderPreferenceDefaults.hideAfterInterval
     ) {
@@ -149,7 +147,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.menuBarOrder = menuBarOrder
         self.dropdownMenuOrder = dropdownMenuOrder
         self.usesColorDropdownIcons = usesColorDropdownIcons
-        self.animatesWorkingMenuBarHighlight = animatesWorkingMenuBarHighlight
         self.sessionDisplayCount = sessionDisplayCount
         self.hideAfterInterval = hideAfterInterval
     }
@@ -159,7 +156,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case menuBarOrder
         case dropdownMenuOrder
         case usesColorDropdownIcons
-        case animatesWorkingMenuBarHighlight
         case sessionDisplayCount
         case hideAfterInterval
     }
@@ -171,10 +167,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         dropdownMenuOrder = try container.decodeIfPresent([String].self, forKey: .dropdownMenuOrder) ?? []
         usesColorDropdownIcons = try container.decodeIfPresent(Bool.self, forKey: .usesColorDropdownIcons)
             ?? values.values.contains { $0.usesColorDropdownIcon }
-        animatesWorkingMenuBarHighlight = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .animatesWorkingMenuBarHighlight
-        ) ?? true
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(
             try container.decodeIfPresent(Int.self, forKey: .sessionDisplayCount)
         )
@@ -192,7 +184,6 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var menuBarOrder: [String]
     @Published private(set) var dropdownMenuOrder: [String]
     @Published private(set) var usesColorDropdownIcons: Bool
-    @Published private(set) var animatesWorkingMenuBarHighlight: Bool
     @Published private(set) var sessionDisplayCount: Int
     @Published private(set) var hideAfterInterval: TimeInterval
 
@@ -211,9 +202,9 @@ final class ProviderVisibilityStore: ObservableObject {
         menuBarOrder = Self.sanitizedOrder(document.menuBarOrder)
         dropdownMenuOrder = Self.sanitizedOrder(document.dropdownMenuOrder)
         usesColorDropdownIcons = document.usesColorDropdownIcons
-        animatesWorkingMenuBarHighlight = document.animatesWorkingMenuBarHighlight
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(document.sessionDisplayCount)
         hideAfterInterval = ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval)
+        save()
     }
 
     func visibility(for agent: AgentKind) -> ProviderVisibility {
@@ -242,11 +233,6 @@ final class ProviderVisibilityStore: ObservableObject {
 
     func setUsesColorDropdownIcons(_ usesColor: Bool) {
         usesColorDropdownIcons = usesColor
-        save()
-    }
-
-    func setAnimatesWorkingMenuBarHighlight(_ animates: Bool) {
-        animatesWorkingMenuBarHighlight = animates
         save()
     }
 
@@ -321,7 +307,6 @@ final class ProviderVisibilityStore: ObservableObject {
             menuBarOrder: menuBarOrder,
             dropdownMenuOrder: dropdownMenuOrder,
             usesColorDropdownIcons: usesColorDropdownIcons,
-            animatesWorkingMenuBarHighlight: animatesWorkingMenuBarHighlight,
             sessionDisplayCount: sessionDisplayCount,
             hideAfterInterval: hideAfterInterval
         )
@@ -345,7 +330,6 @@ final class ProviderVisibilityStore: ObservableObject {
                 menuBarOrder: defaultOrder,
                 dropdownMenuOrder: defaultOrder,
                 usesColorDropdownIcons: values.values.contains { $0.usesColorDropdownIcon },
-                animatesWorkingMenuBarHighlight: true,
                 sessionDisplayCount: ProviderPreferenceDefaults.sessionDisplayCount,
                 hideAfterInterval: ProviderPreferenceDefaults.hideAfterInterval
             )
@@ -356,7 +340,6 @@ final class ProviderVisibilityStore: ObservableObject {
             menuBarOrder: sanitizedOrder(document.menuBarOrder),
             dropdownMenuOrder: sanitizedOrder(document.dropdownMenuOrder),
             usesColorDropdownIcons: document.usesColorDropdownIcons,
-            animatesWorkingMenuBarHighlight: document.animatesWorkingMenuBarHighlight,
             sessionDisplayCount: ProviderPreferenceDefaults.sanitizedSessionDisplayCount(document.sessionDisplayCount),
             hideAfterInterval: ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval)
         )
@@ -550,22 +533,6 @@ private struct GeneralSettingsView: View {
                         },
                         set: { usesColor in
                             providerVisibility.setUsesColorDropdownIcons(usesColor)
-                        }
-                    )
-                )
-
-                Divider()
-                    .padding(.leading, 18)
-
-                SettingsToggleRow(
-                    title: "Working Highlight",
-                    subtitle: "Animate provider color around working menu bar icons.",
-                    isOn: Binding(
-                        get: {
-                            providerVisibility.animatesWorkingMenuBarHighlight
-                        },
-                        set: { animates in
-                            providerVisibility.setAnimatesWorkingMenuBarHighlight(animates)
                         }
                     )
                 )
@@ -1018,7 +985,7 @@ final class AppController: ObservableObject {
         }
 
         let title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
-            ?? fallbackTitle(cwd: event.cwd, sessionId: event.sessionId)
+            ?? fallbackTitle(for: event)
 
         return AgentEvent(
             agent: event.agent,
@@ -1047,7 +1014,19 @@ final class AppController: ObservableObject {
     }
 
     private func fallbackTitle(for session: AgentSession) -> String {
-        fallbackTitle(cwd: session.cwd, sessionId: session.sessionId)
+        guard session.agent != .codex else {
+            return session.title
+        }
+
+        return fallbackTitle(cwd: session.cwd, sessionId: session.sessionId)
+    }
+
+    private func fallbackTitle(for event: AgentEvent) -> String {
+        guard event.agent != .codex else {
+            return event.title
+        }
+
+        return fallbackTitle(cwd: event.cwd, sessionId: event.sessionId)
     }
 
     private func fallbackTitle(cwd: String, sessionId: String) -> String {
@@ -1069,7 +1048,12 @@ final class AppController: ObservableObject {
     private func shouldHideSession(_ session: AgentSession) -> Bool {
         switch session.agent {
         case .codex:
-            CodexSessionWatcher.shouldHideSession(session.sessionId)
+            shouldHideCodexSession(
+                sessionId: session.sessionId,
+                state: session.state,
+                title: session.title,
+                cwd: session.cwd
+            )
         case .claudeCode:
             isClaudeProbeSession(cwd: session.cwd, title: session.title)
         }
@@ -1078,10 +1062,37 @@ final class AppController: ObservableObject {
     private func shouldHideSession(_ event: AgentEvent) -> Bool {
         switch event.agent {
         case .codex:
-            CodexSessionWatcher.shouldHideSession(event.sessionId)
+            shouldHideCodexSession(
+                sessionId: event.sessionId,
+                state: event.state,
+                title: event.title,
+                cwd: event.cwd
+            )
         case .claudeCode:
             isClaudeProbeSession(cwd: event.cwd, title: event.title)
         }
+    }
+
+    private func shouldHideCodexSession(sessionId: String, state: AgentState, title: String, cwd: String) -> Bool {
+        if CodexSessionWatcher.shouldHideSession(sessionId) {
+            return true
+        }
+
+        if state.isActive {
+            return false
+        }
+
+        if CodexSessionWatcher.title(for: sessionId) != nil {
+            return false
+        }
+
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTitle.isEmpty else {
+            return true
+        }
+
+        let fallback = fallbackTitle(cwd: cwd, sessionId: sessionId)
+        return normalizedTitle == fallback
     }
 
     private func isClaudeProbeSession(cwd: String, title: String) -> Bool {
@@ -1115,13 +1126,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
     private var statusItems: [AgentKind: NSStatusItem] = [:]
     private var fallbackStatusItem: NSStatusItem?
-    private var statusAnimationTimer: Timer?
-    private var statusAnimationPhase: CGFloat = 0
     private var cancellables: Set<AnyCancellable> = []
     private var isMenuOpen = false
+    private var needsMenuRebuild = true
     private var hostedViews: [NSView] = []
-    private static let statusAnimationFrameInterval: TimeInterval = 1.0 / 24.0
-    private static let statusAnimationDuration: TimeInterval = 1.35
 
     init(controller: AppController) {
         self.controller = controller
@@ -1142,7 +1150,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.syncStatusItems()
-                self?.rebuildMenuIfOpen()
+                self?.setNeedsMenuRebuild()
             }
             .store(in: &cancellables)
 
@@ -1156,21 +1164,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         providerVisibility.$dropdownMenuOrder
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.rebuildMenuIfOpen()
+                self?.setNeedsMenuRebuild()
             }
             .store(in: &cancellables)
 
         providerVisibility.$usesColorDropdownIcons
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.rebuildMenuIfOpen()
-            }
-            .store(in: &cancellables)
-
-        providerVisibility.$animatesWorkingMenuBarHighlight
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateStatusIcons()
+                self?.setNeedsMenuRebuild()
             }
             .store(in: &cancellables)
 
@@ -1179,7 +1180,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .sink { [weak self] _ in
                 self?.controller.applyDisplayPreferences()
                 self?.updateStatusIcons()
-                self?.rebuildMenuIfOpen()
+                self?.setNeedsMenuRebuild()
             }
             .store(in: &cancellables)
 
@@ -1188,15 +1189,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .sink { [weak self] _ in
                 self?.controller.applyDisplayPreferences()
                 self?.updateStatusIcons()
-                self?.rebuildMenuIfOpen()
+                self?.setNeedsMenuRebuild()
             }
             .store(in: &cancellables)
+
+        rebuildMenu()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
-        controller.refreshForDisplay()
-        rebuildMenu()
+        rebuildMenuIfNeeded()
     }
 
     func menuDidClose(_ menu: NSMenu) {
@@ -1266,16 +1268,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func updateStatusIcons() {
         renderStatusIcons()
-        updateStatusAnimationTimer()
     }
 
     private func renderStatusIcons() {
         for (agent, statusItem) in statusItems {
             let status = AgentMenuBarStatus(
                 agent: agent,
-                state: controller.store.aggregateState(for: agent),
-                animationPhase: statusAnimationPhase,
-                showsWorkingHighlight: providerVisibility.animatesWorkingMenuBarHighlight
+                state: controller.store.aggregateState(for: agent)
             )
             let image = AgentImages.menuBarStatus([status])
             statusItem.button?.image = image
@@ -1289,58 +1288,18 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func updateStatusAnimationTimer() {
-        if providerVisibility.animatesWorkingMenuBarHighlight, hasWorkingStatusIcon {
-            startStatusAnimationTimer()
-        } else {
-            stopStatusAnimationTimer()
-        }
-    }
+    private func setNeedsMenuRebuild() {
+        needsMenuRebuild = true
 
-    private var hasWorkingStatusIcon: Bool {
-        statusItems.keys.contains { agent in
-            controller.store.aggregateState(for: agent) == .working
-        }
-    }
-
-    private func startStatusAnimationTimer() {
-        guard statusAnimationTimer == nil else {
-            return
-        }
-
-        statusAnimationPhase = Self.currentStatusAnimationPhase()
-        let timer = Timer(timeInterval: Self.statusAnimationFrameInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else {
-                    return
-                }
-                self.statusAnimationPhase = Self.currentStatusAnimationPhase()
-                self.renderStatusIcons()
-                self.updateStatusAnimationTimer()
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        statusAnimationTimer = timer
-    }
-
-    private func stopStatusAnimationTimer() {
-        guard let statusAnimationTimer else {
-            return
-        }
-
-        statusAnimationTimer.invalidate()
-        self.statusAnimationTimer = nil
-        statusAnimationPhase = 0
-        renderStatusIcons()
-    }
-
-    private static func currentStatusAnimationPhase() -> CGFloat {
-        let elapsed = Date().timeIntervalSinceReferenceDate
-        return CGFloat(elapsed.truncatingRemainder(dividingBy: statusAnimationDuration) / statusAnimationDuration)
-    }
-
-    private func rebuildMenuIfOpen() {
         guard isMenuOpen else {
+            return
+        }
+
+        rebuildMenu()
+    }
+
+    private func rebuildMenuIfNeeded() {
+        guard needsMenuRebuild else {
             return
         }
 
@@ -1365,6 +1324,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func rebuildMenu() {
+        needsMenuRebuild = false
         hostedViews.removeAll()
         menu.removeAllItems()
         let visibleAgents = providerVisibility.orderedAgents(for: .dropdownMenu)
@@ -1606,18 +1566,11 @@ private enum AgentColors {
 struct AgentMenuBarStatus {
     let agent: AgentKind
     let state: AgentState
-    var animationPhase: CGFloat = 0
-    var showsWorkingHighlight = true
 }
 
 enum AgentImages {
     private static let menuBarLogoDisplayScale: CGFloat = 0.7
     private static let menuBarLogoGap: CGFloat = 2
-    private static let menuBarHighlightPadding: CGFloat = 2.5
-    private static let workingHighlightInset: CGFloat = 1.25
-    private static let workingHighlightLineWidth: CGFloat = 1.35
-    private static let workingHighlightGlowWidth: CGFloat = 3.5
-    private static let workingHighlightDashFraction: CGFloat = 0.32
     private static let fallbackMenuBarStatusSize = NSSize(width: 15, height: 15)
     private static let assetScale: CGFloat = 3
     private static let codexIcons = AgentIconSet(
@@ -1641,21 +1594,14 @@ enum AgentImages {
             for status in statuses {
                 let icons = iconSet(for: status.agent)
                 let displaySize = displaySize(for: icons.mono)
-                let canvasSize = statusCanvasSize(
-                    for: displaySize,
-                    showsWorkingHighlight: status.showsWorkingHighlight
-                )
                 drawAgentLogo(
                     icons,
-                    agent: status.agent,
                     state: status.state,
                     size: displaySize,
                     x: x,
-                    canvasHeight: size.height,
-                    animationPhase: status.animationPhase,
-                    showsWorkingHighlight: status.showsWorkingHighlight
+                    canvasHeight: size.height
                 )
-                x += canvasSize.width + menuBarLogoGap
+                x += displaySize.width + menuBarLogoGap
             }
 
             return true
@@ -1675,17 +1621,12 @@ enum AgentImages {
     }
 
     private static func menuBarStatusSize(for statuses: [AgentMenuBarStatus]) -> NSSize {
-        let canvasSizes = statuses.map { status in
-            statusCanvasSize(
-                for: displaySize(for: iconSet(for: status.agent).mono),
-                showsWorkingHighlight: status.showsWorkingHighlight
-            )
-        }
-        let totalLogoWidth = canvasSizes.reduce(CGFloat(0)) { $0 + $1.width }
+        let displaySizes = statuses.map { displaySize(for: iconSet(for: $0.agent).mono) }
+        let totalLogoWidth = displaySizes.reduce(CGFloat(0)) { $0 + $1.width }
         let totalGapWidth = CGFloat(max(statuses.count - 1, 0)) * menuBarLogoGap
         return NSSize(
             width: totalLogoWidth + totalGapWidth,
-            height: canvasSizes.map(\.height).max() ?? fallbackMenuBarStatusSize.height
+            height: displaySizes.map(\.height).max() ?? fallbackMenuBarStatusSize.height
         )
     }
 
@@ -1748,30 +1689,15 @@ enum AgentImages {
         )
     }
 
-    private static func statusCanvasSize(for logoSize: NSSize, showsWorkingHighlight: Bool) -> NSSize {
-        guard showsWorkingHighlight else {
-            return logoSize
-        }
-
-        return NSSize(
-            width: logoSize.width + (menuBarHighlightPadding * 2),
-            height: logoSize.height + (menuBarHighlightPadding * 2)
-        )
-    }
-
     private static func drawAgentLogo(
         _ icons: AgentIconSet,
-        agent: AgentKind,
         state: AgentState,
         size: NSSize,
         x: CGFloat,
-        canvasHeight: CGFloat,
-        animationPhase: CGFloat,
-        showsWorkingHighlight: Bool
+        canvasHeight: CGFloat
     ) {
-        let highlightPadding = showsWorkingHighlight ? menuBarHighlightPadding : 0
         let logoRect = NSRect(
-            x: x + highlightPadding,
+            x: x,
             y: (canvasHeight - size.height) / 2,
             width: size.width,
             height: size.height
@@ -1780,13 +1706,6 @@ enum AgentImages {
         switch state {
         case .working:
             icons.color.draw(in: logoRect, from: .zero, operation: .sourceOver, fraction: 1.0)
-            if showsWorkingHighlight {
-                drawWorkingHighlight(
-                    around: logoRect,
-                    color: AgentColors.working(for: agent),
-                    phase: animationPhase
-                )
-            }
         case .waiting:
             drawTemplateLogo(icons.mono, in: logoRect, color: AgentColors.waiting)
         case .idle, .ended:
@@ -1807,62 +1726,6 @@ enum AgentImages {
         color.setFill()
         rect.fill()
         context.restoreGState()
-    }
-
-    private static func drawWorkingHighlight(around logoRect: NSRect, color: NSColor, phase: CGFloat) {
-        guard let context = NSGraphicsContext.current?.cgContext else {
-            return
-        }
-
-        let ringRect = logoRect.insetBy(dx: -workingHighlightInset, dy: -workingHighlightInset)
-        let cornerRadius = min(ringRect.width, ringRect.height) / 2
-        let perimeter = max((ringRect.width + ringRect.height) * 2, 1)
-        let dashLength = max(perimeter * workingHighlightDashFraction, 5)
-        let gapLength = max(perimeter - dashLength, 1)
-        let dashPhase = -phase * perimeter
-
-        context.saveGState()
-        context.setLineJoin(.round)
-        context.setLineCap(.round)
-
-        context.addPath(CGPath(
-            roundedRect: ringRect,
-            cornerWidth: cornerRadius,
-            cornerHeight: cornerRadius,
-            transform: nil
-        ))
-        context.setStrokeColor(cgColor(color, alpha: 0.16))
-        context.setLineWidth(workingHighlightGlowWidth)
-        context.strokePath()
-
-        context.addPath(CGPath(
-            roundedRect: ringRect,
-            cornerWidth: cornerRadius,
-            cornerHeight: cornerRadius,
-            transform: nil
-        ))
-        context.setStrokeColor(cgColor(color, alpha: 0.28))
-        context.setLineWidth(workingHighlightLineWidth)
-        context.strokePath()
-
-        context.addPath(CGPath(
-            roundedRect: ringRect,
-            cornerWidth: cornerRadius,
-            cornerHeight: cornerRadius,
-            transform: nil
-        ))
-        context.setStrokeColor(cgColor(color, alpha: 0.95))
-        context.setLineWidth(workingHighlightLineWidth)
-        context.setLineDash(phase: dashPhase, lengths: [dashLength, gapLength])
-        context.strokePath()
-
-        context.restoreGState()
-    }
-
-    private static func cgColor(_ color: NSColor, alpha: CGFloat) -> CGColor {
-        (color.usingColorSpace(.deviceRGB) ?? color)
-            .withAlphaComponent(alpha)
-            .cgColor
     }
 
     private struct AgentIconSet {
