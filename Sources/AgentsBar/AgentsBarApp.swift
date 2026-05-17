@@ -1107,13 +1107,14 @@ final class AppController: ObservableObject {
 
     private func applyEvent(_ event: AgentEvent) {
         let enrichedEvent = eventWithClaudeSubagentMetadata(event)
+        let resolvedEvent = eventWithResolvedTitle(enrichedEvent)
 
-        guard !shouldHideSession(enrichedEvent) else {
+        guard !shouldHideSession(resolvedEvent) else {
             pruneHiddenSessions()
             return
         }
 
-        store.apply(eventWithResolvedTitle(enrichedEvent))
+        store.apply(resolvedEvent)
     }
 
     private func refreshSessionTitles() {
@@ -1220,7 +1221,10 @@ final class AppController: ObservableObject {
     }
 
     private func fallbackTitle(for event: AgentEvent) -> String {
-        guard event.agent != .codex else {
+        if event.agent == .codex {
+            if event.state.isActive || event.event == "SessionStart" {
+                return fallbackTitle(cwd: event.cwd, sessionId: event.sessionId)
+            }
             return event.title
         }
         guard !event.isSubagent else {
@@ -1253,7 +1257,8 @@ final class AppController: ObservableObject {
                 sessionId: session.sessionId,
                 state: session.state,
                 title: session.title,
-                cwd: session.cwd
+                cwd: session.cwd,
+                event: session.event
             )
         case .claudeCode:
             isClaudeProbeSession(cwd: session.cwd, title: session.title)
@@ -1267,16 +1272,21 @@ final class AppController: ObservableObject {
                 sessionId: event.sessionId,
                 state: event.state,
                 title: event.title,
-                cwd: event.cwd
+                cwd: event.cwd,
+                event: event.event
             )
         case .claudeCode:
             isClaudeProbeSession(cwd: event.cwd, title: event.title)
         }
     }
 
-    private func shouldHideCodexSession(sessionId: String, state _: AgentState, title: String, cwd: String) -> Bool {
+    private func shouldHideCodexSession(sessionId: String, state: AgentState, title: String, cwd: String, event: String) -> Bool {
         if CodexSessionWatcher.shouldHideSession(sessionId) {
             return true
+        }
+
+        if shouldKeepUnresolvedCodexSession(sessionId: sessionId, state: state, cwd: cwd, event: event) {
+            return false
         }
 
         if CodexSessionWatcher.title(for: sessionId) != nil {
@@ -1290,6 +1300,36 @@ final class AppController: ObservableObject {
 
         let fallback = fallbackTitle(cwd: cwd, sessionId: sessionId)
         return normalizedTitle == fallback
+    }
+
+    private func shouldKeepUnresolvedCodexSession(
+        sessionId: String,
+        state: AgentState,
+        cwd: String,
+        event: String
+    ) -> Bool {
+        guard hasUsableCodexSessionIdentity(sessionId: sessionId, cwd: cwd) else {
+            return false
+        }
+
+        if store.sessions.contains(where: { $0.agent == .codex && $0.sessionId == sessionId }) {
+            return true
+        }
+
+        return state.isActive || event == "SessionStart"
+    }
+
+    private func hasUsableCodexSessionIdentity(sessionId: String, cwd: String) -> Bool {
+        let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSessionId.isEmpty else {
+            return false
+        }
+
+        if trimmedSessionId != "default" {
+            return true
+        }
+
+        return !cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func isClaudeProbeSession(cwd: String, title: String) -> Bool {
@@ -1323,10 +1363,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
     private var statusItems: [AgentKind: NSStatusItem] = [:]
     private var fallbackStatusItem: NSStatusItem?
+    private var statusIconRefreshTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
     private var isMenuOpen = false
     private var needsMenuRebuild = true
     private var hostedViews: [NSView] = []
+    private static let recentStartupWorkingInterval: TimeInterval = 3
+    private static let startupIdleEvents: Set<String> = ["SessionStart", "JSONLWatch"]
 
     init(controller: AppController) {
         self.controller = controller
@@ -1409,6 +1452,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .store(in: &cancellables)
 
         rebuildMenu()
+        startStatusIconRefreshTimer()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -1486,10 +1530,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func renderStatusIcons() {
+        let now = Date()
         for (agent, statusItem) in statusItems {
+            let aggregateState = controller.store.aggregateState(for: agent, now: now)
             let status = AgentMenuBarStatus(
                 agent: agent,
-                state: controller.store.aggregateState(for: agent)
+                state: menuBarDisplayState(for: agent, aggregateState: aggregateState, now: now)
             )
             let image = AgentImages.menuBarStatus([status])
             statusItem.button?.image = image
@@ -1500,6 +1546,32 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             let image = AgentImages.menuBarStatus([])
             fallbackStatusItem.button?.image = image
             fallbackStatusItem.length = image.size.width + 8
+        }
+    }
+
+    private func menuBarDisplayState(for agent: AgentKind, aggregateState: AgentState, now: Date) -> AgentState {
+        guard aggregateState == .idle else {
+            return aggregateState
+        }
+
+        let hasRecentStartupSession = controller.store.visibleSessions(for: agent, now: now).contains { session in
+            session.state == .idle
+                && Self.startupIdleEvents.contains(session.event)
+                && now.timeIntervalSince(session.updatedAt) <= Self.recentStartupWorkingInterval
+        }
+
+        return hasRecentStartupSession ? .working : aggregateState
+    }
+
+    private func startStatusIconRefreshTimer() {
+        guard statusIconRefreshTimer == nil else {
+            return
+        }
+
+        statusIconRefreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateStatusIcons()
+            }
         }
     }
 
@@ -1709,24 +1781,79 @@ private struct SessionMenuRow: View {
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text(detailText)
-                .font(.system(size: detailFontSize))
-                .foregroundStyle(detailColor)
-                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Color.clear
+                    .frame(width: titleTextLeadingOffset, height: 0)
+
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    ZStack(alignment: .leading) {
+                        Text(Self.stateWidthReferenceText)
+                            .hidden()
+                        Text(stateText)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(1)
+
+                    ZStack(alignment: .leading) {
+                        Text(Self.relativeTimeWidthReferenceText)
+                            .hidden()
+                        Text(relativeTimeText)
+                    }
+                    .monospacedDigit()
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(1)
+
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        Text(projectInfoText)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+
+                        Text(" ")
+                            .fixedSize(horizontal: true, vertical: false)
+
+                        Text(absoluteTimeText)
+                            .monospacedDigit()
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+            .font(.system(size: detailFontSize))
+            .foregroundStyle(detailColor)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: 320, alignment: .leading)
+        .frame(width: contentWidth, alignment: .leading)
         .padding(.leading, leadingPadding)
-        .padding(.trailing, 12)
+        .padding(.trailing, trailingPadding)
         .padding(.vertical, verticalPadding)
+        .frame(width: rowWidth, alignment: .leading)
         .help(helpText)
+    }
+
+    private var rowWidth: CGFloat {
+        344
+    }
+
+    private var contentWidth: CGFloat {
+        rowWidth - leadingPadding - trailingPadding
     }
 
     private var leadingPadding: CGFloat {
         12 + CGFloat(indentLevel) * 18
     }
 
+    private var trailingPadding: CGFloat {
+        12
+    }
+
     private var horizontalSpacing: CGFloat {
         4
+    }
+
+    private var titleTextLeadingOffset: CGFloat {
+        symbolWidth + horizontalSpacing
     }
 
     private var symbolFontSize: CGFloat {
@@ -1773,24 +1900,36 @@ private struct SessionMenuRow: View {
         session.state == .idle ? .primary.opacity(0.56) : .secondary
     }
 
-    private var detailText: String {
+    private var stateText: String {
+        session.state.displayName
+    }
+
+    private var projectInfoText: String {
         if session.isSubagent {
-            return [
-                session.state.displayName,
-                session.subagentNameAndRoleLabel,
-                Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: now)
-            ].joined(separator: " · ")
+            return session.subagentNameAndRoleLabel
         }
 
-        var parts: [String] = [session.state.displayName]
-        if !session.terminal.isEmpty {
-            parts.append(session.terminal)
-        }
         if !session.cwd.isEmpty {
-            parts.append(URL(fileURLWithPath: session.cwd).lastPathComponent)
+            return URL(fileURLWithPath: session.cwd).lastPathComponent
         }
-        parts.append(Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: now))
-        return parts.joined(separator: " · ")
+
+        if !session.terminal.isEmpty {
+            return session.terminal
+        }
+
+        return session.agent.displayName
+    }
+
+    private var relativeTimeText: String {
+        let elapsed = now.timeIntervalSince(session.updatedAt)
+        if elapsed < 1 {
+            return "0s ago"
+        }
+        return Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: now)
+    }
+
+    private var absoluteTimeText: String {
+        Self.absoluteTimeFormatter.string(from: session.updatedAt)
     }
 
     private var titleText: String {
@@ -1816,6 +1955,16 @@ private struct SessionMenuRow: View {
         formatter.unitsStyle = .abbreviated
         return formatter
     }()
+
+    private static let absoluteTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MM/dd HH:mm"
+        return formatter
+    }()
+
+    private static let stateWidthReferenceText = "Working"
+    private static let relativeTimeWidthReferenceText = "000m ago"
 
 }
 

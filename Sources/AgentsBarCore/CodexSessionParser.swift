@@ -5,6 +5,7 @@ public struct CodexParsedSession: Equatable, Sendable {
     public var state: AgentState
     public var title: String
     public var cwd: String
+    public var event: String
     public var isInternalSubagent: Bool
     public var parentSessionId: String?
     public var subagentNickname: String?
@@ -16,6 +17,7 @@ public struct CodexParsedSession: Equatable, Sendable {
         state: AgentState,
         title: String,
         cwd: String,
+        event: String = "",
         isInternalSubagent: Bool,
         parentSessionId: String? = nil,
         subagentNickname: String? = nil,
@@ -26,6 +28,7 @@ public struct CodexParsedSession: Equatable, Sendable {
         self.state = state
         self.title = title
         self.cwd = cwd
+        self.event = event
         self.isInternalSubagent = isInternalSubagent
         self.parentSessionId = parentSessionId
         self.subagentNickname = subagentNickname
@@ -40,6 +43,7 @@ public enum CodexSessionParser {
         var state = AgentState.idle
         var title = ""
         var cwd = ""
+        var event = ""
         var isInternalSubagent = false
         var parentSessionId: String?
         var subagentNickname: String?
@@ -106,6 +110,9 @@ public enum CodexSessionParser {
 
             if type == "response_item" {
                 let itemType = payload["type"] as? String ?? ""
+                if !itemType.isEmpty {
+                    event = itemType
+                }
                 if itemType == "function_call" || itemType == "function_call_output" || itemType == "custom_tool_call_output" {
                     state = .working
                 }
@@ -119,10 +126,13 @@ public enum CodexSessionParser {
 
             if type == "event_msg" {
                 let eventType = payload["type"] as? String ?? ""
+                if !eventType.isEmpty {
+                    event = eventType
+                }
                 if ["exec_command_begin", "mcp_tool_call_begin", "patch_apply_begin", "web_search_begin", "agent_message"].contains(eventType) {
                     state = .working
                 }
-                if ["task_complete", "turn_complete", "shutdown_complete"].contains(eventType) {
+                if ["task_complete", "turn_complete", "shutdown_complete", "turn_aborted"].contains(eventType) {
                     state = .idle
                 }
                 if let eventCwd = payload["cwd"] as? String, !eventCwd.isEmpty {
@@ -136,6 +146,7 @@ public enum CodexSessionParser {
             state: state,
             title: title,
             cwd: cwd,
+            event: event,
             isInternalSubagent: isInternalSubagent,
             parentSessionId: parentSessionId,
             subagentNickname: subagentNickname,

@@ -38,6 +38,20 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.subagentDepth, 1)
     }
 
+    func testTurnAbortedEndsWorkingSession() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"mcp_tool_call_begin"}}
+        {"type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.sessionId, "parent")
+        XCTAssertEqual(parsed.state, .idle)
+        XCTAssertEqual(parsed.event, "turn_aborted")
+    }
+
     func testParsesGuardianAsInternalSubagent() {
         let text = """
         {"type":"session_meta","payload":{"id":"guardian","cwd":"/tmp/project","thread_source":"subagent","source":{"subagent":{"other":"guardian"}}}}
