@@ -1619,10 +1619,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var hostedViews: [NSView] = []
     private static let statusItemHorizontalPadding: CGFloat = 1
     private static let idleStatusIconRefreshInterval: TimeInterval = 1
-    private static let animatedStatusIconRefreshInterval: TimeInterval = 1.0 / 24.0
-    private static let statusIconHighlightDuration: TimeInterval = 1.15
-    private static let recentStartupWorkingInterval: TimeInterval = 3
-    private static let startupIdleEvents: Set<String> = ["SessionStart", "JSONLWatch"]
+    private static let animatedStatusIconRefreshInterval = AgentIconAnimation.animatedRefreshInterval
 
     init(controller: AppController) {
         self.controller = controller
@@ -1806,7 +1803,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         for (agent, statusItem) in statusItems {
             let aggregateState = controller.store.aggregateState(for: agent, now: now)
-            let displayState = menuBarDisplayState(for: agent, aggregateState: aggregateState, now: now)
+            let displayState = AgentDisplayState.displayState(
+                for: agent,
+                aggregateState: aggregateState,
+                store: controller.store,
+                now: now
+            )
             hasAnimatedIcon = hasAnimatedIcon || displayState == .working
             let status = AgentMenuBarStatus(
                 agent: agent,
@@ -1827,20 +1829,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
 
         return hasAnimatedIcon
-    }
-
-    private func menuBarDisplayState(for agent: AgentKind, aggregateState: AgentState, now: Date) -> AgentState {
-        guard aggregateState == .idle else {
-            return aggregateState
-        }
-
-        let hasRecentStartupSession = controller.store.visibleSessions(for: agent, now: now).contains { session in
-            session.state == .idle
-                && Self.startupIdleEvents.contains(session.event)
-                && now.timeIntervalSince(session.updatedAt) <= Self.recentStartupWorkingInterval
-        }
-
-        return hasRecentStartupSession ? .working : aggregateState
     }
 
     private func startStatusIconRefreshTimer() {
@@ -1876,10 +1864,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func statusIconHighlightPhase(at date: Date) -> CGFloat {
-        let elapsed = date.timeIntervalSince(statusIconAnimationStartDate)
-        let rawPhase = elapsed.truncatingRemainder(dividingBy: Self.statusIconHighlightDuration)
-            / Self.statusIconHighlightDuration
-        return CGFloat(rawPhase)
+        AgentIconAnimation.highlightPhase(at: date, startDate: statusIconAnimationStartDate)
     }
 
     private func setNeedsMenuRebuild() {
@@ -1990,16 +1975,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 private struct AgentHeaderView: View {
     let agent: AgentKind
     let usesColorIcon: Bool
+    let state: AgentState
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(nsImage: AgentImages.menuHeaderIcon(for: agent, color: usesColorIcon))
-                .resizable()
-                .renderingMode(usesColorIcon ? .original : .template)
-                .foregroundStyle(.primary)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 16, height: 16)
-                .accessibilityHidden(true)
+            iconView
 
             Text(agent.menuHeaderTitle)
                 .font(.system(size: 15, weight: .semibold))
@@ -2010,6 +1990,32 @@ private struct AgentHeaderView: View {
         .padding(.horizontal, 12)
         .padding(.top, 7)
         .padding(.bottom, 3)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if state == .working {
+            TimelineView(.animation) { timeline in
+                headerIcon(highlightPhase: AgentIconAnimation.highlightPhase(at: timeline.date))
+            }
+        } else {
+            headerIcon(highlightPhase: nil)
+        }
+    }
+
+    private func headerIcon(highlightPhase: CGFloat?) -> some View {
+        Image(nsImage: AgentImages.menuHeaderIcon(
+            for: agent,
+            color: usesColorIcon,
+            state: state,
+            highlightPhase: highlightPhase
+        ))
+        .resizable()
+        .renderingMode(state == .working || usesColorIcon ? .original : .template)
+        .foregroundStyle(.primary)
+        .aspectRatio(contentMode: .fit)
+        .frame(width: 16, height: 16)
+        .accessibilityHidden(true)
     }
 }
 
@@ -2026,9 +2032,15 @@ private struct AgentSectionView: View {
 
     var body: some View {
         let rows = store.displayRows(for: agent, now: now)
+        let state = AgentDisplayState.displayState(
+            for: agent,
+            aggregateState: store.aggregateState(for: agent, now: now),
+            store: store,
+            now: now
+        )
 
         VStack(alignment: .leading, spacing: 0) {
-            AgentHeaderView(agent: agent, usesColorIcon: usesColorIcon)
+            AgentHeaderView(agent: agent, usesColorIcon: usesColorIcon, state: state)
 
             if rows.isEmpty {
                 EmptyAgentRow()
@@ -2071,6 +2083,30 @@ private extension AgentKind {
         case .claudeCode:
             displayName
         }
+    }
+}
+
+private enum AgentDisplayState {
+    private static let recentStartupWorkingInterval: TimeInterval = 3
+    private static let startupIdleEvents: Set<String> = ["SessionStart", "JSONLWatch"]
+
+    static func displayState(
+        for agent: AgentKind,
+        aggregateState: AgentState,
+        store: AgentStateStore,
+        now: Date
+    ) -> AgentState {
+        guard aggregateState == .idle else {
+            return aggregateState
+        }
+
+        let hasRecentStartupSession = store.visibleSessions(for: agent, now: now).contains { session in
+            session.state == .idle
+                && startupIdleEvents.contains(session.event)
+                && now.timeIntervalSince(session.updatedAt) <= recentStartupWorkingInterval
+        }
+
+        return hasRecentStartupSession ? .working : aggregateState
     }
 }
 
@@ -2395,6 +2431,23 @@ private enum AgentColors {
     }
 }
 
+private enum AgentIconAnimation {
+    static let animatedRefreshInterval: TimeInterval = 1.0 / 24.0
+    private static let highlightDuration: TimeInterval = 1.15
+
+    static func highlightPhase(at date: Date, startDate: Date) -> CGFloat {
+        let elapsed = date.timeIntervalSince(startDate)
+        let rawPhase = elapsed.truncatingRemainder(dividingBy: highlightDuration) / highlightDuration
+        return CGFloat(rawPhase)
+    }
+
+    static func highlightPhase(at date: Date) -> CGFloat {
+        let rawPhase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: highlightDuration)
+            / highlightDuration
+        return CGFloat(rawPhase)
+    }
+}
+
 struct AgentMenuBarStatus {
     let agent: AgentKind
     let state: AgentState
@@ -2450,6 +2503,33 @@ enum AgentImages {
             return source
         }
         image.isTemplate = !color
+        return image
+    }
+
+    static func menuHeaderIcon(
+        for agent: AgentKind,
+        color: Bool = false,
+        state: AgentState,
+        highlightPhase: CGFloat? = nil
+    ) -> NSImage {
+        guard state == .working else {
+            return menuHeaderIcon(for: agent, color: color)
+        }
+
+        let icons = iconSet(for: agent)
+        let size = icons.mono.size
+        let image = NSImage(size: size, flipped: false) { _ in
+            drawAgentLogo(
+                icons,
+                state: state,
+                size: size,
+                x: 0,
+                canvasHeight: size.height,
+                highlightPhase: highlightPhase
+            )
+            return true
+        }
+        image.isTemplate = false
         return image
     }
 
