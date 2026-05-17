@@ -301,38 +301,47 @@ struct SessionRow: View {
 enum AgentImages {
     private static let menuBarLogoDisplayScale: CGFloat = 0.7
     private static let menuBarLogoGap: CGFloat = 2
-    private static let menuBarStatusTrailingPadding: CGFloat = 2
-    private static let menuBarStatusSymbolSize: CGFloat = 7.8
-    private static let menuBarStatusSymbolXOffset: CGFloat = 2.0
-    private static let menuBarStatusSymbolY: CGFloat = -2.5
-    static let codex: NSImage = loadMenuBarImage(name: "codexTemplate@3x", isTemplate: true)
-    static let claude: NSImage = loadMenuBarImage(name: "claudeTemplate@3x", isTemplate: true)
-    private static let codexDisplaySize = displaySize(for: codex)
-    private static let claudeDisplaySize = displaySize(for: claude)
+    private static let assetScale: CGFloat = 3
+    private static let waitingTintColor = NSColor(srgbRed: 0xFF / 255, green: 0xD6 / 255, blue: 0x0A / 255, alpha: 1)
+    private static let codexIcons = AgentIconSet(
+        mono: loadMenuBarIcon(name: "Codex Mono@3x"),
+        color: loadMenuBarIcon(name: "Codex Color@3x")
+    )
+    private static let claudeIcons = AgentIconSet(
+        mono: loadMenuBarIcon(name: "claude Mono@3x"),
+        color: loadMenuBarIcon(name: "Claude Color@3x")
+    )
+    private static let codexDisplaySize = displaySize(for: codexIcons.mono)
+    private static let claudeDisplaySize = displaySize(for: claudeIcons.mono)
     static let menuBarStatusSize = NSSize(
-        width: codexDisplaySize.width + menuBarLogoGap + claudeDisplaySize.width + menuBarStatusTrailingPadding,
-        height: max(codexDisplaySize.height, claudeDisplaySize.height) + 1
+        width: codexDisplaySize.width + menuBarLogoGap + claudeDisplaySize.width,
+        height: max(codexDisplaySize.height, claudeDisplaySize.height)
     )
 
     static func menuBarStatus(codexState: AgentState, claudeState: AgentState) -> NSImage {
-        let image = NSImage(size: menuBarStatusSize)
-        image.lockFocus()
-
-        drawAgentLogo(codex, state: codexState, size: codexDisplaySize, x: 0)
-        drawAgentLogo(claude, state: claudeState, size: claudeDisplaySize, x: codexDisplaySize.width + menuBarLogoGap)
-
-        image.unlockFocus()
-        image.isTemplate = true
+        let image = NSImage(size: menuBarStatusSize, flipped: false) { _ in
+            drawAgentLogo(codexIcons, state: codexState, size: codexDisplaySize, x: 0)
+            drawAgentLogo(claudeIcons, state: claudeState, size: claudeDisplaySize, x: codexDisplaySize.width + menuBarLogoGap)
+            return true
+        }
+        image.isTemplate = false
         return image
     }
 
-    private static func loadMenuBarImage(name: String, isTemplate: Bool) -> NSImage {
-        guard let image = Bundle.module.image(forResource: name)
-            ?? Bundle.module.url(forResource: name, withExtension: "png").flatMap(NSImage.init(contentsOf:)) else {
+    private static func loadMenuBarIcon(name: String) -> NSImage {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "png")
+            ?? Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "icon")
+            ?? Bundle.module.url(forResource: "icon/\(name)", withExtension: "png"),
+              let image = NSImage(contentsOf: url) else {
             return NSImage(size: NSSize(width: 13, height: 13))
         }
 
-        image.isTemplate = isTemplate
+        let pixelWidth = image.representations.map(\.pixelsWide).max() ?? Int(image.size.width)
+        let pixelHeight = image.representations.map(\.pixelsHigh).max() ?? Int(image.size.height)
+        if pixelWidth > 0, pixelHeight > 0 {
+            image.size = NSSize(width: CGFloat(pixelWidth) / assetScale, height: CGFloat(pixelHeight) / assetScale)
+        }
+        image.isTemplate = false
         return image
     }
 
@@ -343,26 +352,41 @@ enum AgentImages {
         )
     }
 
-    private static func drawAgentLogo(_ logo: NSImage, state: AgentState, size: NSSize, x: CGFloat) {
+    private static func drawAgentLogo(_ icons: AgentIconSet, state: AgentState, size: NSSize, x: CGFloat) {
         let logoRect = NSRect(
             x: x,
             y: (menuBarStatusSize.height - size.height) / 2,
             width: size.width,
             height: size.height
         )
-        logo.draw(in: logoRect, from: .zero, operation: .sourceOver, fraction: 1.0)
 
-        let symbol = NSAttributedString(
-            string: state.symbol,
-            attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: menuBarStatusSymbolSize, weight: .bold),
-                .foregroundColor: NSColor.black
-            ]
-        )
-        let symbolSize = symbol.size()
-        symbol.draw(at: NSPoint(
-            x: logoRect.maxX - symbolSize.width + menuBarStatusSymbolXOffset,
-            y: menuBarStatusSymbolY
-        ))
+        switch state {
+        case .working:
+            icons.color.draw(in: logoRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+        case .waiting:
+            drawTemplateLogo(icons.mono, in: logoRect, color: waitingTintColor)
+        case .idle, .ended:
+            drawTemplateLogo(icons.mono, in: logoRect, color: .labelColor)
+        }
+    }
+
+    private static func drawTemplateLogo(_ logo: NSImage, in rect: NSRect, color: NSColor) {
+        var proposedRect = NSRect(origin: .zero, size: logo.size)
+        guard let cgImage = logo.cgImage(forProposedRect: &proposedRect, context: NSGraphicsContext.current, hints: nil),
+              let context = NSGraphicsContext.current?.cgContext else {
+            logo.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            return
+        }
+
+        context.saveGState()
+        context.clip(to: rect, mask: cgImage)
+        color.setFill()
+        rect.fill()
+        context.restoreGState()
+    }
+
+    private struct AgentIconSet {
+        let mono: NSImage
+        let color: NSImage
     }
 }

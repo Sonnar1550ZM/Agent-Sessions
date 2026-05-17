@@ -78,11 +78,11 @@ public final class AgentStateStore: ObservableObject {
 
     public func aggregateState(for agent: AgentKind, now: Date = Date()) -> AgentState {
         let visible = visibleSessions(for: agent, now: now)
-        if visible.contains(where: { $0.state == .working }) {
-            return .working
-        }
         if visible.contains(where: { $0.state == .waiting }) {
             return .waiting
+        }
+        if visible.contains(where: { $0.state == .working }) {
+            return .working
         }
         if visible.contains(where: { $0.state == .idle }) {
             return .idle
@@ -179,9 +179,9 @@ public final class AgentStateStore: ObservableObject {
 
     private func priority(_ state: AgentState) -> Int {
         switch state {
-        case .working:
-            0
         case .waiting:
+            0
+        case .working:
             1
         case .idle:
             2

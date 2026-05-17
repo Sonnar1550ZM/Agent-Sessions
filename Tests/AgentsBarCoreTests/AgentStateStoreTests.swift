@@ -37,8 +37,18 @@ final class AgentStateStoreTests: XCTestCase {
 
         XCTAssertEqual(
             store.visibleSessions(for: .codex, now: base.addingTimeInterval(20)).map(\.sessionId),
-            ["working", "waiting", "old-idle"]
+            ["waiting", "working", "old-idle"]
         )
+    }
+
+    func testAggregateStatePrioritizesWaitingBeforeWorking() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "working", state: .working, updatedAt: base))
+        store.apply(AgentEvent(agent: .codex, sessionId: "waiting", state: .waiting, updatedAt: base.addingTimeInterval(1)))
+
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(2)), .waiting)
     }
 
     func testHistoryIsLimitedPerAgent() {
