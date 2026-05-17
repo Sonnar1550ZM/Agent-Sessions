@@ -44,6 +44,10 @@ final class CodexSessionWatcher {
         return CodexSessionParser.parse(text, fallbackSessionId: sessionId).isInternalSubagent
     }
 
+    static func fileStatus(for sessionId: String) -> CodexSessionFileStatus {
+        CodexSessionFileIndex().status(for: sessionId)
+    }
+
     private func poll() {
         for snapshot in Self.makeSnapshots() {
             let key = snapshot.event.sessionId
@@ -119,9 +123,7 @@ final class CodexSessionWatcher {
     }
 
     private static func latestRolloutFiles(limit: Int) -> [URL] {
-        let root = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/sessions", isDirectory: true)
+        let root = CodexSessionFileIndex.defaultActiveRoot()
 
         guard let enumerator = FileManager.default.enumerator(
             at: root,
@@ -151,9 +153,7 @@ final class CodexSessionWatcher {
     }
 
     private static func rolloutFile(for sessionId: String) -> URL? {
-        latestRolloutFiles(limit: 200).first { file in
-            fallbackSessionId(from: file) == sessionId
-        }
+        CodexSessionFileIndex().activeRolloutFile(for: sessionId)
     }
 
     private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
@@ -222,7 +222,10 @@ final class CodexSessionWatcher {
     }
 
     private static func sanitizedTitle(_ value: String) -> String? {
-        let title = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = value
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
         guard !title.isEmpty else {
             return nil
         }
@@ -230,7 +233,6 @@ final class CodexSessionWatcher {
     }
 
     private static func fallbackSessionId(from url: URL) -> String {
-        let stem = url.deletingPathExtension().lastPathComponent
-        return stem.split(separator: "-").suffix(5).joined(separator: "-")
+        CodexSessionFileIndex.sessionId(fromRolloutURL: url)
     }
 }

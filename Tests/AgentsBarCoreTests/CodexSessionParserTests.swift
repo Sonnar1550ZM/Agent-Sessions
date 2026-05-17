@@ -63,4 +63,14 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertTrue(parsed.isInternalSubagent)
         XCTAssertNil(parsed.parentSessionId)
     }
+
+    func testNormalizesThreadNameWhitespace() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode","thread_name":"Fix menu\\nbar   layout\\tspacing"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "Fix menu bar layout spacing")
+    }
 }

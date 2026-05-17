@@ -81,6 +81,51 @@ final class ClaudeSessionTitleResolverTests: XCTestCase {
         )
     }
 
+    func testDetectsArchivedClaudeAppSession() throws {
+        let appRoot = try makeProjectsRoot()
+        let sessionId = "archived"
+
+        try writeAppSession(
+            root: appRoot,
+            cliSessionId: sessionId,
+            title: "Archived session",
+            lastActivityAt: 1,
+            isArchived: true
+        )
+
+        XCTAssertTrue(ClaudeSessionTitleResolver.isArchived(sessionId: sessionId, appSessionsRoot: appRoot))
+        XCTAssertEqual(ClaudeSessionTitleResolver.appSessionStatus(sessionId: sessionId, appSessionsRoot: appRoot), .archived)
+    }
+
+    func testUsesLatestClaudeAppSessionArchiveState() throws {
+        let appRoot = try makeProjectsRoot()
+        let sessionId = "restored"
+
+        try writeAppSession(
+            root: appRoot,
+            cliSessionId: sessionId,
+            title: "Older archived session",
+            lastActivityAt: 1,
+            isArchived: true
+        )
+        try writeAppSession(
+            root: appRoot,
+            cliSessionId: sessionId,
+            title: "Restored session",
+            lastActivityAt: 2,
+            isArchived: false
+        )
+
+        XCTAssertFalse(ClaudeSessionTitleResolver.isArchived(sessionId: sessionId, appSessionsRoot: appRoot))
+        XCTAssertEqual(ClaudeSessionTitleResolver.appSessionStatus(sessionId: sessionId, appSessionsRoot: appRoot), .active)
+    }
+
+    func testReportsMissingClaudeAppSession() throws {
+        let appRoot = try makeProjectsRoot()
+
+        XCTAssertEqual(ClaudeSessionTitleResolver.appSessionStatus(sessionId: "deleted", appSessionsRoot: appRoot), .missing)
+    }
+
     private func makeProjectsRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -99,7 +144,8 @@ final class ClaudeSessionTitleResolverTests: XCTestCase {
         root: URL,
         cliSessionId: String,
         title: String,
-        lastActivityAt: Int
+        lastActivityAt: Int,
+        isArchived: Bool = false
     ) throws {
         let window = root
             .appendingPathComponent("window", isDirectory: true)
@@ -111,7 +157,8 @@ final class ClaudeSessionTitleResolverTests: XCTestCase {
           "sessionId": "local-\(UUID().uuidString)",
           "cliSessionId": "\(cliSessionId)",
           "title": "\(title)",
-          "lastActivityAt": \(lastActivityAt)
+          "lastActivityAt": \(lastActivityAt),
+          "isArchived": \(isArchived)
         }
         """
         try json.write(to: file, atomically: true, encoding: .utf8)

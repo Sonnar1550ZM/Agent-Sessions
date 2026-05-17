@@ -1258,10 +1258,19 @@ final class AppController: ObservableObject {
                 state: session.state,
                 title: session.title,
                 cwd: session.cwd,
-                event: session.event
+                event: session.event,
+                allowsUnresolvedLiveSession: false
             )
         case .claudeCode:
-            isClaudeProbeSession(cwd: session.cwd, title: session.title)
+            shouldHideClaudeSession(
+                sessionId: session.sessionId,
+                state: session.state,
+                cwd: session.cwd,
+                event: session.event,
+                title: session.title,
+                isSubagent: session.isSubagent,
+                allowsUnresolvedLiveSession: false
+            )
         }
     }
 
@@ -1273,15 +1282,47 @@ final class AppController: ObservableObject {
                 state: event.state,
                 title: event.title,
                 cwd: event.cwd,
-                event: event.event
+                event: event.event,
+                allowsUnresolvedLiveSession: true
             )
         case .claudeCode:
-            isClaudeProbeSession(cwd: event.cwd, title: event.title)
+            shouldHideClaudeSession(
+                sessionId: event.sessionId,
+                state: event.state,
+                cwd: event.cwd,
+                event: event.event,
+                title: event.title,
+                isSubagent: event.isSubagent,
+                allowsUnresolvedLiveSession: true
+            )
         }
     }
 
-    private func shouldHideCodexSession(sessionId: String, state: AgentState, title: String, cwd: String, event: String) -> Bool {
+    private func shouldHideCodexSession(
+        sessionId: String,
+        state: AgentState,
+        title: String,
+        cwd: String,
+        event: String,
+        allowsUnresolvedLiveSession: Bool
+    ) -> Bool {
+        switch CodexSessionWatcher.fileStatus(for: sessionId) {
+        case .active:
+            break
+        case .archived, .missing:
+            return !(allowsUnresolvedLiveSession && shouldKeepUnresolvedCodexSession(
+                sessionId: sessionId,
+                state: state,
+                cwd: cwd,
+                event: event
+            ))
+        }
+
         if CodexSessionWatcher.shouldHideSession(sessionId) {
+            return true
+        }
+
+        if AgentSessionVisibility.isCodexMemoryWorkspace(agent: .codex, cwd: cwd) {
             return true
         }
 
@@ -1308,18 +1349,59 @@ final class AppController: ObservableObject {
         cwd: String,
         event: String
     ) -> Bool {
-        guard hasUsableCodexSessionIdentity(sessionId: sessionId, cwd: cwd) else {
+        guard hasUsableSessionIdentity(sessionId: sessionId, cwd: cwd) else {
             return false
-        }
-
-        if store.sessions.contains(where: { $0.agent == .codex && $0.sessionId == sessionId }) {
-            return true
         }
 
         return state.isActive || event == "SessionStart"
     }
 
-    private func hasUsableCodexSessionIdentity(sessionId: String, cwd: String) -> Bool {
+    private func shouldHideClaudeSession(
+        sessionId: String,
+        state: AgentState,
+        cwd: String,
+        event: String,
+        title: String,
+        isSubagent: Bool,
+        allowsUnresolvedLiveSession: Bool
+    ) -> Bool {
+        if isClaudeProbeSession(cwd: cwd, title: title) {
+            return true
+        }
+
+        guard !isSubagent else {
+            return false
+        }
+
+        switch ClaudeSessionTitleResolver.appSessionStatus(sessionId: sessionId) {
+        case .active:
+            return false
+        case .archived:
+            return true
+        case .missing:
+            return !(allowsUnresolvedLiveSession && shouldKeepUnresolvedClaudeSession(
+                sessionId: sessionId,
+                state: state,
+                cwd: cwd,
+                event: event
+            ))
+        }
+    }
+
+    private func shouldKeepUnresolvedClaudeSession(
+        sessionId: String,
+        state: AgentState,
+        cwd: String,
+        event: String
+    ) -> Bool {
+        guard hasUsableSessionIdentity(sessionId: sessionId, cwd: cwd) else {
+            return false
+        }
+
+        return state.isActive || event == "SessionStart" || event == "Start"
+    }
+
+    private func hasUsableSessionIdentity(sessionId: String, cwd: String) -> Bool {
         let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionId.isEmpty else {
             return false
@@ -1364,10 +1446,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var statusItems: [AgentKind: NSStatusItem] = [:]
     private var fallbackStatusItem: NSStatusItem?
     private var statusIconRefreshTimer: Timer?
+    private var statusIconRefreshInterval: TimeInterval?
+    private var statusIconAnimationStartDate = Date()
     private var cancellables: Set<AnyCancellable> = []
     private var isMenuOpen = false
     private var needsMenuRebuild = true
     private var hostedViews: [NSView] = []
+    private static let statusItemHorizontalPadding: CGFloat = 1
+    private static let idleStatusIconRefreshInterval: TimeInterval = 1
+    private static let animatedStatusIconRefreshInterval: TimeInterval = 1.0 / 24.0
+    private static let statusIconHighlightDuration: TimeInterval = 1.15
     private static let recentStartupWorkingInterval: TimeInterval = 3
     private static let startupIdleEvents: Set<String> = ["SessionStart", "JSONLWatch"]
 
@@ -1526,27 +1614,38 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func updateStatusIcons() {
-        renderStatusIcons()
+        let hasAnimatedIcon = renderStatusIcons()
+        updateStatusIconRefreshTimer(animated: hasAnimatedIcon)
     }
 
-    private func renderStatusIcons() {
+    private func renderStatusIcons() -> Bool {
         let now = Date()
+        let highlightPhase = statusIconHighlightPhase(at: now)
+        var hasAnimatedIcon = false
+
         for (agent, statusItem) in statusItems {
             let aggregateState = controller.store.aggregateState(for: agent, now: now)
+            let displayState = menuBarDisplayState(for: agent, aggregateState: aggregateState, now: now)
+            hasAnimatedIcon = hasAnimatedIcon || displayState == .working
             let status = AgentMenuBarStatus(
                 agent: agent,
-                state: menuBarDisplayState(for: agent, aggregateState: aggregateState, now: now)
+                state: displayState
             )
-            let image = AgentImages.menuBarStatus([status])
+            let image = AgentImages.menuBarStatus(
+                [status],
+                highlightPhase: displayState == .working ? highlightPhase : nil
+            )
             statusItem.button?.image = image
-            statusItem.length = image.size.width + 8
+            statusItem.length = image.size.width + Self.statusItemHorizontalPadding
         }
 
         if let fallbackStatusItem {
             let image = AgentImages.menuBarStatus([])
             fallbackStatusItem.button?.image = image
-            fallbackStatusItem.length = image.size.width + 8
+            fallbackStatusItem.length = image.size.width + Self.statusItemHorizontalPadding
         }
+
+        return hasAnimatedIcon
     }
 
     private func menuBarDisplayState(for agent: AgentKind, aggregateState: AgentState, now: Date) -> AgentState {
@@ -1568,11 +1667,38 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             return
         }
 
-        statusIconRefreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        updateStatusIconRefreshTimer(animated: false)
+    }
+
+    private func updateStatusIconRefreshTimer(animated: Bool) {
+        let interval = animated
+            ? Self.animatedStatusIconRefreshInterval
+            : Self.idleStatusIconRefreshInterval
+
+        if animated && statusIconRefreshInterval != Self.animatedStatusIconRefreshInterval {
+            statusIconAnimationStartDate = Date()
+        }
+
+        guard statusIconRefreshInterval != interval else {
+            return
+        }
+
+        statusIconRefreshTimer?.invalidate()
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateStatusIcons()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        statusIconRefreshTimer = timer
+        statusIconRefreshInterval = interval
+    }
+
+    private func statusIconHighlightPhase(at date: Date) -> CGFloat {
+        let elapsed = date.timeIntervalSince(statusIconAnimationStartDate)
+        let rawPhase = elapsed.truncatingRemainder(dividingBy: Self.statusIconHighlightDuration)
+            / Self.statusIconHighlightDuration
+        return CGFloat(rawPhase)
     }
 
     private func setNeedsMenuRebuild() {
@@ -1637,7 +1763,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(hostedItem(AgentSectionView(
             store: controller.store,
             agent: agent,
-            usesColorIcon: providerVisibility.usesColorDropdownIcons
+            usesColorIcon: providerVisibility.usesColorDropdownIcons,
+            onLayoutMayChange: { [weak self] in
+                self?.resizeMenuIfOpen()
+            }
         )))
     }
 
@@ -1705,6 +1834,7 @@ private struct AgentSectionView: View {
     @ObservedObject var store: AgentStateStore
     let agent: AgentKind
     let usesColorIcon: Bool
+    let onLayoutMayChange: () -> Void
     @State private var now = Date()
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -1728,6 +1858,7 @@ private struct AgentSectionView: View {
         }
         .onReceive(timer) { date in
             now = date
+            onLayoutMayChange()
         }
     }
 }
@@ -1771,15 +1902,18 @@ private struct SessionMenuRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: horizontalSpacing) {
-                Text(session.state.symbol)
-                    .font(.system(size: symbolFontSize, weight: .semibold))
-                    .foregroundStyle(symbolColor)
-                    .frame(width: symbolWidth, alignment: .leading)
+                SessionStateIcon(
+                    state: session.state,
+                    color: symbolColor,
+                    symbol: session.state.symbol,
+                    symbolFontSize: symbolFontSize,
+                    symbolWidth: symbolWidth
+                )
                 Text(titleText)
                     .font(.system(size: titleFontSize))
                     .foregroundStyle(titleColor)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Color.clear
@@ -1968,6 +2102,58 @@ private struct SessionMenuRow: View {
 
 }
 
+private struct SessionStateIcon: View {
+    let state: AgentState
+    let color: Color
+    let symbol: String
+    let symbolFontSize: CGFloat
+    let symbolWidth: CGFloat
+
+    var body: some View {
+        Group {
+            if state == .working {
+                IOSActivitySpinner(color: color)
+                    .frame(width: symbolWidth, height: symbolWidth)
+                    .padding(.top, 2)
+            } else {
+                Text(symbol)
+                    .font(.system(size: symbolFontSize, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: symbolWidth, alignment: .leading)
+            }
+        }
+        .frame(width: symbolWidth, height: symbolFontSize + 3, alignment: .topLeading)
+    }
+}
+
+private struct IOSActivitySpinner: View {
+    let color: Color
+
+    private let size: CGFloat = 11
+    private let lineWidth: CGFloat = 1.7
+    private let cycleDuration: TimeInterval = 0.9
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Circle()
+                .trim(from: 0.12, to: 0.78)
+                .stroke(
+                    color.opacity(0.78),
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(rotationDegrees(at: timeline.date)))
+        }
+        .frame(width: size, height: size)
+    }
+
+    private func rotationDegrees(at date: Date) -> Double {
+        let progress = date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: cycleDuration) / cycleDuration
+        return progress * 360 - 90
+    }
+}
+
 private enum AgentColors {
     static let codexWorking = NSColor(srgbRed: 0x00 / 255, green: 0x6E / 255, blue: 0xFE / 255, alpha: 1)
     static let claudeWorking = NSColor(srgbRed: 0xCF / 255, green: 0x83 / 255, blue: 0x66 / 255, alpha: 1)
@@ -2002,7 +2188,7 @@ enum AgentImages {
         color: loadMenuBarIcon(name: "Claude Color@3x")
     )
 
-    static func menuBarStatus(_ statuses: [AgentMenuBarStatus]) -> NSImage {
+    static func menuBarStatus(_ statuses: [AgentMenuBarStatus], highlightPhase: CGFloat? = nil) -> NSImage {
         guard !statuses.isEmpty else {
             return fallbackMenuBarStatus()
         }
@@ -2019,7 +2205,8 @@ enum AgentImages {
                     state: status.state,
                     size: displaySize,
                     x: x,
-                    canvasHeight: size.height
+                    canvasHeight: size.height,
+                    highlightPhase: status.state == .working ? highlightPhase : nil
                 )
                 x += displaySize.width + menuBarLogoGap
             }
@@ -2114,7 +2301,8 @@ enum AgentImages {
         state: AgentState,
         size: NSSize,
         x: CGFloat,
-        canvasHeight: CGFloat
+        canvasHeight: CGFloat,
+        highlightPhase: CGFloat?
     ) {
         let logoRect = NSRect(
             x: x,
@@ -2126,11 +2314,52 @@ enum AgentImages {
         switch state {
         case .working:
             icons.color.draw(in: logoRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            if let highlightPhase {
+                drawWorkingHighlight(icons.color, in: logoRect, phase: highlightPhase)
+            }
         case .waiting:
             drawTemplateLogo(icons.mono, in: logoRect, color: AgentColors.waiting)
         case .idle, .ended:
             drawTemplateLogo(icons.mono, in: logoRect, color: .labelColor)
         }
+    }
+
+    private static func drawWorkingHighlight(_ logo: NSImage, in rect: NSRect, phase: CGFloat) {
+        var proposedRect = NSRect(origin: .zero, size: logo.size)
+        guard let cgImage = logo.cgImage(forProposedRect: &proposedRect, context: NSGraphicsContext.current, hints: nil),
+              let context = NSGraphicsContext.current?.cgContext,
+              let gradient = NSGradient(colors: [
+                .clear,
+                NSColor.white.withAlphaComponent(0.18),
+                NSColor.white.withAlphaComponent(0.58),
+                NSColor.white.withAlphaComponent(0.18),
+                .clear
+              ]) else {
+            return
+        }
+
+        let clampedPhase = min(max(phase, 0), 1)
+        let stripeWidth = max(rect.width * 0.84, 7)
+        let slant = rect.height * 0.5
+        let travelWidth = rect.width + stripeWidth + (slant * 2)
+        let leadingX = rect.minX - stripeWidth - slant + (travelWidth * clampedPhase)
+        let stripePath = NSBezierPath()
+        stripePath.move(to: NSPoint(x: leadingX - slant, y: rect.minY))
+        stripePath.line(to: NSPoint(x: leadingX + stripeWidth - slant, y: rect.minY))
+        stripePath.line(to: NSPoint(x: leadingX + stripeWidth + slant, y: rect.maxY))
+        stripePath.line(to: NSPoint(x: leadingX + slant, y: rect.maxY))
+        stripePath.close()
+
+        context.saveGState()
+        context.clip(to: rect, mask: cgImage)
+        context.setBlendMode(.screen)
+        stripePath.addClip()
+        gradient.draw(
+            from: NSPoint(x: leadingX - slant, y: rect.midY),
+            to: NSPoint(x: leadingX + stripeWidth + slant, y: rect.midY),
+            options: []
+        )
+        context.restoreGState()
     }
 
     private static func drawTemplateLogo(_ logo: NSImage, in rect: NSRect, color: NSColor) {

@@ -82,13 +82,11 @@ public final class AgentStateStore: ObservableObject {
     }
 
     public func visibleSessions(for agent: AgentKind, now: Date = Date()) -> [AgentSession] {
-        let visible = sessions
+        let allAgentSessions = sessions
             .filter { $0.agent == agent }
             .map { sessionForDisplay($0, now: now) }
+        let visible = displayEligibleSessions(from: allAgentSessions, now: now)
             .sorted(by: sessionSort)
-            .filter { session in
-                session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyVisibilityInterval
-            }
             .prefix(maxHistoryPerAgent)
 
         return Array(visible)
@@ -99,6 +97,7 @@ public final class AgentStateStore: ObservableObject {
             .filter { $0.agent == agent }
             .map { sessionForDisplay($0, now: now) }
         let eligibleSessions = displayEligibleSessions(from: allAgentSessions, now: now)
+        let eligibleSessionIds = Set(eligibleSessions.map(\.sessionId))
         let visibleParents = Array(
             eligibleSessions
                 .filter { !$0.isSubagent }
@@ -109,11 +108,11 @@ public final class AgentStateStore: ObservableObject {
             from: eligibleSessions.filter(\.isSubagent),
             now: now,
             visibleParentIds: Set(visibleParents.map(\.sessionId)),
-            allSessionIds: Set(allAgentSessions.map(\.sessionId))
+            allSessionIds: eligibleSessionIds
         )
         let visible = (visibleParents + visibleSubagents).sorted(by: sessionSort)
 
-        return Self.displayRows(visibleSessions: visible, allSessions: allAgentSessions)
+        return Self.displayRows(visibleSessions: visible, allSessions: eligibleSessions)
     }
 
     public static func displayRows(
@@ -162,14 +161,15 @@ public final class AgentStateStore: ObservableObject {
         let allAgentSessions = sessions
             .filter { $0.agent == agent }
             .map { sessionForDisplay($0, now: now) }
-        let allSessionIds = Set(allAgentSessions.map(\.sessionId))
-        let visibleParents = displayEligibleSessions(from: allAgentSessions, now: now)
+        let eligibleSessions = displayEligibleSessions(from: allAgentSessions, now: now)
+        let eligibleSessionIds = Set(eligibleSessions.map(\.sessionId))
+        let visibleParents = eligibleSessions
             .filter { !$0.isSubagent }
         let visibleSubagents = displayEligibleSubagents(
-            from: displayEligibleSessions(from: allAgentSessions, now: now).filter(\.isSubagent),
+            from: eligibleSessions.filter(\.isSubagent),
             now: now,
             visibleParentIds: Set(visibleParents.map(\.sessionId)),
-            allSessionIds: allSessionIds
+            allSessionIds: eligibleSessionIds
         )
         let visible = visibleParents + visibleSubagents
 
@@ -270,7 +270,9 @@ public final class AgentStateStore: ObservableObject {
 
     private func displayEligibleSessions(from sessions: [AgentSession], now: Date) -> [AgentSession] {
         sessions.filter { session in
-            session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyVisibilityInterval
+            session.state != .ended
+                && !AgentSessionVisibility.isCodexMemoryWorkspace(agent: session.agent, cwd: session.cwd)
+                && (session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyVisibilityInterval)
         }
     }
 

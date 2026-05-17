@@ -203,7 +203,10 @@ public enum CodexSessionParser {
     }
 
     private static func sanitizedTitle(_ value: String) -> String? {
-        let title = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = value
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
         guard !title.isEmpty else {
             return nil
         }

@@ -111,6 +111,66 @@ final class AgentStateStoreTests: XCTestCase {
         )
     }
 
+    func testEndedSessionsAreNotVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "ended", state: .ended, updatedAt: base))
+        store.apply(AgentEvent(agent: .codex, sessionId: "idle", state: .idle, updatedAt: base.addingTimeInterval(1)))
+
+        XCTAssertEqual(
+            store.visibleSessions(for: .codex, now: base.addingTimeInterval(2)).map(\.sessionId),
+            ["idle"]
+        )
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(2)).map(\.id), [
+            "codex:idle:0"
+        ])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(2)), .idle)
+    }
+
+    func testCodexMemoryWorkspaceSessionsAreNotVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+        let memoriesPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/memories", isDirectory: true)
+            .path
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "memory",
+            state: .working,
+            title: "memories",
+            cwd: memoriesPath,
+            updatedAt: base
+        ))
+
+        XCTAssertEqual(store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(1)), .idle)
+    }
+
+    func testOrdinaryMemoriesProjectSessionIsVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "project",
+            state: .idle,
+            title: "memories",
+            cwd: "/tmp/memories",
+            updatedAt: base
+        ))
+
+        XCTAssertEqual(
+            store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)).map(\.sessionId),
+            ["project"]
+        )
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(1)).map(\.id), [
+            "codex:project:0"
+        ])
+    }
+
     func testStaleActiveSessionIsDisplayedAsIdle() {
         let base = Date(timeIntervalSince1970: 1_000)
         let store = AgentStateStore(
@@ -334,7 +394,7 @@ final class AgentStateStoreTests: XCTestCase {
         store.apply(AgentEvent(
             agent: .codex,
             sessionId: "recent-child",
-            state: .ended,
+            state: .idle,
             updatedAt: base.addingTimeInterval(1),
             parentSessionId: "old-parent"
         ))

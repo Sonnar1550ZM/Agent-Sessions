@@ -28,6 +28,41 @@ public enum AgentKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
+public enum AgentSessionVisibility {
+    public static func isCodexMemoryWorkspace(agent: AgentKind, cwd: String) -> Bool {
+        guard agent == .codex else {
+            return false
+        }
+
+        let sessionPath = normalizedPath(cwd)
+        guard !sessionPath.isEmpty else {
+            return false
+        }
+
+        let memoriesPath = normalizedPath("~/.codex/memories")
+        return sessionPath == memoriesPath || sessionPath.hasPrefix(memoriesPath + "/")
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ""
+        }
+
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+        let expandedPath: String
+        if trimmed == "~" {
+            expandedPath = homePath
+        } else if trimmed.hasPrefix("~/") {
+            expandedPath = homePath + String(trimmed.dropFirst())
+        } else {
+            expandedPath = trimmed
+        }
+
+        return URL(fileURLWithPath: expandedPath).standardizedFileURL.path
+    }
+}
+
 public enum AgentState: String, Codable, CaseIterable, Sendable {
     case working
     case waiting

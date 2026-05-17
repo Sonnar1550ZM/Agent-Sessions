@@ -1,6 +1,18 @@
 import Foundation
 
+public enum ClaudeAppSessionStatus: Equatable, Sendable {
+    case active
+    case archived
+    case missing
+}
+
 public enum ClaudeSessionTitleResolver {
+    private struct AppSessionMetadata {
+        var title: String?
+        var isArchived: Bool
+        var score: Double
+    }
+
     public static func title(for sessionId: String) -> String? {
         title(
             for: sessionId,
@@ -27,6 +39,36 @@ public enum ClaudeSessionTitleResolver {
         }
 
         return transcriptTitle(for: sessionId, projectsRoot: projectsRoot)
+    }
+
+    public static func isArchived(sessionId: String) -> Bool {
+        appSessionStatus(
+            sessionId: sessionId,
+            appSessionsRoot: FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Claude/claude-code-sessions", isDirectory: true)
+        ) == .archived
+    }
+
+    static func isArchived(sessionId: String, appSessionsRoot: URL?) -> Bool {
+        appSessionStatus(sessionId: sessionId, appSessionsRoot: appSessionsRoot) == .archived
+    }
+
+    public static func appSessionStatus(sessionId: String) -> ClaudeAppSessionStatus {
+        appSessionStatus(
+            sessionId: sessionId,
+            appSessionsRoot: FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Claude/claude-code-sessions", isDirectory: true)
+        )
+    }
+
+    static func appSessionStatus(sessionId: String, appSessionsRoot: URL?) -> ClaudeAppSessionStatus {
+        guard let metadata = appSessionMetadata(for: sessionId, sessionsRoot: appSessionsRoot) else {
+            return .missing
+        }
+
+        return metadata.isArchived ? .archived : .active
     }
 
     private static func transcriptTitle(for sessionId: String, projectsRoot: URL) -> String? {
@@ -85,6 +127,10 @@ public enum ClaudeSessionTitleResolver {
     }
 
     private static func appSessionTitle(for sessionId: String, sessionsRoot: URL?) -> String? {
+        appSessionMetadata(for: sessionId, sessionsRoot: sessionsRoot)?.title
+    }
+
+    private static func appSessionMetadata(for sessionId: String, sessionsRoot: URL?) -> AppSessionMetadata? {
         guard let sessionsRoot,
               let enumerator = FileManager.default.enumerator(
                   at: sessionsRoot,
@@ -94,7 +140,7 @@ public enum ClaudeSessionTitleResolver {
             return nil
         }
 
-        var bestMatch: (title: String, score: Double)?
+        var bestMatch: AppSessionMetadata?
 
         for case let url as URL in enumerator {
             guard url.pathExtension == "json",
@@ -102,22 +148,26 @@ public enum ClaudeSessionTitleResolver {
                   values.isRegularFile == true,
                   let data = try? Data(contentsOf: url),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  object["cliSessionId"] as? String == sessionId,
-                  let rawTitle = object["title"] as? String,
-                  let title = sanitizedTitle(rawTitle) else {
+                  object["cliSessionId"] as? String == sessionId else {
                 continue
             }
 
+            let title = (object["title"] as? String).flatMap(sanitizedTitle)
             let score = timestampScore(from: object)
                 ?? values.contentModificationDate?.timeIntervalSince1970
                 ?? 0
+            let metadata = AppSessionMetadata(
+                title: title,
+                isArchived: object["isArchived"] as? Bool == true,
+                score: score
+            )
 
             if bestMatch == nil || score >= bestMatch!.score {
-                bestMatch = (title, score)
+                bestMatch = metadata
             }
         }
 
-        return bestMatch?.title
+        return bestMatch
     }
 
     private static func transcriptFile(for sessionId: String, projectsRoot: URL) -> URL? {
