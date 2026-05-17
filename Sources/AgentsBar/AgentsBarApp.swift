@@ -2114,7 +2114,7 @@ private struct SessionMenuRow: View {
                         .frame(width: titleTextLeadingOffset, height: 0)
 
                     Text(latestResponseText)
-                        .font(.system(size: detailFontSize))
+                        .font(.system(size: latestResponseFontSize))
                         .foregroundStyle(titleColor)
                         .lineLimit(effectiveLatestResponseLineLimit)
                         .truncationMode(.tail)
@@ -2212,6 +2212,10 @@ private struct SessionMenuRow: View {
 
     private var detailFontSize: CGFloat {
         11
+    }
+
+    private var latestResponseFontSize: CGFloat {
+        10
     }
 
     private var verticalPadding: CGFloat {
