@@ -237,7 +237,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func appendAgentSection(_ agent: AgentKind) {
-        menu.addItem(hostedItem(AgentHeaderView(title: agent.displayName)))
+        menu.addItem(hostedItem(AgentHeaderView(agent: agent)))
 
         let sessions = controller.store.visibleSessions(for: agent)
         if sessions.isEmpty {
@@ -278,16 +278,38 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 }
 
 private struct AgentHeaderView: View {
-    let title: String
+    let agent: AgentKind
 
     var body: some View {
-        Text(title)
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(.primary)
-            .frame(width: 320, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.top, 7)
-            .padding(.bottom, 3)
+        HStack(spacing: 7) {
+            Image(nsImage: AgentImages.menuHeaderIcon(for: agent))
+                .resizable()
+                .renderingMode(.template)
+                .foregroundStyle(.primary)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 16, height: 16)
+                .accessibilityHidden(true)
+
+            Text(agent.menuHeaderTitle)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .frame(width: 320, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.top, 7)
+        .padding(.bottom, 3)
+    }
+}
+
+private extension AgentKind {
+    var menuHeaderTitle: String {
+        switch self {
+        case .codex:
+            "ChatGPT Codex"
+        case .claudeCode:
+            displayName
+        }
     }
 }
 
@@ -312,7 +334,7 @@ private struct SessionMenuRow: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(symbolColor)
                     .frame(width: 12, alignment: .leading)
-                Text(wrappedTitle)
+                Text(session.displayTitle)
                     .font(.system(size: 13))
                     .foregroundStyle(.primary)
                     .lineLimit(nil)
@@ -327,10 +349,6 @@ private struct SessionMenuRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 3)
         .help(helpText)
-    }
-
-    private var wrappedTitle: String {
-        Self.wrapped(session.displayTitle, limit: 30)
     }
 
     private var symbolColor: Color {
@@ -378,28 +396,6 @@ private struct SessionMenuRow: View {
         return formatter
     }()
 
-    private static func wrapped(_ value: String, limit: Int) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > limit else {
-            return trimmed
-        }
-
-        var lines: [String] = []
-        var currentLine = ""
-        for character in trimmed {
-            currentLine.append(character)
-            if currentLine.count >= limit {
-                lines.append(currentLine)
-                currentLine = ""
-            }
-        }
-
-        if !currentLine.isEmpty {
-            lines.append(currentLine)
-        }
-
-        return lines.joined(separator: "\n")
-    }
 }
 
 private enum AgentColors {
@@ -434,6 +430,20 @@ enum AgentImages {
             return true
         }
         image.isTemplate = false
+        return image
+    }
+
+    static func menuHeaderIcon(for agent: AgentKind) -> NSImage {
+        let source = switch agent {
+        case .codex:
+            codexIcons.mono
+        case .claudeCode:
+            claudeIcons.mono
+        }
+        guard let image = source.copy() as? NSImage else {
+            return source
+        }
+        image.isTemplate = true
         return image
     }
 
