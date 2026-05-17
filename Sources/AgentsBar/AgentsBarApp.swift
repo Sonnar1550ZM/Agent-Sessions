@@ -1,25 +1,30 @@
 import AgentsBarCore
 import AppKit
+import Combine
 import SwiftUI
 
 @main
 struct AgentsBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var controller = AppController()
 
     var body: some Scene {
-        MenuBarExtra {
-            AgentsMenu(controller: controller)
-        } label: {
-            AgentsMenuLabel(store: controller.store)
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.menu)
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var controller: AppController?
+    private var statusMenuController: StatusMenuController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+
+        let controller = AppController()
+        self.controller = controller
+        statusMenuController = StatusMenuController(controller: controller)
     }
 }
 
@@ -165,100 +170,183 @@ final class AppController: ObservableObject {
     }
 }
 
-struct AgentsMenuLabel: View {
-    @ObservedObject var store: AgentStateStore
+@MainActor
+final class StatusMenuController: NSObject, NSMenuDelegate {
+    private let controller: AppController
+    private let statusItem: NSStatusItem
+    private let menu = NSMenu()
+    private var cancellables: Set<AnyCancellable> = []
 
-    var body: some View {
-        Image(nsImage: AgentImages.menuBarStatus(
-            codexState: store.aggregateState(for: .codex),
-            claudeState: store.aggregateState(for: .claudeCode)
-        ))
-        .resizable()
-        .interpolation(.high)
-        .frame(width: AgentImages.menuBarStatusSize.width, height: AgentImages.menuBarStatusSize.height)
+    init(controller: AppController) {
+        self.controller = controller
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
+
+        menu.delegate = self
+        statusItem.menu = menu
+        configureStatusButton()
+        updateStatusIcon()
+
+        controller.store.$sessions
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateStatusIcon()
+            }
+            .store(in: &cancellables)
     }
-}
 
-struct AgentLogoView: View {
-    let image: NSImage
-    let state: AgentState
-
-    var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 13, height: 13)
-
-            Text(state.symbol)
-                .font(.system(size: 6, weight: .bold, design: .rounded))
-                .monospaced()
-                .offset(x: 1, y: 1)
-                .accessibilityLabel(state.displayName)
-        }
-        .frame(width: 14, height: 14)
+    func menuWillOpen(_ menu: NSMenu) {
+        rebuildMenu()
     }
-}
 
-struct AgentsMenu: View {
-    @ObservedObject var controller: AppController
+    private func configureStatusButton() {
+        guard let button = statusItem.button else {
+            return
+        }
 
-    var body: some View {
-        AgentSection(agent: .codex, store: controller.store)
-        Divider()
-        AgentSection(agent: .claudeCode, store: controller.store)
-        Divider()
-        Text(controller.serverMessage)
-        Button("Reload State") {
-            controller.reload()
-        }
-        Button("Open State File") {
-            NSWorkspace.shared.activateFileViewerSelecting([StatePersistence.defaultStateURL()])
-        }
-        Divider()
-        Button("Quit AgentsBar") {
-            NSApplication.shared.terminate(nil)
-        }
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.toolTip = "AgentsBar"
+        button.setAccessibilityLabel("AgentsBar")
     }
-}
 
-struct AgentSection: View {
-    let agent: AgentKind
-    @ObservedObject var store: AgentStateStore
+    private func updateStatusIcon() {
+        let image = AgentImages.menuBarStatus(
+            codexState: controller.store.aggregateState(for: .codex),
+            claudeState: controller.store.aggregateState(for: .claudeCode)
+        )
+        statusItem.button?.image = image
+        statusItem.length = AgentImages.menuBarStatusSize.width + 8
+    }
 
-    var body: some View {
-        let sessions = store.visibleSessions(for: agent)
+    private func rebuildMenu() {
+        menu.removeAllItems()
+        appendAgentSection(.codex)
+        menu.addItem(.separator())
+        appendAgentSection(.claudeCode)
+        menu.addItem(.separator())
 
-        Section(agent.displayName) {
-            if sessions.isEmpty {
-                Text("○ No sessions")
-            } else {
-                ForEach(sessions) { session in
-                    SessionRow(session: session)
-                }
+        let statusItem = NSMenuItem(title: controller.serverMessage, action: nil, keyEquivalent: "")
+        statusItem.isEnabled = false
+        menu.addItem(statusItem)
+
+        menu.addItem(actionItem(title: "Reload State", action: #selector(reloadState)))
+        menu.addItem(actionItem(title: "Open State File", action: #selector(openStateFile)))
+        menu.addItem(.separator())
+        menu.addItem(actionItem(title: "Quit AgentsBar", action: #selector(quit), keyEquivalent: "q"))
+    }
+
+    private func appendAgentSection(_ agent: AgentKind) {
+        menu.addItem(hostedItem(AgentHeaderView(title: agent.displayName)))
+
+        let sessions = controller.store.visibleSessions(for: agent)
+        if sessions.isEmpty {
+            menu.addItem(hostedItem(EmptyAgentRow()))
+        } else {
+            for session in sessions {
+                menu.addItem(hostedItem(SessionMenuRow(session: session)))
             }
         }
     }
+
+    private func hostedItem<Content: View>(_ view: Content) -> NSMenuItem {
+        let item = NSMenuItem()
+        let hostingView = NSHostingView(rootView: view)
+        hostingView.frame.size = hostingView.fittingSize
+        item.view = hostingView
+        return item
+    }
+
+    private func actionItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+        item.target = self
+        return item
+    }
+
+    @objc private func reloadState() {
+        controller.reload()
+        updateStatusIcon()
+    }
+
+    @objc private func openStateFile() {
+        NSWorkspace.shared.activateFileViewerSelecting([StatePersistence.defaultStateURL()])
+    }
+
+    @objc private func quit() {
+        NSApplication.shared.terminate(nil)
+    }
 }
 
-struct SessionRow: View {
+private struct AgentHeaderView: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.primary)
+            .frame(width: 320, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.top, 7)
+            .padding(.bottom, 3)
+    }
+}
+
+private struct EmptyAgentRow: View {
+    var body: some View {
+        Text("○ No sessions")
+            .font(.system(size: 13))
+            .foregroundStyle(.secondary)
+            .frame(width: 320, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 3)
+    }
+}
+
+private struct SessionMenuRow: View {
     let session: AgentSession
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("\(session.state.symbol) \(truncatedTitle)")
-                .lineLimit(1)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 4) {
+                Text(session.state.symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(symbolColor)
+                    .frame(width: 12, alignment: .leading)
+                Text(wrappedTitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.primary)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(detailText)
-                .font(.caption)
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
+        .frame(width: 320, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 3)
         .help(helpText)
     }
 
-    private var truncatedTitle: String {
-        Self.truncated(session.displayTitle, limit: 22)
+    private var wrappedTitle: String {
+        Self.wrapped(session.displayTitle, limit: 30)
+    }
+
+    private var symbolColor: Color {
+        switch session.state {
+        case .working:
+            switch session.agent {
+            case .codex:
+                return Color(nsColor: AgentColors.codexWorking)
+            case .claudeCode:
+                return Color(nsColor: AgentColors.claudeWorking)
+            }
+        case .waiting:
+            return Color(nsColor: AgentColors.waiting)
+        case .idle, .ended:
+            return .secondary
+        }
     }
 
     private var detailText: String {
@@ -290,19 +378,40 @@ struct SessionRow: View {
         return formatter
     }()
 
-    private static func truncated(_ value: String, limit: Int) -> String {
-        guard value.count > limit else {
-            return value
+    private static func wrapped(_ value: String, limit: Int) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else {
+            return trimmed
         }
-        return String(value.prefix(limit)) + "..."
+
+        var lines: [String] = []
+        var currentLine = ""
+        for character in trimmed {
+            currentLine.append(character)
+            if currentLine.count >= limit {
+                lines.append(currentLine)
+                currentLine = ""
+            }
+        }
+
+        if !currentLine.isEmpty {
+            lines.append(currentLine)
+        }
+
+        return lines.joined(separator: "\n")
     }
+}
+
+private enum AgentColors {
+    static let codexWorking = NSColor(srgbRed: 0x00 / 255, green: 0x6E / 255, blue: 0xFE / 255, alpha: 1)
+    static let claudeWorking = NSColor(srgbRed: 0xCF / 255, green: 0x83 / 255, blue: 0x66 / 255, alpha: 1)
+    static let waiting = NSColor(srgbRed: 0xFF / 255, green: 0xD6 / 255, blue: 0x0A / 255, alpha: 1)
 }
 
 enum AgentImages {
     private static let menuBarLogoDisplayScale: CGFloat = 0.7
     private static let menuBarLogoGap: CGFloat = 2
     private static let assetScale: CGFloat = 3
-    private static let waitingTintColor = NSColor(srgbRed: 0xFF / 255, green: 0xD6 / 255, blue: 0x0A / 255, alpha: 1)
     private static let codexIcons = AgentIconSet(
         mono: loadMenuBarIcon(name: "Codex Mono@3x"),
         color: loadMenuBarIcon(name: "Codex Color@3x")
@@ -364,7 +473,7 @@ enum AgentImages {
         case .working:
             icons.color.draw(in: logoRect, from: .zero, operation: .sourceOver, fraction: 1.0)
         case .waiting:
-            drawTemplateLogo(icons.mono, in: logoRect, color: waitingTintColor)
+            drawTemplateLogo(icons.mono, in: logoRect, color: AgentColors.waiting)
         case .idle, .ended:
             drawTemplateLogo(icons.mono, in: logoRect, color: .labelColor)
         }

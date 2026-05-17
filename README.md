@@ -4,15 +4,17 @@ AgentsBar is a local macOS menu bar app for tracking multiple Codex and Claude C
 
 ## MVP
 
-- SwiftUI `MenuBarExtra` app.
+- AppKit `NSStatusItem` menu bar app.
 - Local event receiver: `http://127.0.0.1:7823/event`.
 - Sessions are keyed by `agent + sessionId`.
 - State persists to `~/Library/Application Support/AgentsBar/state.json`.
 - Menu bar label shows Codex and Claude icons side by side.
 - Each icon uses the mono asset normally and switches to the color asset while Working.
 - Waiting sessions tint the mono icon yellow.
+- Menu state symbols use matching colors: Codex Working `#006EFE`, Claude Working `#cf8366`, and Waiting yellow.
 - Waiting takes precedence over Working in the menu bar aggregate state.
-- Menu groups sessions under `Codex` and `Claude Code`.
+- Menu groups sessions under custom `NSMenuItem.view` headers for `Codex` and `Claude Code`.
+- Long session titles wrap at about 30 characters in the menu.
 - Idle and Ended history is kept to the latest 5 sessions per agent and hidden after 24 hours.
 
 ## Build

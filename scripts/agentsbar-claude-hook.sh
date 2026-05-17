@@ -61,11 +61,32 @@ try:
 except Exception:
     pid = None
 
+def clean_text(value):
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())[:160]
+
+transcript_path = event.get("transcript_path") or event.get("transcriptPath") or ""
+session_id = event.get("session_id") or event.get("sessionId") or ""
+if not session_id and isinstance(transcript_path, str) and transcript_path:
+    name = os.path.basename(transcript_path)
+    if name.endswith(".jsonl"):
+        session_id = name[:-6]
+
+title = ""
+if hook_event == "UserPromptSubmit":
+    title = clean_text(
+        event.get("prompt")
+        or event.get("user_prompt")
+        or event.get("content")
+        or event.get("message")
+    )
+
 payload = {
     "agent": "Claude Code",
-    "sessionId": event.get("session_id") or event.get("sessionId") or "default",
+    "sessionId": session_id or "default",
     "state": state,
-    "title": "",
+    "title": title,
     "cwd": event.get("cwd") or "",
     "event": hook_event,
     "terminal": term_map.get(os.environ.get("TERM_PROGRAM") or "", os.environ.get("TERM_PROGRAM") or ""),
