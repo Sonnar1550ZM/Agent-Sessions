@@ -139,6 +139,158 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(store.sessions.first?.state, .idle)
     }
 
+    func testApplyPreservesSubagentMetadataWhenLaterEventOmitsIt() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, clock: { now })
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            parentSessionId: "parent",
+            subagentNickname: "Sagan",
+            subagentRole: "explorer",
+            subagentDepth: 1
+        ))
+        store.apply(AgentEvent(agent: .codex, sessionId: "child", state: .idle))
+
+        let session = store.sessions.first
+        XCTAssertEqual(session?.parentSessionId, "parent")
+        XCTAssertEqual(session?.subagentNickname, "Sagan")
+        XCTAssertEqual(session?.subagentRole, "explorer")
+        XCTAssertEqual(session?.subagentDepth, 1)
+    }
+
+    func testDisplayRowsNestSubagentsUnderVisibleParent() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let parent = AgentSession(agent: .codex, sessionId: "parent", state: .idle, updatedAt: base)
+        let child = AgentSession(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "parent",
+            subagentNickname: "Sagan",
+            subagentRole: "explorer"
+        )
+
+        let rows = AgentStateStore.displayRows(visibleSessions: [parent, child], allSessions: [parent, child])
+
+        XCTAssertEqual(rows, [
+            .session(parent, indentLevel: 0),
+            .session(child, indentLevel: 1)
+        ])
+    }
+
+    func testDisplayRowsTemporarilyIncludesStoredParentForVisibleChild() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let parent = AgentSession(agent: .codex, sessionId: "parent", state: .idle, updatedAt: base)
+        let child = AgentSession(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "parent"
+        )
+
+        let rows = AgentStateStore.displayRows(visibleSessions: [child], allSessions: [parent, child])
+
+        XCTAssertEqual(rows, [
+            .session(parent, indentLevel: 0),
+            .session(child, indentLevel: 1)
+        ])
+    }
+
+    func testDisplayRowsFallsBackToSubagentsHeaderWhenParentIsMissing() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let child = AgentSession(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "missing"
+        )
+
+        let rows = AgentStateStore.displayRows(visibleSessions: [child], allSessions: [child])
+
+        XCTAssertEqual(rows, [
+            .header("Sub-agents"),
+            .session(child, indentLevel: 1)
+        ])
+    }
+
+    func testAggregateStateIncludesSubagentState() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "parent", state: .idle, updatedAt: base))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            updatedAt: base.addingTimeInterval(1),
+            parentSessionId: "parent"
+        ))
+
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(2)), .working)
+    }
+
+    func testAgentSessionDecodesOldPersistedStateWithoutSubagentMetadata() throws {
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentsbar-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: stateURL) }
+
+        let json = """
+        {
+          "sessions": [
+            {
+              "agent": "codex",
+              "sessionId": "old",
+              "state": "idle",
+              "title": "Old",
+              "cwd": "",
+              "event": "",
+              "terminal": "",
+              "updatedAt": "2026-05-17T00:00:00.000Z"
+            }
+          ]
+        }
+        """
+        try Data(json.utf8).write(to: stateURL)
+
+        let document = try StatePersistence(stateURL: stateURL).load()
+
+        XCTAssertEqual(document.sessions.count, 1)
+        XCTAssertNil(document.sessions[0].parentSessionId)
+        XCTAssertNil(document.sessions[0].subagentNickname)
+        XCTAssertNil(document.sessions[0].subagentRole)
+        XCTAssertNil(document.sessions[0].subagentDepth)
+    }
+
+    func testAgentEventDecodesAndEncodesSubagentMetadata() throws {
+        let json = """
+        {
+          "agent": "Codex",
+          "session_id": "child",
+          "state": "Working",
+          "parent_session_id": "parent",
+          "subagent_nickname": "Sagan",
+          "subagent_role": "explorer",
+          "subagent_depth": 1
+        }
+        """.data(using: .utf8)!
+
+        let event = try JSONDecoder().decode(AgentEvent.self, from: json)
+        let encoded = try JSONEncoder().encode(event)
+        let decoded = try JSONDecoder().decode(AgentEvent.self, from: encoded)
+
+        XCTAssertEqual(decoded.sessionId, "child")
+        XCTAssertEqual(decoded.parentSessionId, "parent")
+        XCTAssertEqual(decoded.subagentNickname, "Sagan")
+        XCTAssertEqual(decoded.subagentRole, "explorer")
+        XCTAssertEqual(decoded.subagentDepth, 1)
+    }
+
     func testDecodesSnakeCaseSessionIdAndNormalizesClaude() throws {
         let json = """
         {

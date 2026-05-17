@@ -1,6 +1,20 @@
 import Combine
 import Foundation
 
+public enum AgentSessionDisplayRow: Equatable, Identifiable, Sendable {
+    case session(AgentSession, indentLevel: Int)
+    case header(String)
+
+    public var id: String {
+        switch self {
+        case .session(let session, let indentLevel):
+            "\(session.id):\(indentLevel)"
+        case .header(let title):
+            "header:\(title)"
+        }
+    }
+}
+
 public final class AgentStateStore: ObservableObject {
     @Published public private(set) var sessions: [AgentSession]
 
@@ -46,7 +60,11 @@ public final class AgentStateStore: ObservableObject {
             event: event.event.isEmpty ? (existing?.event ?? "") : event.event,
             terminal: event.terminal.isEmpty ? (existing?.terminal ?? "") : event.terminal,
             pid: event.pid ?? existing?.pid,
-            updatedAt: now
+            updatedAt: now,
+            parentSessionId: event.parentSessionId ?? existing?.parentSessionId,
+            subagentNickname: event.subagentNickname ?? existing?.subagentNickname,
+            subagentRole: event.subagentRole ?? existing?.subagentRole,
+            subagentDepth: event.subagentDepth ?? existing?.subagentDepth
         )
 
         if let index = sessions.firstIndex(where: { Self.key(agent: $0.agent, sessionId: $0.sessionId) == key }) {
@@ -71,6 +89,68 @@ public final class AgentStateStore: ObservableObject {
             .prefix(maxHistoryPerAgent)
 
         return Array(visible)
+    }
+
+    public func displayRows(for agent: AgentKind, now: Date = Date()) -> [AgentSessionDisplayRow] {
+        let visible = visibleSessions(for: agent, now: now)
+        let allAgentSessions = sessions
+            .filter { $0.agent == agent }
+            .map { sessionForDisplay($0, now: now) }
+
+        return Self.displayRows(visibleSessions: visible, allSessions: allAgentSessions)
+    }
+
+    public static func displayRows(
+        visibleSessions: [AgentSession],
+        allSessions: [AgentSession]
+    ) -> [AgentSessionDisplayRow] {
+        var rows: [AgentSessionDisplayRow] = []
+        var renderedSessionIds: Set<String> = []
+        var orphanSubagents: [AgentSession] = []
+
+        let allBySessionId = Dictionary(uniqueKeysWithValues: allSessions.map { ($0.sessionId, $0) })
+        let topLevelSessions = visibleSessions.filter { !$0.isSubagent }
+        let subagents = visibleSessions.filter(\.isSubagent)
+        let subagentsByParent = Dictionary(grouping: subagents) { $0.parentSessionId ?? "" }
+
+        func append(_ session: AgentSession, indentLevel: Int) {
+            rows.append(.session(session, indentLevel: indentLevel))
+            renderedSessionIds.insert(session.sessionId)
+        }
+
+        func appendSubagents(parentSessionId: String) {
+            for subagent in subagentsByParent[parentSessionId, default: []] {
+                append(subagent, indentLevel: 1)
+            }
+        }
+
+        for session in topLevelSessions {
+            append(session, indentLevel: 0)
+            appendSubagents(parentSessionId: session.sessionId)
+        }
+
+        for subagent in subagents where !renderedSessionIds.contains(subagent.sessionId) {
+            guard let parentSessionId = subagent.parentSessionId, !parentSessionId.isEmpty else {
+                orphanSubagents.append(subagent)
+                continue
+            }
+
+            if let parent = allBySessionId[parentSessionId], !renderedSessionIds.contains(parent.sessionId) {
+                append(parent, indentLevel: 0)
+                appendSubagents(parentSessionId: parent.sessionId)
+            } else if allBySessionId[parentSessionId] == nil {
+                orphanSubagents.append(subagent)
+            }
+        }
+
+        if !orphanSubagents.isEmpty {
+            rows.append(.header("Sub-agents"))
+            for subagent in orphanSubagents where !renderedSessionIds.contains(subagent.sessionId) {
+                append(subagent, indentLevel: 1)
+            }
+        }
+
+        return rows
     }
 
     public func aggregateState(for agent: AgentKind, now: Date = Date()) -> AgentState {
@@ -134,13 +214,23 @@ public final class AgentStateStore: ObservableObject {
         var retained: [AgentSession] = []
 
         for agent in AgentKind.allCases {
-            let agentSessions = sessions.filter { $0.agent == agent }
+            let allAgentSessions = sessions.filter { $0.agent == agent }
                 .map { sessionForDisplay($0, now: now) }
+            var agentSessions = allAgentSessions
                 .filter { session in
                     session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyVisibilityInterval
                 }
                 .sorted(by: sessionSort)
                 .prefix(maxHistoryPerAgent)
+                .map { $0 }
+            var retainedIds = Set(agentSessions.map(\.sessionId))
+            let parentIds = agentSessions.compactMap(\.parentSessionId)
+            for parentId in parentIds where !retainedIds.contains(parentId) {
+                if let parent = allAgentSessions.first(where: { $0.sessionId == parentId }) {
+                    agentSessions.append(parent)
+                    retainedIds.insert(parent.sessionId)
+                }
+            }
             retained.append(contentsOf: agentSessions)
         }
 

@@ -41,7 +41,7 @@ final class CodexSessionWatcher {
             return false
         }
 
-        return parseSessionText(text, fallbackSessionId: sessionId).isInternalSubagent
+        return CodexSessionParser.parse(text, fallbackSessionId: sessionId).isInternalSubagent
     }
 
     private func poll() {
@@ -65,7 +65,7 @@ final class CodexSessionWatcher {
                 continue
             }
 
-            let parsed = parseSessionText(text, fallbackSessionId: fallbackSessionId(from: file))
+            let parsed = CodexSessionParser.parse(text, fallbackSessionId: fallbackSessionId(from: file))
             guard !parsed.cwd.isEmpty, !parsed.isInternalSubagent else {
                 continue
             }
@@ -79,7 +79,7 @@ final class CodexSessionWatcher {
     private static func snapshot(
         file: URL,
         modifiedAt: Date,
-        parsed: (sessionId: String, state: AgentState, title: String, cwd: String, isInternalSubagent: Bool)
+        parsed: CodexParsedSession
     ) -> Snapshot {
         let age = Date().timeIntervalSince(modifiedAt)
         let state: AgentState = age > 120 ? .idle : parsed.state
@@ -95,12 +95,25 @@ final class CodexSessionWatcher {
             event: "JSONLWatch",
             terminal: "",
             pid: nil,
-            updatedAt: modifiedAt
+            updatedAt: modifiedAt,
+            parentSessionId: parsed.parentSessionId,
+            subagentNickname: parsed.subagentNickname,
+            subagentRole: parsed.subagentRole,
+            subagentDepth: parsed.subagentDepth
         )
 
         return Snapshot(
             event: event,
-            fingerprint: "\(file.path)|\(modifiedAt.timeIntervalSince1970)|\(state.rawValue)|\(title)"
+            fingerprint: [
+                file.path,
+                String(modifiedAt.timeIntervalSince1970),
+                state.rawValue,
+                title,
+                parsed.parentSessionId ?? "",
+                parsed.subagentNickname ?? "",
+                parsed.subagentRole ?? "",
+                parsed.subagentDepth.map(String.init) ?? ""
+            ].joined(separator: "|")
         )
     }
 
@@ -184,93 +197,6 @@ final class CodexSessionWatcher {
         return head + "\n" + tail
     }
 
-    private static func parseSessionText(_ text: String, fallbackSessionId: String) -> (sessionId: String, state: AgentState, title: String, cwd: String, isInternalSubagent: Bool) {
-        var sessionId = fallbackSessionId
-        var state = AgentState.idle
-        var title = ""
-        var cwd = ""
-        var isInternalSubagent = false
-
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            let lineText = String(line)
-            guard let data = line.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let type = object["type"] as? String else {
-                if lineText.contains("\"type\":\"session_meta\"") {
-                    if let id = extractJSONStringValue(named: "id", from: lineText), !id.isEmpty {
-                        sessionId = id
-                    }
-                    if let metadataCwd = extractJSONStringValue(named: "cwd", from: lineText), !metadataCwd.isEmpty {
-                        cwd = metadataCwd
-                    }
-                    if let metadataTitle = extractTitle(fromRawJSONLine: lineText) {
-                        title = metadataTitle
-                    }
-                    if lineText.contains("\"source\":{\"subagent\":{\"other\":\"guardian\"") {
-                        isInternalSubagent = true
-                    }
-                } else if lineText.contains("\"type\":\"turn_context\""),
-                          let contextCwd = extractJSONStringValue(named: "cwd", from: lineText),
-                          !contextCwd.isEmpty {
-                    cwd = contextCwd
-                    if let contextTitle = extractTitle(fromRawJSONLine: lineText) {
-                        title = contextTitle
-                    }
-                }
-                continue
-            }
-
-            let payload = object["payload"] as? [String: Any] ?? [:]
-            if let payloadTitle = extractTitle(fromPayloadFields: payload) {
-                title = payloadTitle
-            }
-
-            if type == "session_meta", let id = payload["id"] as? String, !id.isEmpty {
-                sessionId = id
-            }
-            if type == "session_meta",
-               let source = payload["source"] as? [String: Any],
-               let subagent = source["subagent"] as? [String: Any],
-               subagent["other"] as? String == "guardian" {
-                isInternalSubagent = true
-            }
-
-            if ["session_meta", "turn_context"].contains(type),
-               let contextCwd = payload["cwd"] as? String,
-               !contextCwd.isEmpty {
-                cwd = contextCwd
-            }
-
-            if type == "response_item" {
-                let itemType = payload["type"] as? String ?? ""
-                if itemType == "function_call" || itemType == "function_call_output" || itemType == "custom_tool_call_output" {
-                    state = .working
-                }
-                if itemType == "message", let role = payload["role"] as? String, role == "user" {
-                    state = .working
-                }
-                if itemType == "message", payload["phase"] as? String == "final_answer" {
-                    state = .idle
-                }
-            }
-
-            if type == "event_msg" {
-                let eventType = payload["type"] as? String ?? ""
-                if ["exec_command_begin", "mcp_tool_call_begin", "patch_apply_begin", "web_search_begin", "agent_message"].contains(eventType) {
-                    state = .working
-                }
-                if ["task_complete", "turn_complete", "shutdown_complete"].contains(eventType) {
-                    state = .idle
-                }
-                if let eventCwd = payload["cwd"] as? String, !eventCwd.isEmpty {
-                    cwd = eventCwd
-                }
-            }
-        }
-
-        return (sessionId, state, title, cwd, isInternalSubagent)
-    }
-
     private static func threadTitle(for sessionId: String) -> String? {
         let url = FileManager.default
             .homeDirectoryForCurrentUser
@@ -294,24 +220,6 @@ final class CodexSessionWatcher {
         return matchedTitle
     }
 
-    private static func extractTitle(fromPayloadFields payload: [String: Any]) -> String? {
-        for key in ["thread_name", "title", "name"] {
-            if let title = payload[key] as? String,
-               let sanitized = sanitizedTitle(title) {
-                return sanitized
-            }
-        }
-        return nil
-    }
-
-    private static func extractTitle(fromRawJSONLine line: String) -> String? {
-        if let title = extractJSONStringValue(named: "thread_name", from: line),
-           let sanitized = sanitizedTitle(title) {
-            return sanitized
-        }
-        return nil
-    }
-
     private static func sanitizedTitle(_ value: String) -> String? {
         let title = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
@@ -320,61 +228,8 @@ final class CodexSessionWatcher {
         return String(title.prefix(160))
     }
 
-    private static func extractJSONStringValue(named name: String, from text: String) -> String? {
-        let marker = "\"\(name)\":\""
-        guard let markerRange = text.range(of: marker) else {
-            return nil
-        }
-
-        var value = ""
-        var isEscaped = false
-        var index = markerRange.upperBound
-
-        while index < text.endIndex {
-            let character = text[index]
-            if isEscaped {
-                switch character {
-                case "\"", "\\", "/":
-                    value.append(character)
-                case "n":
-                    value.append("\n")
-                case "r":
-                    value.append("\r")
-                case "t":
-                    value.append("\t")
-                default:
-                    value.append(character)
-                }
-                isEscaped = false
-            } else if character == "\\" {
-                isEscaped = true
-            } else if character == "\"" {
-                return value
-            } else {
-                value.append(character)
-            }
-
-            index = text.index(after: index)
-        }
-
-        return nil
-    }
-
     private static func fallbackSessionId(from url: URL) -> String {
         let stem = url.deletingPathExtension().lastPathComponent
         return stem.split(separator: "-").suffix(5).joined(separator: "-")
-    }
-
-    private static func extractTitle(from payload: [String: Any]) -> String? {
-        guard let content = payload["content"] as? [[String: Any]] else {
-            return nil
-        }
-
-        for item in content {
-            if let text = item["text"] as? String {
-                return String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
-            }
-        }
-        return nil
     }
 }

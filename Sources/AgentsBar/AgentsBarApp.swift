@@ -974,7 +974,11 @@ final class AppController: ObservableObject {
                 event: session.event,
                 terminal: session.terminal,
                 pid: session.pid,
-                updatedAt: session.updatedAt
+                updatedAt: session.updatedAt,
+                parentSessionId: session.parentSessionId,
+                subagentNickname: session.subagentNickname,
+                subagentRole: session.subagentRole,
+                subagentDepth: session.subagentDepth
             ))
         }
     }
@@ -996,7 +1000,11 @@ final class AppController: ObservableObject {
             event: event.event,
             terminal: event.terminal,
             pid: event.pid,
-            updatedAt: event.updatedAt
+            updatedAt: event.updatedAt,
+            parentSessionId: event.parentSessionId,
+            subagentNickname: event.subagentNickname,
+            subagentRole: event.subagentRole,
+            subagentDepth: event.subagentDepth
         )
     }
 
@@ -1073,13 +1081,9 @@ final class AppController: ObservableObject {
         }
     }
 
-    private func shouldHideCodexSession(sessionId: String, state: AgentState, title: String, cwd: String) -> Bool {
+    private func shouldHideCodexSession(sessionId: String, state _: AgentState, title: String, cwd: String) -> Bool {
         if CodexSessionWatcher.shouldHideSession(sessionId) {
             return true
-        }
-
-        if state.isActive {
-            return false
         }
 
         if CodexSessionWatcher.title(for: sessionId) != nil {
@@ -1423,16 +1427,21 @@ private struct AgentSectionView: View {
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        let sessions = store.visibleSessions(for: agent, now: now)
+        let rows = store.displayRows(for: agent, now: now)
 
         VStack(alignment: .leading, spacing: 0) {
             AgentHeaderView(agent: agent, usesColorIcon: usesColorIcon)
 
-            if sessions.isEmpty {
+            if rows.isEmpty {
                 EmptyAgentRow()
             } else {
-                ForEach(sessions) { session in
-                    SessionMenuRow(session: session, now: now)
+                ForEach(rows) { row in
+                    switch row {
+                    case .session(let session, let indentLevel):
+                        SessionMenuRow(session: session, indentLevel: indentLevel, now: now)
+                    case .header(let title):
+                        SessionGroupHeaderRow(title: title)
+                    }
                 }
             }
         }
@@ -1473,32 +1482,78 @@ private struct EmptyAgentRow: View {
     }
 }
 
+private struct SessionGroupHeaderRow: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+            .frame(width: 320, alignment: .leading)
+            .padding(.leading, 30)
+            .padding(.trailing, 12)
+            .padding(.top, 5)
+            .padding(.bottom, 2)
+    }
+}
+
 private struct SessionMenuRow: View {
     let session: AgentSession
+    let indentLevel: Int
     let now: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 4) {
+            HStack(alignment: .top, spacing: horizontalSpacing) {
                 Text(session.state.symbol)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: symbolFontSize, weight: .semibold))
                     .foregroundStyle(symbolColor)
-                    .frame(width: 12, alignment: .leading)
+                    .frame(width: symbolWidth, alignment: .leading)
                 Text(session.displayTitle)
-                    .font(.system(size: 13))
+                    .font(.system(size: titleFontSize))
                     .foregroundStyle(.primary)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(detailText)
-                .font(.system(size: 11))
+                .font(.system(size: detailFontSize))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
         .frame(width: 320, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 3)
+        .padding(.leading, leadingPadding)
+        .padding(.trailing, 12)
+        .padding(.vertical, verticalPadding)
         .help(helpText)
+    }
+
+    private var leadingPadding: CGFloat {
+        12 + CGFloat(indentLevel) * 18
+    }
+
+    private var horizontalSpacing: CGFloat {
+        session.isSubagent ? 2 : 4
+    }
+
+    private var symbolFontSize: CGFloat {
+        session.isSubagent ? 10 : 13
+    }
+
+    private var symbolWidth: CGFloat {
+        session.isSubagent ? 9 : 12
+    }
+
+    private var titleFontSize: CGFloat {
+        session.isSubagent ? 11 : 13
+    }
+
+    private var detailFontSize: CGFloat {
+        session.isSubagent ? 9 : 11
+    }
+
+    private var verticalPadding: CGFloat {
+        session.isSubagent ? 0.75 : 3
     }
 
     private var symbolColor: Color {
@@ -1518,6 +1573,19 @@ private struct SessionMenuRow: View {
     }
 
     private var detailText: String {
+        if session.isSubagent {
+            var parts: [String] = ["Sub-agent"]
+            if let role = session.subagentRole, !role.isEmpty {
+                parts.append(role)
+            }
+            if let nickname = session.subagentNickname, !nickname.isEmpty {
+                parts.append(nickname)
+            }
+            parts.append(session.state.displayName)
+            parts.append(Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: now))
+            return parts.joined(separator: " · ")
+        }
+
         var parts: [String] = [session.state.displayName]
         if !session.terminal.isEmpty {
             parts.append(session.terminal)
@@ -1533,6 +1601,9 @@ private struct SessionMenuRow: View {
         [
             session.agent.displayName,
             "session: \(session.sessionId)",
+            session.parentSessionId.map { "parent: \($0)" },
+            session.subagentRole.map { "role: \($0)" },
+            session.subagentNickname.map { "nickname: \($0)" },
             session.cwd.isEmpty ? nil : session.cwd,
             session.event.isEmpty ? nil : "event: \(session.event)"
         ]

@@ -1,0 +1,282 @@
+import Foundation
+
+public struct CodexParsedSession: Equatable, Sendable {
+    public var sessionId: String
+    public var state: AgentState
+    public var title: String
+    public var cwd: String
+    public var isInternalSubagent: Bool
+    public var parentSessionId: String?
+    public var subagentNickname: String?
+    public var subagentRole: String?
+    public var subagentDepth: Int?
+
+    public init(
+        sessionId: String,
+        state: AgentState,
+        title: String,
+        cwd: String,
+        isInternalSubagent: Bool,
+        parentSessionId: String? = nil,
+        subagentNickname: String? = nil,
+        subagentRole: String? = nil,
+        subagentDepth: Int? = nil
+    ) {
+        self.sessionId = sessionId
+        self.state = state
+        self.title = title
+        self.cwd = cwd
+        self.isInternalSubagent = isInternalSubagent
+        self.parentSessionId = parentSessionId
+        self.subagentNickname = subagentNickname
+        self.subagentRole = subagentRole
+        self.subagentDepth = subagentDepth
+    }
+}
+
+public enum CodexSessionParser {
+    public static func parse(_ text: String, fallbackSessionId: String) -> CodexParsedSession {
+        var sessionId = fallbackSessionId
+        var state = AgentState.idle
+        var title = ""
+        var cwd = ""
+        var isInternalSubagent = false
+        var parentSessionId: String?
+        var subagentNickname: String?
+        var subagentRole: String?
+        var subagentDepth: Int?
+
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let lineText = String(line)
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = object["type"] as? String else {
+                if lineText.contains("\"type\":\"session_meta\"") {
+                    if let id = extractJSONStringValue(named: "id", from: lineText), !id.isEmpty {
+                        sessionId = id
+                    }
+                    if let metadataCwd = extractJSONStringValue(named: "cwd", from: lineText), !metadataCwd.isEmpty {
+                        cwd = metadataCwd
+                    }
+                    if let metadataTitle = extractTitle(fromRawJSONLine: lineText) {
+                        title = metadataTitle
+                    }
+                    if lineText.contains("\"source\":{\"subagent\":{\"other\":\"guardian\"") {
+                        isInternalSubagent = true
+                    }
+                    if extractJSONStringValue(named: "thread_source", from: lineText) == "subagent" {
+                        parentSessionId = extractJSONStringValue(named: "parent_thread_id", from: lineText) ?? parentSessionId
+                        subagentNickname = extractJSONStringValue(named: "agent_nickname", from: lineText) ?? subagentNickname
+                        subagentRole = extractJSONStringValue(named: "agent_role", from: lineText) ?? subagentRole
+                        subagentDepth = extractJSONIntValue(named: "depth", from: lineText) ?? subagentDepth
+                    }
+                } else if lineText.contains("\"type\":\"turn_context\""),
+                          let contextCwd = extractJSONStringValue(named: "cwd", from: lineText),
+                          !contextCwd.isEmpty {
+                    cwd = contextCwd
+                    if let contextTitle = extractTitle(fromRawJSONLine: lineText) {
+                        title = contextTitle
+                    }
+                }
+                continue
+            }
+
+            let payload = object["payload"] as? [String: Any] ?? [:]
+            if let payloadTitle = extractTitle(fromPayloadFields: payload) {
+                title = payloadTitle
+            }
+
+            if type == "session_meta" {
+                if let id = payload["id"] as? String, !id.isEmpty {
+                    sessionId = id
+                }
+                let metadata = subagentMetadata(from: payload)
+                isInternalSubagent = isInternalSubagent || metadata.isInternalSubagent
+                parentSessionId = metadata.parentSessionId ?? parentSessionId
+                subagentNickname = metadata.subagentNickname ?? subagentNickname
+                subagentRole = metadata.subagentRole ?? subagentRole
+                subagentDepth = metadata.subagentDepth ?? subagentDepth
+            }
+
+            if ["session_meta", "turn_context"].contains(type),
+               let contextCwd = payload["cwd"] as? String,
+               !contextCwd.isEmpty {
+                cwd = contextCwd
+            }
+
+            if type == "response_item" {
+                let itemType = payload["type"] as? String ?? ""
+                if itemType == "function_call" || itemType == "function_call_output" || itemType == "custom_tool_call_output" {
+                    state = .working
+                }
+                if itemType == "message", let role = payload["role"] as? String, role == "user" {
+                    state = .working
+                }
+                if itemType == "message", payload["phase"] as? String == "final_answer" {
+                    state = .idle
+                }
+            }
+
+            if type == "event_msg" {
+                let eventType = payload["type"] as? String ?? ""
+                if ["exec_command_begin", "mcp_tool_call_begin", "patch_apply_begin", "web_search_begin", "agent_message"].contains(eventType) {
+                    state = .working
+                }
+                if ["task_complete", "turn_complete", "shutdown_complete"].contains(eventType) {
+                    state = .idle
+                }
+                if let eventCwd = payload["cwd"] as? String, !eventCwd.isEmpty {
+                    cwd = eventCwd
+                }
+            }
+        }
+
+        return CodexParsedSession(
+            sessionId: sessionId,
+            state: state,
+            title: title,
+            cwd: cwd,
+            isInternalSubagent: isInternalSubagent,
+            parentSessionId: parentSessionId,
+            subagentNickname: subagentNickname,
+            subagentRole: subagentRole,
+            subagentDepth: subagentDepth
+        )
+    }
+
+    private static func subagentMetadata(from payload: [String: Any]) -> (
+        isInternalSubagent: Bool,
+        parentSessionId: String?,
+        subagentNickname: String?,
+        subagentRole: String?,
+        subagentDepth: Int?
+    ) {
+        let threadSource = payload["thread_source"] as? String
+        let source = payload["source"] as? [String: Any]
+        let subagent = source?["subagent"] as? [String: Any]
+
+        if subagent?["other"] as? String == "guardian" {
+            return (true, nil, nil, nil, nil)
+        }
+
+        guard threadSource == "subagent" else {
+            return (false, nil, nil, nil, nil)
+        }
+
+        let threadSpawn = subagent?["thread_spawn"] as? [String: Any]
+        return (
+            false,
+            trimmedString(threadSpawn?["parent_thread_id"], limit: 160),
+            trimmedString(payload["agent_nickname"], limit: 80) ?? trimmedString(threadSpawn?["agent_nickname"], limit: 80),
+            trimmedString(payload["agent_role"], limit: 80) ?? trimmedString(threadSpawn?["agent_role"], limit: 80),
+            intValue(threadSpawn?["depth"])
+        )
+    }
+
+    private static func extractTitle(fromPayloadFields payload: [String: Any]) -> String? {
+        for key in ["thread_name", "title", "name"] {
+            if let title = payload[key] as? String,
+               let sanitized = sanitizedTitle(title) {
+                return sanitized
+            }
+        }
+        return nil
+    }
+
+    private static func extractTitle(fromRawJSONLine line: String) -> String? {
+        if let title = extractJSONStringValue(named: "thread_name", from: line),
+           let sanitized = sanitizedTitle(title) {
+            return sanitized
+        }
+        return nil
+    }
+
+    private static func sanitizedTitle(_ value: String) -> String? {
+        let title = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            return nil
+        }
+        return String(title.prefix(160))
+    }
+
+    private static func trimmedString(_ value: Any?, limit: Int) -> String? {
+        guard let string = value as? String else {
+            return nil
+        }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        return String(trimmed.prefix(limit))
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int {
+            return int
+        }
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        return nil
+    }
+
+    private static func extractJSONStringValue(named name: String, from text: String) -> String? {
+        let marker = "\"\(name)\":\""
+        guard let markerRange = text.range(of: marker) else {
+            return nil
+        }
+
+        var value = ""
+        var isEscaped = false
+        var index = markerRange.upperBound
+
+        while index < text.endIndex {
+            let character = text[index]
+            if isEscaped {
+                switch character {
+                case "\"", "\\", "/":
+                    value.append(character)
+                case "n":
+                    value.append("\n")
+                case "r":
+                    value.append("\r")
+                case "t":
+                    value.append("\t")
+                default:
+                    value.append(character)
+                }
+                isEscaped = false
+            } else if character == "\\" {
+                isEscaped = true
+            } else if character == "\"" {
+                return value
+            } else {
+                value.append(character)
+            }
+
+            index = text.index(after: index)
+        }
+
+        return nil
+    }
+
+    private static func extractJSONIntValue(named name: String, from text: String) -> Int? {
+        let marker = "\"\(name)\":"
+        guard let markerRange = text.range(of: marker) else {
+            return nil
+        }
+
+        var digits = ""
+        var index = markerRange.upperBound
+        while index < text.endIndex {
+            let character = text[index]
+            if character.isNumber || (digits.isEmpty && character == "-") {
+                digits.append(character)
+                index = text.index(after: index)
+                continue
+            }
+            break
+        }
+        return Int(digits)
+    }
+}
