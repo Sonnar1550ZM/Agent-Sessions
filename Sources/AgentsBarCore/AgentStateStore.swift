@@ -53,6 +53,14 @@ public final class AgentStateStore: ObservableObject {
         let now = event.updatedAt ?? clock()
         let key = Self.key(agent: event.agent, sessionId: event.sessionId)
         let existing = sessions.first { Self.key(agent: $0.agent, sessionId: $0.sessionId) == key }
+        let latestResponseText = event.latestResponseText ?? existing?.latestResponseText
+        let latestResponsePhase = event.latestResponsePhase ?? existing?.latestResponsePhase
+        let latestResponseUpdatedAt = Self.latestResponseUpdatedAt(
+            existing: existing,
+            eventText: event.latestResponseText,
+            resolvedText: latestResponseText,
+            now: now
+        )
 
         let next = AgentSession(
             agent: event.agent,
@@ -69,8 +77,9 @@ public final class AgentStateStore: ObservableObject {
             subagentRole: event.subagentRole ?? existing?.subagentRole,
             subagentDepth: event.subagentDepth ?? existing?.subagentDepth,
             transcriptPath: event.transcriptPath ?? existing?.transcriptPath,
-            latestResponseText: event.latestResponseText ?? existing?.latestResponseText,
-            latestResponsePhase: event.latestResponsePhase ?? existing?.latestResponsePhase
+            latestResponseText: latestResponseText,
+            latestResponsePhase: latestResponsePhase,
+            latestResponseUpdatedAt: latestResponseUpdatedAt
         )
 
         if let index = sessions.firstIndex(where: { Self.key(agent: $0.agent, sessionId: $0.sessionId) == key }) {
@@ -396,5 +405,26 @@ public final class AgentStateStore: ObservableObject {
 
     private static func key(agent: AgentKind, sessionId: String) -> String {
         "\(agent.rawValue):\(sessionId)"
+    }
+
+    private static func latestResponseUpdatedAt(
+        existing: AgentSession?,
+        eventText: String?,
+        resolvedText: String?,
+        now: Date
+    ) -> Date? {
+        guard resolvedText != nil else {
+            return nil
+        }
+
+        guard let eventText else {
+            return existing?.latestResponseUpdatedAt ?? existing?.updatedAt
+        }
+
+        guard eventText == existing?.latestResponseText else {
+            return now
+        }
+
+        return existing?.latestResponseUpdatedAt ?? existing?.updatedAt ?? now
     }
 }

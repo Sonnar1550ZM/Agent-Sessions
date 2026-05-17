@@ -87,8 +87,19 @@ private enum ProviderPreferenceDefaults {
     static let sessionDisplayCount = 5
     static let latestResponseLineLimit = 2
     static let subagentLatestResponseLineLimit = 2
+    static let latestResponseHideAfterInterval: TimeInterval = 10 * 60
     static let showsSubagents = true
     static let subagentHideAfterInterval: TimeInterval = 3 * 60
+    static let latestResponseHideAfterOptions: [TimeInterval] = [
+        60,
+        3 * 60,
+        5 * 60,
+        10 * 60,
+        30 * 60,
+        60 * 60,
+        3 * 60 * 60,
+        24 * 60 * 60
+    ]
     static let subagentHideAfterOptions: [TimeInterval] = [
         60,
         3 * 60,
@@ -118,6 +129,14 @@ private enum ProviderPreferenceDefaults {
 
     static func sanitizedSubagentLatestResponseLineLimit(_ count: Int?) -> Int {
         min(max(count ?? subagentLatestResponseLineLimit, 1), 5)
+    }
+
+    static func sanitizedLatestResponseHideAfterInterval(_ interval: TimeInterval?) -> TimeInterval {
+        guard let interval,
+              let nearest = latestResponseHideAfterOptions.min(by: { abs($0 - interval) < abs($1 - interval) }) else {
+            return latestResponseHideAfterInterval
+        }
+        return nearest
     }
 
     static func sanitizedHideAfterInterval(_ interval: TimeInterval?) -> TimeInterval {
@@ -157,6 +176,29 @@ private enum ProviderPreferenceDefaults {
         }
     }
 
+    static func latestResponseHideAfterLabel(for interval: TimeInterval) -> String {
+        switch sanitizedLatestResponseHideAfterInterval(interval) {
+        case 60:
+            "1 minute"
+        case 3 * 60:
+            "3 minutes"
+        case 5 * 60:
+            "5 minutes"
+        case 10 * 60:
+            "10 minutes"
+        case 30 * 60:
+            "30 minutes"
+        case 60 * 60:
+            "1 hour"
+        case 3 * 60 * 60:
+            "3 hours"
+        case 24 * 60 * 60:
+            "24 hours"
+        default:
+            "10 minutes"
+        }
+    }
+
     static func hideAfterLabel(for interval: TimeInterval) -> String {
         switch sanitizedHideAfterInterval(interval) {
         case 15 * 60:
@@ -185,6 +227,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var sessionDisplayCount: Int
     var latestResponseLineLimit: Int
     var subagentLatestResponseLineLimit: Int
+    var latestResponseHideAfterInterval: TimeInterval
     var showsSubagents: Bool
     var subagentHideAfterInterval: TimeInterval
     var hideAfterInterval: TimeInterval
@@ -197,6 +240,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         sessionDisplayCount: Int = ProviderPreferenceDefaults.sessionDisplayCount,
         latestResponseLineLimit: Int = ProviderPreferenceDefaults.latestResponseLineLimit,
         subagentLatestResponseLineLimit: Int = ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
+        latestResponseHideAfterInterval: TimeInterval = ProviderPreferenceDefaults.latestResponseHideAfterInterval,
         showsSubagents: Bool = ProviderPreferenceDefaults.showsSubagents,
         subagentHideAfterInterval: TimeInterval = ProviderPreferenceDefaults.subagentHideAfterInterval,
         hideAfterInterval: TimeInterval = ProviderPreferenceDefaults.hideAfterInterval
@@ -208,6 +252,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.sessionDisplayCount = sessionDisplayCount
         self.latestResponseLineLimit = latestResponseLineLimit
         self.subagentLatestResponseLineLimit = subagentLatestResponseLineLimit
+        self.latestResponseHideAfterInterval = latestResponseHideAfterInterval
         self.showsSubagents = showsSubagents
         self.subagentHideAfterInterval = subagentHideAfterInterval
         self.hideAfterInterval = hideAfterInterval
@@ -221,6 +266,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case sessionDisplayCount
         case latestResponseLineLimit
         case subagentLatestResponseLineLimit
+        case latestResponseHideAfterInterval
         case subagentDisplayCount
         case showsSubagents
         case subagentHideAfterInterval
@@ -242,6 +288,9 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         )
         subagentLatestResponseLineLimit = ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(
             try container.decodeIfPresent(Int.self, forKey: .subagentLatestResponseLineLimit)
+        )
+        latestResponseHideAfterInterval = ProviderPreferenceDefaults.sanitizedLatestResponseHideAfterInterval(
+            try container.decodeIfPresent(TimeInterval.self, forKey: .latestResponseHideAfterInterval)
         )
         if let showsSubagents = try container.decodeIfPresent(Bool.self, forKey: .showsSubagents) {
             self.showsSubagents = showsSubagents
@@ -267,6 +316,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(sessionDisplayCount, forKey: .sessionDisplayCount)
         try container.encode(latestResponseLineLimit, forKey: .latestResponseLineLimit)
         try container.encode(subagentLatestResponseLineLimit, forKey: .subagentLatestResponseLineLimit)
+        try container.encode(latestResponseHideAfterInterval, forKey: .latestResponseHideAfterInterval)
         try container.encode(showsSubagents, forKey: .showsSubagents)
         try container.encode(subagentHideAfterInterval, forKey: .subagentHideAfterInterval)
         try container.encode(hideAfterInterval, forKey: .hideAfterInterval)
@@ -284,6 +334,7 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var sessionDisplayCount: Int
     @Published private(set) var latestResponseLineLimit: Int
     @Published private(set) var subagentLatestResponseLineLimit: Int
+    @Published private(set) var latestResponseHideAfterInterval: TimeInterval
     @Published private(set) var showsSubagents: Bool
     @Published private(set) var subagentHideAfterInterval: TimeInterval
     @Published private(set) var hideAfterInterval: TimeInterval
@@ -307,6 +358,9 @@ final class ProviderVisibilityStore: ObservableObject {
         latestResponseLineLimit = ProviderPreferenceDefaults.sanitizedLatestResponseLineLimit(document.latestResponseLineLimit)
         subagentLatestResponseLineLimit = ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(
             document.subagentLatestResponseLineLimit
+        )
+        latestResponseHideAfterInterval = ProviderPreferenceDefaults.sanitizedLatestResponseHideAfterInterval(
+            document.latestResponseHideAfterInterval
         )
         showsSubagents = document.showsSubagents
         subagentHideAfterInterval = ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval)
@@ -355,6 +409,11 @@ final class ProviderVisibilityStore: ObservableObject {
 
     func setSubagentLatestResponseLineLimit(_ count: Int) {
         subagentLatestResponseLineLimit = ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(count)
+        save()
+    }
+
+    func setLatestResponseHideAfterInterval(_ interval: TimeInterval) {
+        latestResponseHideAfterInterval = ProviderPreferenceDefaults.sanitizedLatestResponseHideAfterInterval(interval)
         save()
     }
 
@@ -437,6 +496,7 @@ final class ProviderVisibilityStore: ObservableObject {
             sessionDisplayCount: sessionDisplayCount,
             latestResponseLineLimit: latestResponseLineLimit,
             subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
+            latestResponseHideAfterInterval: latestResponseHideAfterInterval,
             showsSubagents: showsSubagents,
             subagentHideAfterInterval: subagentHideAfterInterval,
             hideAfterInterval: hideAfterInterval
@@ -464,6 +524,7 @@ final class ProviderVisibilityStore: ObservableObject {
                 sessionDisplayCount: ProviderPreferenceDefaults.sessionDisplayCount,
                 latestResponseLineLimit: ProviderPreferenceDefaults.latestResponseLineLimit,
                 subagentLatestResponseLineLimit: ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
+                latestResponseHideAfterInterval: ProviderPreferenceDefaults.latestResponseHideAfterInterval,
                 showsSubagents: ProviderPreferenceDefaults.showsSubagents,
                 subagentHideAfterInterval: ProviderPreferenceDefaults.subagentHideAfterInterval,
                 hideAfterInterval: ProviderPreferenceDefaults.hideAfterInterval
@@ -479,6 +540,9 @@ final class ProviderVisibilityStore: ObservableObject {
             latestResponseLineLimit: ProviderPreferenceDefaults.sanitizedLatestResponseLineLimit(document.latestResponseLineLimit),
             subagentLatestResponseLineLimit: ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(
                 document.subagentLatestResponseLineLimit
+            ),
+            latestResponseHideAfterInterval: ProviderPreferenceDefaults.sanitizedLatestResponseHideAfterInterval(
+                document.latestResponseHideAfterInterval
             ),
             showsSubagents: document.showsSubagents,
             subagentHideAfterInterval: ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval),
@@ -649,140 +713,143 @@ private struct GeneralSettingsView: View {
     @ObservedObject var providerVisibility: ProviderVisibilityStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            HStack(spacing: 12) {
-                Image(systemName: SettingsSection.general.symbolName)
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(.gray.gradient)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(spacing: 12) {
+                    Image(systemName: SettingsSection.general.symbolName)
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(.gray.gradient)
+                        )
+
+                    Text("General")
+                        .font(.system(size: 24, weight: .bold))
+                }
+
+                VStack(spacing: 0) {
+                    SettingsStepperRow(
+                        title: "Session Count",
+                        subtitle: "Maximum parent sessions shown per provider.",
+                        value: providerVisibility.sessionDisplayCount,
+                        range: 3...10
+                    ) { count in
+                        providerVisibility.setSessionDisplayCount(count)
+                    }
+
+                    Divider()
+                        .padding(.leading, 18)
+
+                    SettingsStepperRow(
+                        title: "Latest Response Lines",
+                        subtitle: "Maximum lines shown below each session title.",
+                        value: providerVisibility.latestResponseLineLimit,
+                        range: 1...5
+                    ) { count in
+                        providerVisibility.setLatestResponseLineLimit(count)
+                    }
+
+                    Divider()
+                        .padding(.leading, 18)
+
+                    SettingsPickerRow(
+                        title: "Response Body Hide After",
+                        subtitle: "Hide response text after this interval.",
+                        selection: Binding(
+                            get: {
+                                providerVisibility.latestResponseHideAfterInterval
+                            },
+                            set: { interval in
+                                providerVisibility.setLatestResponseHideAfterInterval(interval)
+                            }
+                        ),
+                        options: ProviderPreferenceDefaults.latestResponseHideAfterOptions,
+                        labelProvider: ProviderPreferenceDefaults.latestResponseHideAfterLabel
                     )
 
-                Text("General")
-                    .font(.system(size: 24, weight: .bold))
+                    Divider()
+                        .padding(.leading, 18)
+
+                    SettingsStepperRow(
+                        title: "Sub-agent Response Lines",
+                        subtitle: "Maximum response lines shown for sub-agent rows.",
+                        value: providerVisibility.subagentLatestResponseLineLimit,
+                        range: 1...5
+                    ) { count in
+                        providerVisibility.setSubagentLatestResponseLineLimit(count)
+                    }
+
+                    Divider()
+                        .padding(.leading, 18)
+
+                    SettingsToggleRow(
+                        title: "Sub-agents",
+                        subtitle: "Show active sub-agent sessions in the drop-down menu.",
+                        isOn: Binding(
+                            get: {
+                                providerVisibility.showsSubagents
+                            },
+                            set: { showsSubagents in
+                                providerVisibility.setShowsSubagents(showsSubagents)
+                            }
+                        )
+                    )
+
+                    Divider()
+                        .padding(.leading, 18)
+
+                    SettingsPickerRow(
+                        title: "Sub-agent Hide After",
+                        subtitle: "Hide inactive sub-agents by timestamp.",
+                        selection: Binding(
+                            get: {
+                                providerVisibility.subagentHideAfterInterval
+                            },
+                            set: { interval in
+                                providerVisibility.setSubagentHideAfterInterval(interval)
+                            }
+                        ),
+                        options: ProviderPreferenceDefaults.subagentHideAfterOptions,
+                        labelProvider: ProviderPreferenceDefaults.subagentHideAfterLabel
+                    )
+                    .disabled(!providerVisibility.showsSubagents)
+                    .opacity(providerVisibility.showsSubagents ? 1 : 0.55)
+
+                    Divider()
+                        .padding(.leading, 18)
+
+                    SettingsPickerRow(
+                        title: "Hide After",
+                        subtitle: "Hide inactive history.",
+                        selection: Binding(
+                            get: {
+                                providerVisibility.hideAfterInterval
+                            },
+                            set: { interval in
+                                providerVisibility.setHideAfterInterval(interval)
+                            }
+                        ),
+                        options: ProviderPreferenceDefaults.hideAfterOptions,
+                        labelProvider: ProviderPreferenceDefaults.hideAfterLabel
+                    )
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor).opacity(0.45))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
             }
-
-            VStack(spacing: 0) {
-                SettingsToggleRow(
-                    title: "Color Icons",
-                    subtitle: "Use color provider icons in the drop-down menu.",
-                    isOn: Binding(
-                        get: {
-                            providerVisibility.usesColorDropdownIcons
-                        },
-                        set: { usesColor in
-                            providerVisibility.setUsesColorDropdownIcons(usesColor)
-                        }
-                    )
-                )
-
-                Divider()
-                    .padding(.leading, 18)
-
-                SettingsStepperRow(
-                    title: "Session Count",
-                    subtitle: "Maximum parent sessions shown per provider.",
-                    value: providerVisibility.sessionDisplayCount,
-                    range: 3...10
-                ) { count in
-                    providerVisibility.setSessionDisplayCount(count)
-                }
-
-                Divider()
-                    .padding(.leading, 18)
-
-                SettingsStepperRow(
-                    title: "Latest Response Lines",
-                    subtitle: "Maximum lines shown below each session title.",
-                    value: providerVisibility.latestResponseLineLimit,
-                    range: 1...5
-                ) { count in
-                    providerVisibility.setLatestResponseLineLimit(count)
-                }
-
-                Divider()
-                    .padding(.leading, 18)
-
-                SettingsStepperRow(
-                    title: "Sub-agent Response Lines",
-                    subtitle: "Maximum response lines shown for sub-agent rows.",
-                    value: providerVisibility.subagentLatestResponseLineLimit,
-                    range: 1...5
-                ) { count in
-                    providerVisibility.setSubagentLatestResponseLineLimit(count)
-                }
-
-                Divider()
-                    .padding(.leading, 18)
-
-                SettingsToggleRow(
-                    title: "Sub-agents",
-                    subtitle: "Show active sub-agent sessions in the drop-down menu.",
-                    isOn: Binding(
-                        get: {
-                            providerVisibility.showsSubagents
-                        },
-                        set: { showsSubagents in
-                            providerVisibility.setShowsSubagents(showsSubagents)
-                        }
-                    )
-                )
-
-                Divider()
-                    .padding(.leading, 18)
-
-                SettingsPickerRow(
-                    title: "Sub-agent Hide After",
-                    subtitle: "Hide inactive sub-agents by timestamp.",
-                    selection: Binding(
-                        get: {
-                            providerVisibility.subagentHideAfterInterval
-                        },
-                        set: { interval in
-                            providerVisibility.setSubagentHideAfterInterval(interval)
-                        }
-                    ),
-                    options: ProviderPreferenceDefaults.subagentHideAfterOptions,
-                    labelProvider: ProviderPreferenceDefaults.subagentHideAfterLabel
-                )
-                .disabled(!providerVisibility.showsSubagents)
-                .opacity(providerVisibility.showsSubagents ? 1 : 0.55)
-
-                Divider()
-                    .padding(.leading, 18)
-
-                SettingsPickerRow(
-                    title: "Hide After",
-                    subtitle: "Hide inactive history.",
-                    selection: Binding(
-                        get: {
-                            providerVisibility.hideAfterInterval
-                        },
-                        set: { interval in
-                            providerVisibility.setHideAfterInterval(interval)
-                        }
-                    ),
-                    options: ProviderPreferenceDefaults.hideAfterOptions,
-                    labelProvider: ProviderPreferenceDefaults.hideAfterLabel
-                )
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.45))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.top, 36)
+            .padding(.horizontal, 32)
+            .padding(.bottom, 28)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.top, 36)
-        .padding(.horizontal, 32)
-        .padding(.bottom, 28)
     }
 }
 
@@ -1690,6 +1757,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             }
             .store(in: &cancellables)
 
+        providerVisibility.$latestResponseHideAfterInterval
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.setNeedsMenuRebuild()
+                self?.resizeMenuIfOpen()
+            }
+            .store(in: &cancellables)
+
         providerVisibility.$showsSubagents
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -1932,6 +2007,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             usesColorIcon: providerVisibility.usesColorDropdownIcons,
             latestResponseLineLimit: providerVisibility.latestResponseLineLimit,
             subagentLatestResponseLineLimit: providerVisibility.subagentLatestResponseLineLimit,
+            latestResponseHideAfterInterval: providerVisibility.latestResponseHideAfterInterval,
             onLayoutMayChange: { [weak self] in
                 self?.resizeMenuIfOpen()
             }
@@ -2025,6 +2101,7 @@ private struct AgentSectionView: View {
     let usesColorIcon: Bool
     let latestResponseLineLimit: Int
     let subagentLatestResponseLineLimit: Int
+    let latestResponseHideAfterInterval: TimeInterval
     let onLayoutMayChange: () -> Void
     @State private var now = Date()
 
@@ -2053,7 +2130,8 @@ private struct AgentSectionView: View {
                             indentLevel: indentLevel,
                             now: now,
                             latestResponseLineLimit: latestResponseLineLimit,
-                            subagentLatestResponseLineLimit: subagentLatestResponseLineLimit
+                            subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
+                            latestResponseHideAfterInterval: latestResponseHideAfterInterval
                         )
                     }
                 }
@@ -2127,6 +2205,7 @@ private struct SessionMenuRow: View {
     let now: Date
     let latestResponseLineLimit: Int
     let subagentLatestResponseLineLimit: Int
+    let latestResponseHideAfterInterval: TimeInterval
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2320,11 +2399,17 @@ private struct SessionMenuRow: View {
 
     private var latestResponseText: String? {
         guard effectiveLatestResponseLineLimit > 0,
+              shouldShowLatestResponseText,
               let text = AgentTextSanitizer.latestResponseText(session.latestResponseText),
               !text.isEmpty else {
             return nil
         }
         return text
+    }
+
+    private var shouldShowLatestResponseText: Bool {
+        let responseUpdatedAt = session.latestResponseUpdatedAt ?? session.updatedAt
+        return now.timeIntervalSince(responseUpdatedAt) <= latestResponseHideAfterInterval
     }
 
     private var effectiveLatestResponseLineLimit: Int {

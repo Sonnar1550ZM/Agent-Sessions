@@ -28,23 +28,52 @@ final class AgentStateStoreTests: XCTestCase {
     }
 
     func testLatestResponsePersistsAcrossMetadataOnlyUpdates() {
-        let now = Date(timeIntervalSince1970: 1_000)
-        let store = AgentStateStore(persistence: nil, clock: { now })
+        let responseTime = Date(timeIntervalSince1970: 1_000)
+        let metadataTime = responseTime.addingTimeInterval(60)
+        let store = AgentStateStore(persistence: nil, clock: { metadataTime })
 
         store.apply(AgentEvent(
             agent: .codex,
             sessionId: "a",
             state: .working,
+            updatedAt: responseTime,
             transcriptPath: "/tmp/a.jsonl",
             latestResponseText: "確認しています。",
             latestResponsePhase: "commentary"
         ))
         store.apply(AgentEvent(agent: .codex, sessionId: "a", state: .idle, title: "Updated title"))
 
-        let session = store.visibleSessions(for: .codex, now: now).first
+        let session = store.visibleSessions(for: .codex, now: metadataTime).first
         XCTAssertEqual(session?.transcriptPath, "/tmp/a.jsonl")
         XCTAssertEqual(session?.latestResponseText, "確認しています。")
         XCTAssertEqual(session?.latestResponsePhase, "commentary")
+        XCTAssertEqual(session?.latestResponseUpdatedAt, responseTime)
+        XCTAssertEqual(session?.updatedAt, metadataTime)
+    }
+
+    func testLatestResponseTimestampUpdatesWhenBodyChanges() {
+        let firstTime = Date(timeIntervalSince1970: 1_000)
+        let secondTime = firstTime.addingTimeInterval(30)
+        let store = AgentStateStore(persistence: nil)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "a",
+            state: .working,
+            updatedAt: firstTime,
+            latestResponseText: "First"
+        ))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "a",
+            state: .working,
+            updatedAt: secondTime,
+            latestResponseText: "Second"
+        ))
+
+        let session = store.visibleSessions(for: .codex, now: secondTime).first
+        XCTAssertEqual(session?.latestResponseText, "Second")
+        XCTAssertEqual(session?.latestResponseUpdatedAt, secondTime)
     }
 
     func testActiveSessionsSortBeforeHistoryThenByRecency() {
