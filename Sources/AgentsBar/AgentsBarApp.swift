@@ -729,9 +729,12 @@ private struct GeneralSettingsView: View {
                         .font(.system(size: 24, weight: .bold))
                 }
 
-                VStack(spacing: 0) {
+                SettingsGroupBox(
+                    title: "Sessions",
+                    subtitle: "Parent rows shown in the menu."
+                ) {
                     SettingsStepperRow(
-                        title: "Session Count",
+                        title: "Count",
                         subtitle: "Maximum parent sessions shown per provider.",
                         value: providerVisibility.sessionDisplayCount,
                         range: 3...10
@@ -739,86 +742,7 @@ private struct GeneralSettingsView: View {
                         providerVisibility.setSessionDisplayCount(count)
                     }
 
-                    Divider()
-                        .padding(.leading, 18)
-
-                    SettingsStepperRow(
-                        title: "Latest Response Lines",
-                        subtitle: "Maximum lines shown below each session title.",
-                        value: providerVisibility.latestResponseLineLimit,
-                        range: 1...5
-                    ) { count in
-                        providerVisibility.setLatestResponseLineLimit(count)
-                    }
-
-                    Divider()
-                        .padding(.leading, 18)
-
-                    SettingsPickerRow(
-                        title: "Response Body Hide After",
-                        subtitle: "Hide response text after this interval.",
-                        selection: Binding(
-                            get: {
-                                providerVisibility.latestResponseHideAfterInterval
-                            },
-                            set: { interval in
-                                providerVisibility.setLatestResponseHideAfterInterval(interval)
-                            }
-                        ),
-                        options: ProviderPreferenceDefaults.latestResponseHideAfterOptions,
-                        labelProvider: ProviderPreferenceDefaults.latestResponseHideAfterLabel
-                    )
-
-                    Divider()
-                        .padding(.leading, 18)
-
-                    SettingsStepperRow(
-                        title: "Sub-agent Response Lines",
-                        subtitle: "Maximum response lines shown for sub-agent rows.",
-                        value: providerVisibility.subagentLatestResponseLineLimit,
-                        range: 1...5
-                    ) { count in
-                        providerVisibility.setSubagentLatestResponseLineLimit(count)
-                    }
-
-                    Divider()
-                        .padding(.leading, 18)
-
-                    SettingsToggleRow(
-                        title: "Sub-agents",
-                        subtitle: "Show active sub-agent sessions in the drop-down menu.",
-                        isOn: Binding(
-                            get: {
-                                providerVisibility.showsSubagents
-                            },
-                            set: { showsSubagents in
-                                providerVisibility.setShowsSubagents(showsSubagents)
-                            }
-                        )
-                    )
-
-                    Divider()
-                        .padding(.leading, 18)
-
-                    SettingsPickerRow(
-                        title: "Sub-agent Hide After",
-                        subtitle: "Hide inactive sub-agents by timestamp.",
-                        selection: Binding(
-                            get: {
-                                providerVisibility.subagentHideAfterInterval
-                            },
-                            set: { interval in
-                                providerVisibility.setSubagentHideAfterInterval(interval)
-                            }
-                        ),
-                        options: ProviderPreferenceDefaults.subagentHideAfterOptions,
-                        labelProvider: ProviderPreferenceDefaults.subagentHideAfterLabel
-                    )
-                    .disabled(!providerVisibility.showsSubagents)
-                    .opacity(providerVisibility.showsSubagents ? 1 : 0.55)
-
-                    Divider()
-                        .padding(.leading, 18)
+                    SettingsDivider()
 
                     SettingsPickerRow(
                         title: "Hide After",
@@ -835,14 +759,85 @@ private struct GeneralSettingsView: View {
                         labelProvider: ProviderPreferenceDefaults.hideAfterLabel
                     )
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor).opacity(0.45))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
+
+                SettingsGroupBox(
+                    title: "Response Body",
+                    subtitle: "Preview text shown below each session title."
+                ) {
+                    SettingsStepperRow(
+                        title: "Lines",
+                        subtitle: "Maximum lines shown below each session title.",
+                        value: providerVisibility.latestResponseLineLimit,
+                        range: 1...5
+                    ) { count in
+                        providerVisibility.setLatestResponseLineLimit(count)
+                    }
+
+                    SettingsDivider()
+
+                    SettingsPickerRow(
+                        title: "Hide After",
+                        subtitle: "Hide response text after this interval.",
+                        selection: Binding(
+                            get: {
+                                providerVisibility.latestResponseHideAfterInterval
+                            },
+                            set: { interval in
+                                providerVisibility.setLatestResponseHideAfterInterval(interval)
+                            }
+                        ),
+                        options: ProviderPreferenceDefaults.latestResponseHideAfterOptions,
+                        labelProvider: ProviderPreferenceDefaults.latestResponseHideAfterLabel
+                    )
+                }
+
+                SettingsGroupBox(
+                    title: "Sub-agents",
+                    subtitle: "Nested session rows in the menu."
+                ) {
+                    SettingsToggleRow(
+                        title: "Show",
+                        subtitle: "Show active sub-agent sessions in the drop-down menu.",
+                        isOn: Binding(
+                            get: {
+                                providerVisibility.showsSubagents
+                            },
+                            set: { showsSubagents in
+                                providerVisibility.setShowsSubagents(showsSubagents)
+                            }
+                        )
+                    )
+
+                    SettingsDivider()
+
+                    SettingsStepperRow(
+                        title: "Lines",
+                        subtitle: "Maximum response lines shown for sub-agent rows.",
+                        value: providerVisibility.subagentLatestResponseLineLimit,
+                        range: 1...5
+                    ) { count in
+                        providerVisibility.setSubagentLatestResponseLineLimit(count)
+                    }
+
+                    SettingsDivider()
+
+                    SettingsPickerRow(
+                        title: "Hide After",
+                        subtitle: "Hide inactive sub-agents by timestamp.",
+                        selection: Binding(
+                            get: {
+                                providerVisibility.subagentHideAfterInterval
+                            },
+                            set: { interval in
+                                providerVisibility.setSubagentHideAfterInterval(interval)
+                            }
+                        ),
+                        options: ProviderPreferenceDefaults.subagentHideAfterOptions,
+                        labelProvider: ProviderPreferenceDefaults.subagentHideAfterLabel
+                    )
+                    .disabled(!providerVisibility.showsSubagents)
+                    .opacity(providerVisibility.showsSubagents ? 1 : 0.55)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding(.top, 36)
@@ -987,6 +982,55 @@ private struct ProviderPlacementRow: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .frame(height: 52)
+    }
+}
+
+private struct SettingsGroupBox<Content: View>: View {
+    let title: String
+    let subtitle: String
+    private let content: Content
+
+    init(
+        title: String,
+        subtitle: String,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 2)
+
+            VStack(spacing: 0) {
+                content
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.45))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
+        }
+    }
+}
+
+private struct SettingsDivider: View {
+    var body: some View {
+        Divider()
+            .padding(.leading, 18)
     }
 }
 
