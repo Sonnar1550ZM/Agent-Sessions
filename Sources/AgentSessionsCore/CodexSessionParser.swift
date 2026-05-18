@@ -45,8 +45,23 @@ public struct CodexParsedSession: Equatable, Sendable {
 
 public enum CodexSessionParser {
     public static func parse(_ text: String, fallbackSessionId: String) -> CodexParsedSession {
-        var sessionId = fallbackSessionId
-        var state = AgentState.idle
+        var state = ParserState(fallbackSessionId: fallbackSessionId)
+        applyLines(text, to: &state)
+        return state.toSession()
+    }
+
+    /// Apply additional JSONL lines on top of a previously parsed session.
+    /// Use this when reading only the appended portion of a session file to
+    /// avoid re-parsing the entire transcript.
+    public static func parseDelta(_ text: String, base: CodexParsedSession) -> CodexParsedSession {
+        var state = ParserState(base: base)
+        applyLines(text, to: &state)
+        return state.toSession()
+    }
+
+    private struct ParserState {
+        var sessionId: String
+        var state: AgentState = .idle
         var title = ""
         var promptTitle = ""
         var cwd = ""
@@ -59,6 +74,44 @@ public enum CodexSessionParser {
         var latestResponseText: String?
         var latestResponsePhase: String?
 
+        init(fallbackSessionId: String) {
+            self.sessionId = fallbackSessionId
+        }
+
+        init(base: CodexParsedSession) {
+            self.sessionId = base.sessionId
+            self.state = base.state
+            self.title = base.title
+            self.cwd = base.cwd
+            self.event = base.event
+            self.isInternalSubagent = base.isInternalSubagent
+            self.parentSessionId = base.parentSessionId
+            self.subagentNickname = base.subagentNickname
+            self.subagentRole = base.subagentRole
+            self.subagentDepth = base.subagentDepth
+            self.latestResponseText = base.latestResponseText
+            self.latestResponsePhase = base.latestResponsePhase
+        }
+
+        func toSession() -> CodexParsedSession {
+            CodexParsedSession(
+                sessionId: sessionId,
+                state: state,
+                title: title.isEmpty ? promptTitle : title,
+                cwd: cwd,
+                event: event,
+                isInternalSubagent: isInternalSubagent,
+                parentSessionId: parentSessionId,
+                subagentNickname: subagentNickname,
+                subagentRole: subagentRole,
+                subagentDepth: subagentDepth,
+                latestResponseText: latestResponseText,
+                latestResponsePhase: latestResponsePhase
+            )
+        }
+    }
+
+    private static func applyLines(_ text: String, to parserState: inout ParserState) {
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             let lineText = String(line)
             guard let data = line.data(using: .utf8),
@@ -66,29 +119,29 @@ public enum CodexSessionParser {
                   let type = object["type"] as? String else {
                 if lineText.contains("\"type\":\"session_meta\"") {
                     if let id = extractJSONStringValue(named: "id", from: lineText), !id.isEmpty {
-                        sessionId = id
+                        parserState.sessionId = id
                     }
                     if let metadataCwd = extractJSONStringValue(named: "cwd", from: lineText), !metadataCwd.isEmpty {
-                        cwd = metadataCwd
+                        parserState.cwd = metadataCwd
                     }
                     if let metadataTitle = extractTitle(fromRawJSONLine: lineText) {
-                        title = metadataTitle
+                        parserState.title = metadataTitle
                     }
                     if lineText.contains("\"source\":{\"subagent\":{\"other\":\"guardian\"") {
-                        isInternalSubagent = true
+                        parserState.isInternalSubagent = true
                     }
                     if extractJSONStringValue(named: "thread_source", from: lineText) == "subagent" {
-                        parentSessionId = extractJSONStringValue(named: "parent_thread_id", from: lineText) ?? parentSessionId
-                        subagentNickname = extractJSONStringValue(named: "agent_nickname", from: lineText) ?? subagentNickname
-                        subagentRole = extractJSONStringValue(named: "agent_role", from: lineText) ?? subagentRole
-                        subagentDepth = extractJSONIntValue(named: "depth", from: lineText) ?? subagentDepth
+                        parserState.parentSessionId = extractJSONStringValue(named: "parent_thread_id", from: lineText) ?? parserState.parentSessionId
+                        parserState.subagentNickname = extractJSONStringValue(named: "agent_nickname", from: lineText) ?? parserState.subagentNickname
+                        parserState.subagentRole = extractJSONStringValue(named: "agent_role", from: lineText) ?? parserState.subagentRole
+                        parserState.subagentDepth = extractJSONIntValue(named: "depth", from: lineText) ?? parserState.subagentDepth
                     }
                 } else if lineText.contains("\"type\":\"turn_context\""),
                           let contextCwd = extractJSONStringValue(named: "cwd", from: lineText),
                           !contextCwd.isEmpty {
-                    cwd = contextCwd
+                    parserState.cwd = contextCwd
                     if let contextTitle = extractTitle(fromRawJSONLine: lineText) {
-                        title = contextTitle
+                        parserState.title = contextTitle
                     }
                 }
                 continue
@@ -96,100 +149,85 @@ public enum CodexSessionParser {
 
             let payload = object["payload"] as? [String: Any] ?? [:]
             if let payloadTitle = extractTitle(fromPayloadFields: payload) {
-                title = payloadTitle
+                parserState.title = payloadTitle
             }
 
             if type == "session_meta" {
                 if let id = payload["id"] as? String, !id.isEmpty {
-                    sessionId = id
+                    parserState.sessionId = id
                 }
                 let metadata = subagentMetadata(from: payload)
-                isInternalSubagent = isInternalSubagent || metadata.isInternalSubagent
-                parentSessionId = metadata.parentSessionId ?? parentSessionId
-                subagentNickname = metadata.subagentNickname ?? subagentNickname
-                subagentRole = metadata.subagentRole ?? subagentRole
-                subagentDepth = metadata.subagentDepth ?? subagentDepth
+                parserState.isInternalSubagent = parserState.isInternalSubagent || metadata.isInternalSubagent
+                parserState.parentSessionId = metadata.parentSessionId ?? parserState.parentSessionId
+                parserState.subagentNickname = metadata.subagentNickname ?? parserState.subagentNickname
+                parserState.subagentRole = metadata.subagentRole ?? parserState.subagentRole
+                parserState.subagentDepth = metadata.subagentDepth ?? parserState.subagentDepth
             }
 
             if ["session_meta", "turn_context"].contains(type),
                let contextCwd = payload["cwd"] as? String,
                !contextCwd.isEmpty {
-                cwd = contextCwd
+                parserState.cwd = contextCwd
             }
 
             if type == "response_item" {
                 let itemType = payload["type"] as? String ?? ""
                 if !itemType.isEmpty {
-                    event = itemType
+                    parserState.event = itemType
                 }
                 if itemType == "function_call" || itemType == "function_call_output" || itemType == "custom_tool_call_output" {
-                    state = .working
+                    parserState.state = .working
                 }
                 if itemType == "message", let role = payload["role"] as? String, role == "user" {
-                    state = .working
-                    event = "user_message"
-                    if promptTitle.isEmpty,
+                    parserState.state = .working
+                    parserState.event = "user_message"
+                    if parserState.promptTitle.isEmpty,
                        let userTitle = extractPromptTitle(fromUserMessagePayload: payload) {
-                        promptTitle = userTitle
+                        parserState.promptTitle = userTitle
                     }
-                    latestResponseText = nil
-                    latestResponsePhase = nil
+                    parserState.latestResponseText = nil
+                    parserState.latestResponsePhase = nil
                 }
                 if itemType == "message", let role = payload["role"] as? String, role == "assistant",
                    let responseText = responseText(from: payload) {
-                    latestResponseText = responseText
-                    latestResponsePhase = trimmedString(payload["phase"], limit: 80)
+                    parserState.latestResponseText = responseText
+                    parserState.latestResponsePhase = trimmedString(payload["phase"], limit: 80)
                 }
                 if itemType == "message", payload["phase"] as? String == "final_answer" {
-                    state = .idle
+                    parserState.state = .idle
                 }
             }
 
             if type == "event_msg" {
                 let eventType = payload["type"] as? String ?? ""
                 if !eventType.isEmpty {
-                    event = eventType
+                    parserState.event = eventType
                 }
                 if ["exec_command_begin", "mcp_tool_call_begin", "patch_apply_begin", "web_search_begin", "agent_message"].contains(eventType) {
-                    state = .working
+                    parserState.state = .working
                 }
                 if eventType == "agent_message",
                    let responseText = sanitizedResponseText(payload["message"] as? String) {
-                    latestResponseText = responseText
-                    latestResponsePhase = trimmedString(payload["phase"], limit: 80)
+                    parserState.latestResponseText = responseText
+                    parserState.latestResponsePhase = trimmedString(payload["phase"], limit: 80)
                 }
                 if ["task_complete", "turn_complete", "shutdown_complete", "turn_aborted"].contains(eventType) {
-                    state = .idle
+                    parserState.state = .idle
                 }
                 if let eventCwd = payload["cwd"] as? String, !eventCwd.isEmpty {
-                    cwd = eventCwd
+                    parserState.cwd = eventCwd
                 }
                 if eventType == "user_message" {
-                    state = .working
-                    if promptTitle.isEmpty,
+                    parserState.state = .working
+                    if parserState.promptTitle.isEmpty,
                        let userTitle = sanitizedUserPromptTitle(payload["message"] as? String) {
-                        promptTitle = userTitle
+                        parserState.promptTitle = userTitle
                     }
-                    latestResponseText = nil
-                    latestResponsePhase = nil
+                    parserState.latestResponseText = nil
+                    parserState.latestResponsePhase = nil
                 }
             }
         }
-
-        return CodexParsedSession(
-            sessionId: sessionId,
-            state: state,
-            title: title.isEmpty ? promptTitle : title,
-            cwd: cwd,
-            event: event,
-            isInternalSubagent: isInternalSubagent,
-            parentSessionId: parentSessionId,
-            subagentNickname: subagentNickname,
-            subagentRole: subagentRole,
-            subagentDepth: subagentDepth,
-            latestResponseText: latestResponseText,
-            latestResponsePhase: latestResponsePhase
-        )
     }
 
     private static func responseText(from payload: [String: Any]) -> String? {

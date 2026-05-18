@@ -39,6 +39,12 @@ public final class AgentStateStore: ObservableObject {
 
     private let persistence: StatePersistence?
     private let clock: () -> Date
+    private let persistQueue = DispatchQueue(
+        label: "app.agentsessions.persist",
+        qos: .utility
+    )
+    private var pendingPersistWorkItem: DispatchWorkItem?
+    private static let persistDebounceInterval: TimeInterval = 0.5
 
     public init(
         persistence: StatePersistence? = StatePersistence(),
@@ -308,10 +314,24 @@ public final class AgentStateStore: ObservableObject {
     }
 
     public func reloadFromDisk() {
+        pendingPersistWorkItem?.cancel()
+        pendingPersistWorkItem = nil
         guard let document = try? persistence?.load() else {
             return
         }
         sessions = document.sessions
+    }
+
+    /// Synchronously writes any pending in-memory state to disk. Call this on
+    /// application termination to ensure the most recent `apply()` is durable.
+    public func flushPersist() {
+        pendingPersistWorkItem?.cancel()
+        pendingPersistWorkItem = nil
+        guard let persistence else { return }
+        let snapshot = AgentSessionsDocument(sessions: sessions.sorted(by: sessionSort))
+        persistQueue.sync {
+            try? persistence.save(snapshot)
+        }
     }
 
     public func removeSessions(where shouldRemove: (AgentSession) -> Bool) {
@@ -344,7 +364,17 @@ public final class AgentStateStore: ObservableObject {
     }
 
     private func persist() {
-        try? persistence?.save(AgentSessionsDocument(sessions: sessions.sorted(by: sessionSort)))
+        pendingPersistWorkItem?.cancel()
+        guard let persistence else { return }
+        let snapshot = AgentSessionsDocument(sessions: sessions.sorted(by: sessionSort))
+        let item = DispatchWorkItem {
+            try? persistence.save(snapshot)
+        }
+        pendingPersistWorkItem = item
+        persistQueue.asyncAfter(
+            deadline: .now() + Self.persistDebounceInterval,
+            execute: item
+        )
     }
 
     private func trimStoredSessions(now: Date) {

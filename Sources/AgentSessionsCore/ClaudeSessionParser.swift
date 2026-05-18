@@ -82,16 +82,72 @@ public enum ClaudeSessionParser {
     }
 
     public static func parseSubagentTranscript(transcriptPath: String, text: String) -> ClaudeParsedSubagent? {
-        guard var metadata = subagentMetadata(transcriptPath: transcriptPath) else {
+        guard let metadata = subagentMetadata(transcriptPath: transcriptPath) else {
             return nil
         }
 
-        var state = AgentState.working
-        var title = ""
-        var cwd = ""
-        var role = ""
+        var state = SubagentParserState(metadata: metadata)
+        applySubagentLines(text, to: &state)
+        return state.toParsed()
+    }
+
+    /// Apply additional JSONL lines on top of a previously parsed subagent transcript.
+    public static func parseSubagentTranscriptDelta(
+        transcriptPath: String,
+        text: String,
+        base: ClaudeParsedSubagent
+    ) -> ClaudeParsedSubagent? {
+        guard subagentMetadata(transcriptPath: transcriptPath) != nil else {
+            return nil
+        }
+
+        var state = SubagentParserState(base: base)
+        applySubagentLines(text, to: &state)
+        return state.toParsed()
+    }
+
+    private struct SubagentParserState {
+        var metadata: ClaudeSubagentMetadata
+        var state: AgentState = .working
+        var title: String = ""
+        var cwd: String = ""
+        var role: String = ""
         var latestResponseText: String?
 
+        init(metadata: ClaudeSubagentMetadata) {
+            self.metadata = metadata
+        }
+
+        init(base: ClaudeParsedSubagent) {
+            self.metadata = base.metadata
+            self.state = base.state
+            self.title = base.title
+            self.cwd = base.cwd
+            self.role = base.metadata.subagentRole
+            self.latestResponseText = base.latestResponseText
+        }
+
+        func toParsed() -> ClaudeParsedSubagent {
+            var metadata = self.metadata
+            let resolvedRole: String
+            if role.isEmpty {
+                resolvedRole = metadata.subagentRole
+            } else {
+                resolvedRole = role
+                metadata.subagentRole = role
+            }
+
+            return ClaudeParsedSubagent(
+                metadata: metadata,
+                state: state,
+                title: title.isEmpty ? resolvedRole : title,
+                cwd: cwd,
+                latestResponseText: latestResponseText
+            )
+        }
+    }
+
+    private static func applySubagentLines(_ text: String, to parserState: inout SubagentParserState) {
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let data = line.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -99,54 +155,40 @@ public enum ClaudeSessionParser {
             }
 
             if let lineCWD = object["cwd"] as? String, !lineCWD.isEmpty {
-                cwd = lineCWD
+                parserState.cwd = lineCWD
             }
             if let agentId = object["agentId"] as? String, !agentId.isEmpty {
-                metadata.subagentNickname = agentId
+                parserState.metadata.subagentNickname = agentId
             }
             if let attributionAgent = object["attributionAgent"] as? String, !attributionAgent.isEmpty {
-                role = attributionAgent
+                parserState.role = attributionAgent
             }
-            if title.isEmpty,
+            if parserState.title.isEmpty,
                object["type"] as? String == "user",
-               let promptTitle = promptTitle(from: object["message"]) {
-                title = promptTitle
+               let title = promptTitle(from: object["message"]) {
+                parserState.title = title
             }
 
             let type = object["type"] as? String ?? ""
             if type == "assistant",
                let message = object["message"] as? [String: Any] {
                 if let responseText = assistantResponseText(from: message) {
-                    latestResponseText = responseText
+                    parserState.latestResponseText = responseText
                 }
                 if containsToolUse(message["content"]) {
-                    state = .working
+                    parserState.state = .working
                 } else if message["stop_reason"] as? String == "end_turn" {
-                    state = .idle
+                    parserState.state = .idle
                 }
             } else if type == "user" {
-                state = .working
+                parserState.state = .working
                 if isHumanUserMessage(object) {
-                    latestResponseText = nil
+                    parserState.latestResponseText = nil
                 }
             } else if type == "attachment" {
-                state = .working
+                parserState.state = .working
             }
         }
-
-        if role.isEmpty {
-            role = metadata.subagentRole
-        } else {
-            metadata.subagentRole = role
-        }
-
-        return ClaudeParsedSubagent(
-            metadata: metadata,
-            state: state,
-            title: title.isEmpty ? role : title,
-            cwd: cwd,
-            latestResponseText: latestResponseText
-        )
     }
 
     public static func latestAssistantResponseText(fromTranscript text: String) -> String? {

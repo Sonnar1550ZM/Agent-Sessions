@@ -7,12 +7,19 @@ final class CodexSessionWatcher {
         let fingerprint: String
     }
 
-    private struct CachedSnapshot {
-        let modifiedAt: Date
-        let snapshot: Snapshot?
+    private struct FileTracker {
+        var inode: UInt64
+        var bytesRead: UInt64
+        var modifiedAt: Date
+        var partialTail: Data
+        var baseSession: CodexParsedSession?
+        var lastSnapshot: Snapshot?
     }
 
-    private let queue = DispatchQueue(label: "app.agentsessions.codex-session-watcher")
+    private let queue = DispatchQueue(
+        label: "app.agentsessions.codex-session-watcher",
+        qos: .userInitiated
+    )
     private let handler: (AgentEvent) -> Void
     private var timer: DispatchSourceTimer?
     private var activityMonitor: FileSystemActivityMonitor?
@@ -20,10 +27,10 @@ final class CodexSessionWatcher {
     private var pendingChangedPaths: Set<String> = []
     private var lastPollDate = Date.distantPast
     private var lastFingerprints: [String: String] = [:]
-    private var cachedSnapshotsByPath: [String: CachedSnapshot] = [:]
-    private static let changePollDelay: TimeInterval = 0.18
-    private static let minimumChangePollInterval: TimeInterval = 0.35
-    private static let fallbackPollInterval: TimeInterval = 30
+    private var fileTrackers: [String: FileTracker] = [:]
+    private static let changePollDelay: TimeInterval = 0.02
+    private static let minimumChangePollInterval: TimeInterval = 0.05
+    private static let fallbackPollInterval: TimeInterval = 300
 
     init(handler: @escaping (AgentEvent) -> Void) {
         self.handler = handler
@@ -83,7 +90,7 @@ final class CodexSessionWatcher {
             ingest(file)
         }
 
-        cachedSnapshotsByPath = cachedSnapshotsByPath.filter { activePaths.contains($0.key) }
+        fileTrackers = fileTrackers.filter { activePaths.contains($0.key) }
     }
 
     private func scheduleChangedPathPoll(_ paths: [String]) {
@@ -121,10 +128,59 @@ final class CodexSessionWatcher {
     }
 
     private func ingest(_ file: URL) {
-        guard let modifiedAt = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-              let snapshot = snapshot(for: file, modifiedAt: modifiedAt) else {
+        let path = file.path
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        guard let modifiedAt = attrs?[.modificationDate] as? Date,
+              let inode = (attrs?[.systemFileNumber] as? NSNumber)?.uint64Value,
+              let sizeNumber = attrs?[.size] as? NSNumber else {
             return
         }
+        let size = sizeNumber.uint64Value
+
+        var tracker = fileTrackers[path]
+        let needsFullLoad = tracker == nil
+            || tracker!.inode != inode
+            || size < tracker!.bytesRead
+
+        let snapshot: Snapshot?
+        if needsFullLoad {
+            let result = Self.makeSnapshotAndParsed(file: file, modifiedAt: modifiedAt)
+            snapshot = result.snapshot
+            fileTrackers[path] = FileTracker(
+                inode: inode,
+                bytesRead: size,
+                modifiedAt: modifiedAt,
+                partialTail: Data(),
+                baseSession: result.parsed,
+                lastSnapshot: snapshot
+            )
+        } else if size == tracker!.bytesRead {
+            snapshot = tracker!.lastSnapshot.flatMap {
+                Self.refreshedSnapshot($0, modifiedAt: modifiedAt)
+            }
+            tracker!.modifiedAt = modifiedAt
+            fileTrackers[path] = tracker
+        } else if let base = tracker!.baseSession {
+            snapshot = Self.makeDeltaSnapshot(
+                file: file,
+                modifiedAt: modifiedAt,
+                tracker: &tracker!,
+                base: base,
+                totalSize: size
+            )
+            fileTrackers[path] = tracker
+        } else {
+            let result = Self.makeSnapshotAndParsed(file: file, modifiedAt: modifiedAt)
+            snapshot = result.snapshot
+            tracker!.bytesRead = size
+            tracker!.modifiedAt = modifiedAt
+            tracker!.partialTail = Data()
+            tracker!.baseSession = result.parsed
+            tracker!.lastSnapshot = snapshot
+            fileTrackers[path] = tracker
+        }
+
+        guard let snapshot else { return }
 
         let key = snapshot.event.sessionId
         guard snapshot.fingerprint != lastFingerprints[key] else {
@@ -135,29 +191,71 @@ final class CodexSessionWatcher {
         handler(snapshot.event)
     }
 
-    private func snapshot(for file: URL, modifiedAt: Date) -> Snapshot? {
-        let key = file.path
-        if let cached = cachedSnapshotsByPath[key],
-           cached.modifiedAt == modifiedAt {
-            return Self.refreshedSnapshot(cached.snapshot, modifiedAt: modifiedAt)
+    private static func makeSnapshotAndParsed(
+        file: URL,
+        modifiedAt: Date
+    ) -> (snapshot: Snapshot?, parsed: CodexParsedSession?) {
+        guard let text = contextText(from: file) else {
+            return (nil, nil)
         }
-
-        let snapshot = Self.makeSnapshot(file: file, modifiedAt: modifiedAt)
-        cachedSnapshotsByPath[key] = CachedSnapshot(modifiedAt: modifiedAt, snapshot: snapshot)
-        return snapshot
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: fallbackSessionId(from: file))
+        guard !parsed.cwd.isEmpty, !parsed.isInternalSubagent else {
+            return (nil, nil)
+        }
+        return (snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed), parsed)
     }
 
-    private static func makeSnapshot(file: URL, modifiedAt: Date) -> Snapshot? {
-        guard let text = contextText(from: file) else {
-            return nil
+    private static func makeDeltaSnapshot(
+        file: URL,
+        modifiedAt: Date,
+        tracker: inout FileTracker,
+        base: CodexParsedSession,
+        totalSize: UInt64
+    ) -> Snapshot? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
+        }
+        defer { try? handle.close() }
+
+        do {
+            try handle.seek(toOffset: tracker.bytesRead)
+        } catch {
+            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
+        }
+        let deltaData = (try? handle.readToEnd()) ?? Data()
+        var combined = tracker.partialTail + deltaData
+
+        let newline = UInt8(ascii: "\n")
+        if let lastNewlineIndex = combined.lastIndex(of: newline) {
+            let after = combined.index(after: lastNewlineIndex)
+            let partial = combined.suffix(from: after)
+            tracker.partialTail = Data(partial)
+            combined = Data(combined.prefix(upTo: after))
+        } else {
+            tracker.partialTail = combined
+            tracker.bytesRead = totalSize
+            tracker.modifiedAt = modifiedAt
+            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
         }
 
-        let parsed = CodexSessionParser.parse(text, fallbackSessionId: fallbackSessionId(from: file))
+        tracker.bytesRead = totalSize - UInt64(tracker.partialTail.count)
+        tracker.modifiedAt = modifiedAt
+
+        guard let text = String(data: combined, encoding: .utf8) else {
+            tracker.baseSession = nil
+            tracker.partialTail = Data()
+            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
+        }
+
+        let parsed = CodexSessionParser.parseDelta(text, base: base)
         guard !parsed.cwd.isEmpty, !parsed.isInternalSubagent else {
             return nil
         }
 
-        return snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed)
+        let snapshot = snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed)
+        tracker.baseSession = parsed
+        tracker.lastSnapshot = snapshot
+        return snapshot
     }
 
     private static func refreshedSnapshot(_ snapshot: Snapshot?, modifiedAt: Date) -> Snapshot? {
@@ -242,7 +340,50 @@ final class CodexSessionWatcher {
 
     private static func latestRolloutFiles(limit: Int) -> [URL] {
         let root = watchRoot()
+        let recent = recentRolloutFiles(under: root)
+        if !recent.isEmpty {
+            return recent
+                .sorted { $0.modifiedAt > $1.modifiedAt }
+                .prefix(limit)
+                .map(\.url)
+        }
+        return legacyEnumerateRolloutFiles(under: root, limit: limit)
+    }
 
+    private static func recentRolloutFiles(under root: URL) -> [(url: URL, modifiedAt: Date)] {
+        let now = Date()
+        let cal = Calendar(identifier: .gregorian)
+        var files: [(url: URL, modifiedAt: Date)] = []
+        for offset in 0...1 {
+            guard let day = cal.date(byAdding: .day, value: -offset, to: now) else { continue }
+            let y = cal.component(.year, from: day)
+            let m = cal.component(.month, from: day)
+            let d = cal.component(.day, from: day)
+            let dir = root
+                .appendingPathComponent(String(format: "%04d", y), isDirectory: true)
+                .appendingPathComponent(String(format: "%02d", m), isDirectory: true)
+                .appendingPathComponent(String(format: "%02d", d), isDirectory: true)
+            guard FileManager.default.fileExists(atPath: dir.path) else { continue }
+            guard let urls = try? FileManager.default.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+            for url in urls {
+                guard url.lastPathComponent.hasPrefix("rollout-"),
+                      url.pathExtension == "jsonl",
+                      let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                      values.isRegularFile == true,
+                      let modifiedAt = values.contentModificationDate else {
+                    continue
+                }
+                files.append((url, modifiedAt))
+            }
+        }
+        return files
+    }
+
+    private static func legacyEnumerateRolloutFiles(under root: URL, limit: Int) -> [URL] {
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
@@ -325,27 +466,76 @@ final class CodexSessionWatcher {
         return head + "\n" + tail
     }
 
+    private static let threadTitleCacheLock = NSLock()
+    nonisolated(unsafe) private static var threadTitleCache: [String: String?] = [:]
+    nonisolated(unsafe) private static var threadTitleCacheKey: (size: UInt64, mtime: Date)?
+
     private static func threadTitle(for sessionId: String) -> String? {
         let url = FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent(".codex/session_index.jsonl")
 
-        guard let text = tailText(from: url, limit: 2_000_000) else {
+        let stats: (size: UInt64, mtime: Date)? = {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = values.fileSize.map(UInt64.init),
+                  let mtime = values.contentModificationDate else {
+                return nil
+            }
+            return (size, mtime)
+        }()
+
+        threadTitleCacheLock.lock()
+        let cacheValid: Bool
+        if let stats, let key = threadTitleCacheKey {
+            cacheValid = key.size == stats.size && key.mtime == stats.mtime
+        } else {
+            cacheValid = false
+        }
+        if cacheValid, let cached = threadTitleCache[sessionId] {
+            threadTitleCacheLock.unlock()
+            return cached
+        }
+        if !cacheValid {
+            threadTitleCache.removeAll(keepingCapacity: true)
+            threadTitleCacheKey = stats
+        }
+        threadTitleCacheLock.unlock()
+
+        let title = scanThreadTitle(in: url, for: sessionId, tailLimit: 256_000)
+            ?? scanThreadTitle(in: url, for: sessionId, tailLimit: 2_000_000)
+
+        threadTitleCacheLock.lock()
+        if threadTitleCacheKey?.size == stats?.size,
+           threadTitleCacheKey?.mtime == stats?.mtime {
+            threadTitleCache[sessionId] = title
+        }
+        threadTitleCacheLock.unlock()
+
+        return title
+    }
+
+    private static func scanThreadTitle(
+        in url: URL,
+        for sessionId: String,
+        tailLimit: UInt64
+    ) -> String? {
+        guard let text = tailText(from: url, limit: tailLimit) else {
             return nil
         }
 
-        var matchedTitle: String?
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
+            guard line.range(of: sessionId) != nil else {
+                continue
+            }
             guard let data = line.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   object["id"] as? String == sessionId,
                   let title = object["thread_name"] as? String else {
                 continue
             }
-            matchedTitle = sanitizedTitle(title)
+            return sanitizedTitle(title)
         }
-
-        return matchedTitle
+        return nil
     }
 
     private static func sanitizedTitle(_ value: String) -> String? {

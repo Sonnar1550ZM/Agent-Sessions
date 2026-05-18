@@ -2115,6 +2115,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusMenuController = StatusMenuController(controller: controller)
         popupController = SessionPopupController(controller: controller)
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        controller?.store.flushPersist()
+    }
 }
 
 private extension AgentEvent {
@@ -2983,7 +2987,7 @@ final class AppController: ObservableObject {
     }
 
     private func startMaintenanceTimer() {
-        maintenanceTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        maintenanceTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshSessionTitles()
             }
@@ -3122,7 +3126,42 @@ final class SessionPopupController {
     }
 
     private func startRefreshTimer() {
-        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+        scheduleNextPopupCheck(visibleSessions: nil)
+    }
+
+    private func scheduleNextPopupCheck(visibleSessions: [AgentSession]?) {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+
+        let displayInterval = providerVisibility.popupDisplayInterval
+        let now = Date()
+
+        let sessions = visibleSessions ?? {
+            let includedAgents = Set(AgentKind.allCases.filter { providerVisibility.isPopupVisible(for: $0) })
+            return controller.store.popupParentSessions(
+                now: now,
+                displayInterval: displayInterval,
+                includedAgents: includedAgents,
+                limit: providerVisibility.popupParentSessionCount
+            )
+        }()
+
+        var earliestExpiration: Date?
+        for session in sessions where !session.state.isActive {
+            let referenceDate = max(session.stateChangedAt ?? session.updatedAt, session.updatedAt)
+            let expirationDate = referenceDate.addingTimeInterval(displayInterval)
+            if earliestExpiration == nil || expirationDate < earliestExpiration! {
+                earliestExpiration = expirationDate
+            }
+        }
+
+        guard let target = earliestExpiration else {
+            return
+        }
+
+        let cappedTarget = min(target, now.addingTimeInterval(60))
+        let delay = max(0.1, cappedTarget.timeIntervalSince(now))
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.updatePopup()
             }
@@ -3134,6 +3173,7 @@ final class SessionPopupController {
     private func updatePopup() {
         guard providerVisibility.popupEnabled else {
             closePopup()
+            scheduleNextPopupCheck(visibleSessions: [])
             return
         }
 
@@ -3147,10 +3187,12 @@ final class SessionPopupController {
         )
         guard !sessions.isEmpty else {
             closePopup()
+            scheduleNextPopupCheck(visibleSessions: [])
             return
         }
 
         showPopup(sessions: sessions)
+        scheduleNextPopupCheck(visibleSessions: sessions)
     }
 
     private func showPopup(sessions: [AgentSession]) {
@@ -4932,11 +4974,19 @@ enum AgentImages {
 
     private final class RenderedImageCache: @unchecked Sendable {
         private let lock = NSLock()
+        private let capacity: Int
         private var images: [String: NSImage] = [:]
+        private var insertionOrder: [String] = []
+
+        init(capacity: Int = 256) {
+            self.capacity = max(1, capacity)
+            self.insertionOrder.reserveCapacity(capacity)
+        }
 
         func image(for key: String, make: () -> NSImage) -> NSImage {
             lock.lock()
             if let image = images[key] {
+                touchLocked(key)
                 lock.unlock()
                 return image
             }
@@ -4945,10 +4995,32 @@ enum AgentImages {
             let image = make()
 
             lock.lock()
-            images[key] = image
+            if images[key] == nil {
+                images[key] = image
+                insertionOrder.append(key)
+                evictLocked()
+            } else {
+                touchLocked(key)
+            }
             lock.unlock()
 
             return image
+        }
+
+        private func touchLocked(_ key: String) {
+            guard let idx = insertionOrder.firstIndex(of: key) else {
+                insertionOrder.append(key)
+                return
+            }
+            insertionOrder.remove(at: idx)
+            insertionOrder.append(key)
+        }
+
+        private func evictLocked() {
+            while insertionOrder.count > capacity {
+                let oldest = insertionOrder.removeFirst()
+                images.removeValue(forKey: oldest)
+            }
         }
     }
 }

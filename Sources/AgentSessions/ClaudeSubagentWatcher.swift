@@ -7,12 +7,19 @@ final class ClaudeSubagentWatcher {
         let fingerprint: String
     }
 
-    private struct CachedSnapshot {
-        let modifiedAt: Date
-        let snapshot: Snapshot?
+    private struct FileTracker {
+        var inode: UInt64
+        var bytesRead: UInt64
+        var modifiedAt: Date
+        var partialTail: Data
+        var baseSession: ClaudeParsedSubagent?
+        var lastSnapshot: Snapshot?
     }
 
-    private let queue = DispatchQueue(label: "app.agentsessions.claude-subagent-watcher")
+    private let queue = DispatchQueue(
+        label: "app.agentsessions.claude-subagent-watcher",
+        qos: .userInitiated
+    )
     private let handler: (AgentEvent) -> Void
     private var timer: DispatchSourceTimer?
     private var activityMonitor: FileSystemActivityMonitor?
@@ -20,10 +27,10 @@ final class ClaudeSubagentWatcher {
     private var pendingChangedPaths: Set<String> = []
     private var lastPollDate = Date.distantPast
     private var lastFingerprints: [String: String] = [:]
-    private var cachedSnapshotsByPath: [String: CachedSnapshot] = [:]
-    private static let changePollDelay: TimeInterval = 0.18
-    private static let minimumChangePollInterval: TimeInterval = 0.35
-    private static let fallbackPollInterval: TimeInterval = 30
+    private var fileTrackers: [String: FileTracker] = [:]
+    private static let changePollDelay: TimeInterval = 0.02
+    private static let minimumChangePollInterval: TimeInterval = 0.05
+    private static let fallbackPollInterval: TimeInterval = 300
 
     init(handler: @escaping (AgentEvent) -> Void) {
         self.handler = handler
@@ -66,7 +73,7 @@ final class ClaudeSubagentWatcher {
             ingest(file)
         }
 
-        cachedSnapshotsByPath = cachedSnapshotsByPath.filter { activePaths.contains($0.key) }
+        fileTrackers = fileTrackers.filter { activePaths.contains($0.key) }
     }
 
     private func scheduleChangedPathPoll(_ paths: [String]) {
@@ -104,10 +111,59 @@ final class ClaudeSubagentWatcher {
     }
 
     private func ingest(_ file: URL) {
-        guard let modifiedAt = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-              let snapshot = snapshot(for: file, modifiedAt: modifiedAt) else {
+        let path = file.path
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        guard let modifiedAt = attrs?[.modificationDate] as? Date,
+              let inode = (attrs?[.systemFileNumber] as? NSNumber)?.uint64Value,
+              let sizeNumber = attrs?[.size] as? NSNumber else {
             return
         }
+        let size = sizeNumber.uint64Value
+
+        var tracker = fileTrackers[path]
+        let needsFullLoad = tracker == nil
+            || tracker!.inode != inode
+            || size < tracker!.bytesRead
+
+        let snapshot: Snapshot?
+        if needsFullLoad {
+            let result = Self.makeSnapshotAndParsed(file: file, modifiedAt: modifiedAt)
+            snapshot = result.snapshot
+            fileTrackers[path] = FileTracker(
+                inode: inode,
+                bytesRead: size,
+                modifiedAt: modifiedAt,
+                partialTail: Data(),
+                baseSession: result.parsed,
+                lastSnapshot: snapshot
+            )
+        } else if size == tracker!.bytesRead {
+            snapshot = tracker!.lastSnapshot.flatMap {
+                Self.refreshedSnapshot($0, modifiedAt: modifiedAt)
+            }
+            tracker!.modifiedAt = modifiedAt
+            fileTrackers[path] = tracker
+        } else if let base = tracker!.baseSession {
+            snapshot = Self.makeDeltaSnapshot(
+                file: file,
+                modifiedAt: modifiedAt,
+                tracker: &tracker!,
+                base: base,
+                totalSize: size
+            )
+            fileTrackers[path] = tracker
+        } else {
+            let result = Self.makeSnapshotAndParsed(file: file, modifiedAt: modifiedAt)
+            snapshot = result.snapshot
+            tracker!.bytesRead = size
+            tracker!.modifiedAt = modifiedAt
+            tracker!.partialTail = Data()
+            tracker!.baseSession = result.parsed
+            tracker!.lastSnapshot = snapshot
+            fileTrackers[path] = tracker
+        }
+
+        guard let snapshot else { return }
 
         let key = snapshot.event.sessionId
         guard snapshot.fingerprint != lastFingerprints[key] else {
@@ -118,25 +174,71 @@ final class ClaudeSubagentWatcher {
         handler(snapshot.event)
     }
 
-    private func snapshot(for file: URL, modifiedAt: Date) -> Snapshot? {
-        let key = file.path
-        if let cached = cachedSnapshotsByPath[key],
-           cached.modifiedAt == modifiedAt {
-            return Self.refreshedSnapshot(cached.snapshot, modifiedAt: modifiedAt)
-        }
-
-        let snapshot = Self.makeSnapshot(file: file, modifiedAt: modifiedAt)
-        cachedSnapshotsByPath[key] = CachedSnapshot(modifiedAt: modifiedAt, snapshot: snapshot)
-        return snapshot
-    }
-
-    private static func makeSnapshot(file: URL, modifiedAt: Date) -> Snapshot? {
+    private static func makeSnapshotAndParsed(
+        file: URL,
+        modifiedAt: Date
+    ) -> (snapshot: Snapshot?, parsed: ClaudeParsedSubagent?) {
         guard let text = tailText(from: file),
               let parsed = ClaudeSessionParser.parseSubagentTranscript(transcriptPath: file.path, text: text) else {
+            return (nil, nil)
+        }
+        return (snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed), parsed)
+    }
+
+    private static func makeDeltaSnapshot(
+        file: URL,
+        modifiedAt: Date,
+        tracker: inout FileTracker,
+        base: ClaudeParsedSubagent,
+        totalSize: UInt64
+    ) -> Snapshot? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
+        }
+        defer { try? handle.close() }
+
+        do {
+            try handle.seek(toOffset: tracker.bytesRead)
+        } catch {
+            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
+        }
+        let deltaData = (try? handle.readToEnd()) ?? Data()
+        var combined = tracker.partialTail + deltaData
+
+        let newline = UInt8(ascii: "\n")
+        if let lastNewlineIndex = combined.lastIndex(of: newline) {
+            let after = combined.index(after: lastNewlineIndex)
+            let partial = combined.suffix(from: after)
+            tracker.partialTail = Data(partial)
+            combined = Data(combined.prefix(upTo: after))
+        } else {
+            tracker.partialTail = combined
+            tracker.bytesRead = totalSize
+            tracker.modifiedAt = modifiedAt
+            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
+        }
+
+        tracker.bytesRead = totalSize - UInt64(tracker.partialTail.count)
+        tracker.modifiedAt = modifiedAt
+
+        guard let text = String(data: combined, encoding: .utf8) else {
+            tracker.baseSession = nil
+            tracker.partialTail = Data()
+            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
+        }
+
+        guard let parsed = ClaudeSessionParser.parseSubagentTranscriptDelta(
+            transcriptPath: file.path,
+            text: text,
+            base: base
+        ) else {
             return nil
         }
 
-        return snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed)
+        let snapshot = snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed)
+        tracker.baseSession = parsed
+        tracker.lastSnapshot = snapshot
+        return snapshot
     }
 
     private static func refreshedSnapshot(_ snapshot: Snapshot?, modifiedAt: Date) -> Snapshot? {
