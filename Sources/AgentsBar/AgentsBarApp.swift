@@ -3241,6 +3241,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var statusIconRefreshTimer: Timer?
     private var statusIconRefreshInterval: TimeInterval?
     private var statusIconAnimationStartDate = Date()
+    private var statusIconDisplayStates: [AgentKind: AgentState] = [:]
+    private var statusIconRenderKeys: [AgentKind: StatusIconRenderKey] = [:]
+    private var lastStatusIconStateRefreshDate = Date.distantPast
     private var cancellables: Set<AnyCancellable> = []
     private var isMenuOpen = false
     private var needsMenuRebuild = true
@@ -3249,6 +3252,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private static let statusItemHorizontalPadding: CGFloat = 1
     private static let menuLayoutSizeEpsilon: CGFloat = 0.5
     private static let idleStatusIconRefreshInterval: TimeInterval = 1
+    private static let statusIconStateRefreshInterval: TimeInterval = 1
     private static let animatedStatusIconRefreshInterval = AgentIconAnimation.animatedRefreshInterval
 
     init(controller: AppController) {
@@ -3406,6 +3410,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             if let statusItem = statusItems.removeValue(forKey: agent) {
                 NSStatusBar.system.removeStatusItem(statusItem)
             }
+            statusIconDisplayStates[agent] = nil
+            statusIconRenderKeys[agent] = nil
         }
 
         guard !visibleAgents.isEmpty else {
@@ -3446,35 +3452,45 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         self.fallbackStatusItem = nil
     }
 
-    private func updateStatusIcons() {
-        let hasAnimatedIcon = renderStatusIcons()
+    private func updateStatusIcons(refreshDisplayStates: Bool = true) {
+        let now = Date()
+        let shouldRefreshDisplayStates = refreshDisplayStates
+            || now.timeIntervalSince(lastStatusIconStateRefreshDate) >= Self.statusIconStateRefreshInterval
+        let hasAnimatedIcon = renderStatusIcons(now: now, refreshDisplayStates: shouldRefreshDisplayStates)
+        if shouldRefreshDisplayStates {
+            lastStatusIconStateRefreshDate = now
+        }
         updateStatusIconRefreshTimer(animated: hasAnimatedIcon)
     }
 
-    private func renderStatusIcons() -> Bool {
-        let now = Date()
-        let highlightPhase = statusIconHighlightPhase(at: now)
+    private func renderStatusIcons(now: Date, refreshDisplayStates: Bool) -> Bool {
         var hasAnimatedIcon = false
 
         for (agent, statusItem) in statusItems {
-            let aggregateState = controller.store.aggregateState(for: agent, now: now)
-            let displayState = AgentDisplayState.displayState(
-                for: agent,
-                aggregateState: aggregateState,
-                store: controller.store,
-                now: now
-            )
+            let displayState = statusIconDisplayState(for: agent, now: now, refreshDisplayState: refreshDisplayStates)
             hasAnimatedIcon = hasAnimatedIcon || displayState == .working
+            let highlightFrame = displayState == .working
+                ? statusIconHighlightFrame(at: now)
+                : nil
+            let renderKey = StatusIconRenderKey(
+                state: displayState,
+                highlightFrame: highlightFrame
+            )
+            guard statusIconRenderKeys[agent] != renderKey else {
+                continue
+            }
+
             let status = AgentMenuBarStatus(
                 agent: agent,
                 state: displayState
             )
             let image = AgentImages.menuBarStatus(
                 [status],
-                highlightPhase: displayState == .working ? highlightPhase : nil
+                highlightPhase: highlightFrame.map(AgentIconAnimation.highlightPhase(forFrame:))
             )
             statusItem.button?.image = image
             statusItem.length = image.size.width + Self.statusItemHorizontalPadding
+            statusIconRenderKeys[agent] = renderKey
         }
 
         if let fallbackStatusItem {
@@ -3510,7 +3526,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         statusIconRefreshTimer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.updateStatusIcons()
+                self?.updateStatusIcons(refreshDisplayStates: false)
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -3518,8 +3534,29 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         statusIconRefreshInterval = interval
     }
 
-    private func statusIconHighlightPhase(at date: Date) -> CGFloat {
-        AgentIconAnimation.highlightPhase(at: date, startDate: statusIconAnimationStartDate)
+    private func statusIconDisplayState(for agent: AgentKind, now: Date, refreshDisplayState: Bool) -> AgentState {
+        if !refreshDisplayState, let displayState = statusIconDisplayStates[agent] {
+            return displayState
+        }
+
+        let aggregateState = controller.store.aggregateState(for: agent, now: now)
+        let displayState = AgentDisplayState.displayState(
+            for: agent,
+            aggregateState: aggregateState,
+            store: controller.store,
+            now: now
+        )
+        statusIconDisplayStates[agent] = displayState
+        return displayState
+    }
+
+    private func statusIconHighlightFrame(at date: Date) -> Int {
+        AgentIconAnimation.highlightFrameIndex(at: date, startDate: statusIconAnimationStartDate)
+    }
+
+    private struct StatusIconRenderKey: Equatable {
+        let state: AgentState
+        let highlightFrame: Int?
     }
 
     private func setNeedsMenuRebuild() {
@@ -4267,19 +4304,47 @@ private enum AgentColors {
 }
 
 private enum AgentIconAnimation {
-    static let animatedRefreshInterval: TimeInterval = 0.5
+    static let framesPerSecond = 10
+    static let animatedRefreshInterval: TimeInterval = 1.0 / Double(framesPerSecond)
     private static let highlightDuration: TimeInterval = 1.15
+    static let highlightFrameCount = max(
+        1,
+        Int((highlightDuration * Double(framesPerSecond)).rounded(.toNearestOrAwayFromZero))
+    )
 
     static func highlightPhase(at date: Date, startDate: Date) -> CGFloat {
-        let elapsed = date.timeIntervalSince(startDate)
-        let rawPhase = elapsed.truncatingRemainder(dividingBy: highlightDuration) / highlightDuration
-        return CGFloat(rawPhase)
+        highlightPhase(forFrame: highlightFrameIndex(at: date, startDate: startDate))
     }
 
     static func highlightPhase(at date: Date) -> CGFloat {
-        let rawPhase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: highlightDuration)
-            / highlightDuration
-        return CGFloat(rawPhase)
+        highlightPhase(forFrame: highlightFrameIndex(at: date))
+    }
+
+    static func highlightFrameIndex(at date: Date, startDate: Date) -> Int {
+        highlightFrameIndex(elapsed: date.timeIntervalSince(startDate))
+    }
+
+    static func highlightFrameIndex(at date: Date) -> Int {
+        highlightFrameIndex(elapsed: date.timeIntervalSinceReferenceDate)
+    }
+
+    static func highlightFrameIndex(forPhase phase: CGFloat) -> Int {
+        let clampedPhase = min(max(phase, 0), 1)
+        let frame = Int((clampedPhase * CGFloat(max(highlightFrameCount - 1, 1))).rounded())
+        return min(max(frame, 0), highlightFrameCount - 1)
+    }
+
+    static func highlightPhase(forFrame frame: Int) -> CGFloat {
+        guard highlightFrameCount > 1 else {
+            return 0
+        }
+        return CGFloat(frame) / CGFloat(highlightFrameCount - 1)
+    }
+
+    private static func highlightFrameIndex(elapsed: TimeInterval) -> Int {
+        let normalizedElapsed = elapsed.truncatingRemainder(dividingBy: highlightDuration)
+        let rawFrame = Int((normalizedElapsed / highlightDuration) * Double(highlightFrameCount))
+        return min(max(rawFrame, 0), highlightFrameCount - 1)
     }
 }
 
@@ -4293,6 +4358,7 @@ enum AgentImages {
     private static let menuBarLogoGap: CGFloat = 2
     private static let fallbackMenuBarStatusSize = NSSize(width: 15, height: 15)
     private static let assetScale: CGFloat = 3
+    private static let renderedImageCache = RenderedImageCache()
     private static let codexIcons = AgentIconSet(
         mono: loadMenuBarIcon(name: "Codex Mono@3x"),
         color: loadMenuBarIcon(name: "Codex Color@3x")
@@ -4308,7 +4374,11 @@ enum AgentImages {
         }
 
         let size = menuBarStatusSize(for: statuses)
-        let image = NSImage(size: size, flipped: false) { _ in
+        let highlightFrame = highlightPhase.map(AgentIconAnimation.highlightFrameIndex(forPhase:))
+        let cacheKey = menuBarStatusCacheKey(statuses: statuses, highlightFrame: highlightFrame)
+
+        return renderedImageCache.image(for: cacheKey) {
+            renderImage(size: size, isTemplate: false) {
             var x: CGFloat = 0
 
             for status in statuses {
@@ -4320,25 +4390,24 @@ enum AgentImages {
                     size: displaySize,
                     x: x,
                     canvasHeight: size.height,
-                    highlightPhase: status.state == .working ? highlightPhase : nil
+                        highlightPhase: status.state == .working ? phase(forHighlightFrame: highlightFrame) : nil
                 )
                 x += displaySize.width + menuBarLogoGap
             }
-
-            return true
+            }
         }
-        image.isTemplate = false
-        return image
     }
 
     static func menuHeaderIcon(for agent: AgentKind, color: Bool = false) -> NSImage {
-        let icons = iconSet(for: agent)
-        let source = color ? icons.color : icons.mono
-        guard let image = source.copy() as? NSImage else {
-            return source
+        renderedImageCache.image(for: "menuHeader|\(agent.rawValue)|color:\(color)|state:base") {
+            let icons = iconSet(for: agent)
+            let source = color ? icons.color : icons.mono
+            guard let image = source.copy() as? NSImage else {
+                return source
+            }
+            image.isTemplate = !color
+            return image
         }
-        image.isTemplate = !color
-        return image
     }
 
     static func menuHeaderIcon(
@@ -4353,19 +4422,21 @@ enum AgentImages {
 
         let icons = iconSet(for: agent)
         let size = icons.mono.size
-        let image = NSImage(size: size, flipped: false) { _ in
-            drawAgentLogo(
-                icons,
-                state: state,
-                size: size,
-                x: 0,
-                canvasHeight: size.height,
-                highlightPhase: highlightPhase
-            )
-            return true
+        let highlightFrame = highlightPhase.map(AgentIconAnimation.highlightFrameIndex(forPhase:))
+        let cacheKey = "menuHeader|\(agent.rawValue)|color:\(color)|state:\(state.rawValue)|frame:\(highlightFrame ?? -1)"
+
+        return renderedImageCache.image(for: cacheKey) {
+            renderImage(size: size, isTemplate: false) {
+                drawAgentLogo(
+                    icons,
+                    state: state,
+                    size: size,
+                    x: 0,
+                    canvasHeight: size.height,
+                    highlightPhase: phase(forHighlightFrame: highlightFrame)
+                )
+            }
         }
-        image.isTemplate = false
-        return image
     }
 
     private static func menuBarStatusSize(for statuses: [AgentMenuBarStatus]) -> NSSize {
@@ -4379,18 +4450,20 @@ enum AgentImages {
     }
 
     private static func fallbackMenuBarStatus() -> NSImage {
-        let image = NSImage(size: fallbackMenuBarStatusSize, flipped: false) { rect in
+        renderedImageCache.image(for: "menuBarStatus|fallback") {
+            renderImage(size: fallbackMenuBarStatusSize, isTemplate: true) {
+                let rect = NSRect(origin: .zero, size: fallbackMenuBarStatusSize)
             guard let symbol = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "AgentsBar") else {
                 NSColor.labelColor.setStroke()
                 NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).stroke()
-                return true
+                    return
             }
 
             var proposedRect = NSRect(origin: .zero, size: symbol.size)
             guard let cgImage = symbol.cgImage(forProposedRect: &proposedRect, context: NSGraphicsContext.current, hints: nil),
                   let context = NSGraphicsContext.current?.cgContext else {
                 symbol.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
-                return true
+                    return
             }
 
             context.saveGState()
@@ -4398,9 +4471,31 @@ enum AgentImages {
             NSColor.labelColor.setFill()
             rect.fill()
             context.restoreGState()
-            return true
+            }
         }
-        image.isTemplate = true
+    }
+
+    private static func menuBarStatusCacheKey(statuses: [AgentMenuBarStatus], highlightFrame: Int?) -> String {
+        let statusKey = statuses
+            .map { "\($0.agent.rawValue):\($0.state.rawValue)" }
+            .joined(separator: ",")
+        return "menuBarStatus|\(statusKey)|frame:\(highlightFrame ?? -1)"
+    }
+
+    private static func phase(forHighlightFrame frame: Int?) -> CGFloat? {
+        guard let frame else {
+            return nil
+        }
+        return AgentIconAnimation.highlightPhase(forFrame: frame)
+    }
+
+    private static func renderImage(size: NSSize, isTemplate: Bool, draw: () -> Void) -> NSImage {
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        draw()
+        image.unlockFocus()
+        image.isTemplate = isTemplate
         return image
     }
 
@@ -4521,5 +4616,27 @@ enum AgentImages {
     private struct AgentIconSet {
         let mono: NSImage
         let color: NSImage
+    }
+
+    private final class RenderedImageCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var images: [String: NSImage] = [:]
+
+        func image(for key: String, make: () -> NSImage) -> NSImage {
+            lock.lock()
+            if let image = images[key] {
+                lock.unlock()
+                return image
+            }
+            lock.unlock()
+
+            let image = make()
+
+            lock.lock()
+            images[key] = image
+            lock.unlock()
+
+            return image
+        }
     }
 }
