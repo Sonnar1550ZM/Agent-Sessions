@@ -72,10 +72,6 @@ public enum AgentTextSanitizer {
         let text = value
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
-            .components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !text.isEmpty else {

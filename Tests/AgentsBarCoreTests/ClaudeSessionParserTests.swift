@@ -91,6 +91,6 @@ final class ClaudeSessionParserTests: XCTestCase {
 
         let response = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text)
 
-        XCTAssertEqual(response, "最新の応答です 2行目")
+        XCTAssertEqual(response, "最新の応答です\n2行目")
     }
 }

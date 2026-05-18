@@ -184,9 +184,12 @@ public final class AgentStateStore: ObservableObject {
                 guard includedAgents.contains(session.agent),
                       !session.isSubagent,
                       session.state != .ended,
-                      !AgentSessionVisibility.isCodexMemoryWorkspace(agent: session.agent, cwd: session.cwd),
-                      let latestResponseText = AgentTextSanitizer.latestResponseText(session.latestResponseText),
-                      !latestResponseText.isEmpty else {
+                      !AgentSessionVisibility.isCodexMemoryWorkspace(agent: session.agent, cwd: session.cwd) else {
+                    return false
+                }
+
+                let hasLatestResponseText = AgentTextSanitizer.latestResponseText(session.latestResponseText)?.isEmpty == false
+                guard session.state.isActive || hasLatestResponseText else {
                     return false
                 }
 

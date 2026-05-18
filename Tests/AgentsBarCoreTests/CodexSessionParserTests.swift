@@ -88,7 +88,7 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.state, .idle)
     }
 
-    func testCollapsesNewlinesInLatestAssistantResponse() {
+    func testPreservesNewlinesInLatestAssistantResponse() {
         let text = """
         {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
         {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"1行目\\n\\n2行目\\r\\n3行目"}],"phase":"final_answer"}}
@@ -96,7 +96,7 @@ final class CodexSessionParserTests: XCTestCase {
 
         let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
 
-        XCTAssertEqual(parsed.latestResponseText, "1行目 2行目 3行目")
+        XCTAssertEqual(parsed.latestResponseText, "1行目\n\n2行目\n3行目")
     }
 
     func testParsesLatestAgentMessageEvent() {

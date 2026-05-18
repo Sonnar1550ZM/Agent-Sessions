@@ -135,6 +135,15 @@ enum PopupWindowPosition: String, Codable, CaseIterable, Identifiable {
             false
         }
     }
+
+    var placesNewestPopupSessionAtBottom: Bool {
+        switch self {
+        case .bottomRight, .bottomLeft, .bottomCenter:
+            true
+        case .topRight, .topLeft, .topCenter:
+            false
+        }
+    }
 }
 
 private enum ProviderPreferenceDefaults {
@@ -2681,6 +2690,7 @@ final class SessionPopupController {
             textShadowStrength: providerVisibility.popupTextShadowStrength,
             textShadowRadius: CGFloat(ProviderPreferenceDefaults.popupTextShadowRadius),
             alignsHeaderTrailing: providerVisibility.popupWindowPosition.alignsPopupHeaderTrailing,
+            placesNewestSessionAtBottom: providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom,
             responseCharacterLimit: providerVisibility.popupResponseCharacterLimit
         )
         let hostingController = ensureHostingController(rootView: rootView)
@@ -2795,6 +2805,7 @@ private struct LatestParentSessionsPopupView: View {
     let textShadowStrength: Double
     let textShadowRadius: CGFloat
     let alignsHeaderTrailing: Bool
+    let placesNewestSessionAtBottom: Bool
     let responseCharacterLimit: Int
 
     var body: some View {
@@ -2806,7 +2817,7 @@ private struct LatestParentSessionsPopupView: View {
         )
 
         VStack(alignment: .leading, spacing: metrics.stackSpacing) {
-            ForEach(sessions, id: \.id) { session in
+            ForEach(displayedSessions, id: \.id) { session in
                 PopupSessionRow(
                     session: session,
                     metrics: metrics,
@@ -2819,6 +2830,14 @@ private struct LatestParentSessionsPopupView: View {
         .padding(.vertical, metrics.verticalPadding + metrics.shadowBleedPadding)
         .frame(width: popupWidth * metrics.scale, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+
+    private var displayedSessions: [AgentSession] {
+        if placesNewestSessionAtBottom {
+            return Array(sessions.reversed())
+        }
+
+        return sessions
     }
 }
 
@@ -2837,7 +2856,7 @@ private struct PopupSessionRow: View {
 
                 providerIcon
 
-                Text(session.displayTitle)
+                Text(titleText)
                     .font(.system(size: metrics.titleFontSize, weight: .semibold))
                     .foregroundStyle(.white.opacity(metrics.textOpacity))
                     .popupTextShadow(metrics)
@@ -2859,15 +2878,18 @@ private struct PopupSessionRow: View {
                 alignment: alignsHeaderTrailing ? .trailing : .leading
             )
 
-            Text(responseText)
-                .font(.system(size: metrics.responseFontSize))
-                .foregroundStyle(.white.opacity(metrics.textOpacity))
-                .truncationMode(.tail)
-                .popupTextShadow(metrics)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, metrics.responseHorizontalPadding)
-                .padding(.vertical, metrics.responseVerticalPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if let responseText {
+                Text(responseText)
+                    .font(.system(size: metrics.responseFontSize))
+                    .foregroundStyle(.white.opacity(metrics.textOpacity))
+                    .multilineTextAlignment(responseTextAlignment)
+                    .truncationMode(.tail)
+                    .popupTextShadow(metrics)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, metrics.responseHorizontalPadding)
+                    .padding(.vertical, metrics.responseVerticalPadding)
+                    .frame(maxWidth: .infinity, alignment: responseFrameAlignment)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -2897,9 +2919,30 @@ private struct PopupSessionRow: View {
         .accessibilityHidden(true)
     }
 
-    private var responseText: String {
-        let text = AgentTextSanitizer.latestResponseText(session.latestResponseText) ?? ""
+    private var titleText: String {
+        if session.state == .working,
+           session.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Thinking"
+        }
+
+        return session.displayTitle
+    }
+
+    private var responseText: String? {
+        guard session.state != .working,
+              let text = AgentTextSanitizer.latestResponseText(session.latestResponseText) else {
+            return nil
+        }
+
         return Self.truncated(text, to: responseCharacterLimit)
+    }
+
+    private var responseFrameAlignment: Alignment {
+        alignsHeaderTrailing ? .trailing : .leading
+    }
+
+    private var responseTextAlignment: TextAlignment {
+        alignsHeaderTrailing ? .trailing : .leading
     }
 
     private static func truncated(_ text: String, to limit: Int) -> String {
@@ -3584,8 +3627,11 @@ private struct AgentSectionView: View {
     }
 
     private func visibleLatestResponseText(for session: AgentSession, now: Date) -> String? {
-        guard effectiveLatestResponseLineLimit(for: session) > 0,
-              shouldShowLatestResponseText(for: session, now: now),
+        guard effectiveLatestResponseLineLimit(for: session) > 0 else {
+            return nil
+        }
+
+        guard shouldShowLatestResponseText(for: session, now: now),
               let text = AgentTextSanitizer.latestResponseText(session.latestResponseText),
               !text.isEmpty else {
             return nil
@@ -3864,12 +3910,25 @@ private struct SessionMenuRow: View {
     }
 
     private var titleText: String {
-        session.isSubagent ? session.subagentSessionTitle : session.displayTitle
+        if !session.isSubagent,
+           session.state == .working,
+           session.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Thinking"
+        }
+
+        return session.isSubagent ? session.subagentSessionTitle : session.displayTitle
     }
 
     private var latestResponseText: String? {
-        guard effectiveLatestResponseLineLimit > 0,
-              shouldShowLatestResponseText,
+        guard effectiveLatestResponseLineLimit > 0 else {
+            return nil
+        }
+
+        if session.state == .working {
+            return nil
+        }
+
+        guard shouldShowLatestResponseText,
               let text = AgentTextSanitizer.latestResponseText(session.latestResponseText),
               !text.isEmpty else {
             return nil
