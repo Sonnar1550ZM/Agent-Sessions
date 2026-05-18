@@ -1,6 +1,7 @@
 import AgentsBarCore
 import AppKit
 import Combine
+import ServiceManagement
 import SwiftUI
 
 @main
@@ -60,7 +61,7 @@ enum ProviderPlacement: String, CaseIterable, Identifiable {
         case .menuBar:
             "Menu Bar"
         case .dropdownMenu:
-            "Drop-down Menu"
+            "Dropdown Menu"
         }
     }
 
@@ -69,7 +70,7 @@ enum ProviderPlacement: String, CaseIterable, Identifiable {
         case .menuBar:
             "Choose providers that appear as menu bar icons."
         case .dropdownMenu:
-            "Drag providers to reorder drop-down sections."
+            "Drag providers to reorder dropdown sections."
         }
     }
 
@@ -165,7 +166,9 @@ private enum ProviderPreferenceDefaults {
     static let popupTextShadowStrength = 2.005479379251701
     static let popupTextShadowRadius = 4.259222530445234
     static let popupParentSessionCount = 5
+    static let popupShowsResponseBody = true
     static let popupResponseCharacterLimit = 500
+    static let popupResponseLineLimit = 5
     static let latestResponseHideAfterOptions: [TimeInterval] = [
         60,
         3 * 60,
@@ -245,7 +248,7 @@ private enum ProviderPreferenceDefaults {
     }
 
     static func sanitizedPopupWindowWidth(_ width: Double?) -> Double {
-        min(max(width ?? popupWindowWidth, 260), 620)
+        min(max(width ?? popupWindowWidth, 260), 1500)
     }
 
     static func sanitizedPopupScale(_ scale: Double?) -> Double {
@@ -294,6 +297,10 @@ private enum ProviderPreferenceDefaults {
 
     static func sanitizedPopupResponseCharacterLimit(_ count: Int?) -> Int {
         min(max(count ?? popupResponseCharacterLimit, 40), 1000)
+    }
+
+    static func sanitizedPopupResponseLineLimit(_ count: Int?) -> Int {
+        min(max(count ?? popupResponseLineLimit, 1), 10)
     }
 
     static func popupResponseCharacterLimit(fromLegacyLineLimit count: Int?) -> Int? {
@@ -419,7 +426,9 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var popupTextShadowStrength: Double
     var popupTextShadowRadius: Double
     var popupParentSessionCount: Int
+    var popupShowsResponseBody: Bool
     var popupResponseCharacterLimit: Int
+    var popupResponseLineLimit: Int
 
     init(
         values: [String: ProviderVisibility],
@@ -445,7 +454,9 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupTextShadowStrength: Double = ProviderPreferenceDefaults.popupTextShadowStrength,
         popupTextShadowRadius: Double = ProviderPreferenceDefaults.popupTextShadowRadius,
         popupParentSessionCount: Int = ProviderPreferenceDefaults.popupParentSessionCount,
-        popupResponseCharacterLimit: Int = ProviderPreferenceDefaults.popupResponseCharacterLimit
+        popupShowsResponseBody: Bool = ProviderPreferenceDefaults.popupShowsResponseBody,
+        popupResponseCharacterLimit: Int = ProviderPreferenceDefaults.popupResponseCharacterLimit,
+        popupResponseLineLimit: Int = ProviderPreferenceDefaults.popupResponseLineLimit
     ) {
         self.values = values
         self.menuBarOrder = menuBarOrder
@@ -470,7 +481,9 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.popupTextShadowStrength = ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(popupTextShadowStrength)
         self.popupTextShadowRadius = ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(popupTextShadowRadius)
         self.popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(popupParentSessionCount)
+        self.popupShowsResponseBody = popupShowsResponseBody
         self.popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(popupResponseCharacterLimit)
+        self.popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(popupResponseLineLimit)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -499,6 +512,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case popupTextShadowRadius
         case popupBackdropBlurRadius
         case popupParentSessionCount
+        case popupShowsResponseBody
         case popupResponseCharacterLimit
         case popupResponseLineLimit
     }
@@ -573,12 +587,15 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(
             try container.decodeIfPresent(Int.self, forKey: .popupParentSessionCount)
         )
+        popupShowsResponseBody = try container.decodeIfPresent(Bool.self, forKey: .popupShowsResponseBody)
+            ?? ProviderPreferenceDefaults.popupShowsResponseBody
         let decodedResponseCharacterLimit = try container.decodeIfPresent(Int.self, forKey: .popupResponseCharacterLimit)
-        let legacyResponseLineLimit = try container.decodeIfPresent(Int.self, forKey: .popupResponseLineLimit)
+        let decodedResponseLineLimit = try container.decodeIfPresent(Int.self, forKey: .popupResponseLineLimit)
         popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(
             decodedResponseCharacterLimit
-                ?? ProviderPreferenceDefaults.popupResponseCharacterLimit(fromLegacyLineLimit: legacyResponseLineLimit)
+                ?? ProviderPreferenceDefaults.popupResponseCharacterLimit(fromLegacyLineLimit: decodedResponseLineLimit)
         )
+        popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(decodedResponseLineLimit)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -606,7 +623,9 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(popupTextShadowStrength, forKey: .popupTextShadowStrength)
         try container.encode(popupTextShadowRadius, forKey: .popupTextShadowRadius)
         try container.encode(popupParentSessionCount, forKey: .popupParentSessionCount)
+        try container.encode(popupShowsResponseBody, forKey: .popupShowsResponseBody)
         try container.encode(popupResponseCharacterLimit, forKey: .popupResponseCharacterLimit)
+        try container.encode(popupResponseLineLimit, forKey: .popupResponseLineLimit)
     }
 
     static var defaultPopupProviderVisibility: [String: Bool] {
@@ -652,7 +671,9 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var popupTextShadowStrength: Double
     @Published private(set) var popupTextShadowRadius: Double
     @Published private(set) var popupParentSessionCount: Int
+    @Published private(set) var popupShowsResponseBody: Bool
     @Published private(set) var popupResponseCharacterLimit: Int
+    @Published private(set) var popupResponseLineLimit: Int
 
     private let defaults: UserDefaults
     private let storageKey = "ProviderPreferences"
@@ -692,7 +713,9 @@ final class ProviderVisibilityStore: ObservableObject {
         popupTextShadowStrength = ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(document.popupTextShadowStrength)
         popupTextShadowRadius = ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(document.popupTextShadowRadius)
         popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(document.popupParentSessionCount)
+        popupShowsResponseBody = document.popupShowsResponseBody
         popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(document.popupResponseCharacterLimit)
+        popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(document.popupResponseLineLimit)
         save()
     }
 
@@ -826,8 +849,18 @@ final class ProviderVisibilityStore: ObservableObject {
         save()
     }
 
+    func setPopupShowsResponseBody(_ shows: Bool) {
+        popupShowsResponseBody = shows
+        save()
+    }
+
     func setPopupResponseCharacterLimit(_ count: Int) {
         popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(count)
+        save()
+    }
+
+    func setPopupResponseLineLimit(_ count: Int) {
+        popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(count)
         save()
     }
 
@@ -860,8 +893,12 @@ final class ProviderVisibilityStore: ObservableObject {
         popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(
             ProviderPreferenceDefaults.popupParentSessionCount
         )
+        popupShowsResponseBody = ProviderPreferenceDefaults.popupShowsResponseBody
         popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(
             ProviderPreferenceDefaults.popupResponseCharacterLimit
+        )
+        popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(
+            ProviderPreferenceDefaults.popupResponseLineLimit
         )
         save()
     }
@@ -946,7 +983,9 @@ final class ProviderVisibilityStore: ObservableObject {
             popupTextShadowStrength: popupTextShadowStrength,
             popupTextShadowRadius: popupTextShadowRadius,
             popupParentSessionCount: popupParentSessionCount,
-            popupResponseCharacterLimit: popupResponseCharacterLimit
+            popupShowsResponseBody: popupShowsResponseBody,
+            popupResponseCharacterLimit: popupResponseCharacterLimit,
+            popupResponseLineLimit: popupResponseLineLimit
         )
 
         guard let data = try? JSONEncoder().encode(document) else {
@@ -987,7 +1026,9 @@ final class ProviderVisibilityStore: ObservableObject {
                 popupTextShadowStrength: ProviderPreferenceDefaults.popupTextShadowStrength,
                 popupTextShadowRadius: ProviderPreferenceDefaults.popupTextShadowRadius,
                 popupParentSessionCount: ProviderPreferenceDefaults.popupParentSessionCount,
-                popupResponseCharacterLimit: ProviderPreferenceDefaults.popupResponseCharacterLimit
+                popupShowsResponseBody: ProviderPreferenceDefaults.popupShowsResponseBody,
+                popupResponseCharacterLimit: ProviderPreferenceDefaults.popupResponseCharacterLimit,
+                popupResponseLineLimit: ProviderPreferenceDefaults.popupResponseLineLimit
             )
         }
 
@@ -1019,8 +1060,12 @@ final class ProviderVisibilityStore: ObservableObject {
             popupTextShadowStrength: ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(document.popupTextShadowStrength),
             popupTextShadowRadius: ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(document.popupTextShadowRadius),
             popupParentSessionCount: ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(document.popupParentSessionCount),
+            popupShowsResponseBody: document.popupShowsResponseBody,
             popupResponseCharacterLimit: ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(
                 document.popupResponseCharacterLimit
+            ),
+            popupResponseLineLimit: ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(
+                document.popupResponseLineLimit
             )
         )
     }
@@ -1064,23 +1109,38 @@ final class ProviderVisibilityStore: ObservableObject {
 
 private struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .general
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @ObservedObject private var providerVisibility = ProviderVisibilityStore.shared
 
     var body: some View {
-        HStack(spacing: 0) {
-            SettingsSidebar(selectedSection: $selectedSection)
-
-            Divider()
-
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            List(selection: $selectedSection) {
+                ForEach(SettingsSection.allCases) { section in
+                    Label(section.title, systemImage: section.symbolName)
+                        .tag(section)
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationTitle("Settings")
+            .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
+        } detail: {
             SettingsDetailView(section: selectedSection, providerVisibility: providerVisibility)
         }
-        .frame(width: 720, height: 460)
-        .background(.regularMaterial)
+        .navigationSplitViewStyle(.balanced)
+        .frame(
+            minWidth: 760,
+            idealWidth: 820,
+            maxWidth: .infinity,
+            minHeight: 440,
+            idealHeight: 620,
+            maxHeight: .infinity
+        )
     }
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
     case general
+    case dropdownMenu
     case popup
     case providers
 
@@ -1090,6 +1150,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general:
             "General"
+        case .dropdownMenu:
+            "Dropdown Menu"
         case .popup:
             "Popup"
         case .providers:
@@ -1100,77 +1162,13 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     var symbolName: String {
         switch self {
         case .general:
-            "gearshape.fill"
+            "gearshape"
+        case .dropdownMenu:
+            "list.bullet.rectangle"
         case .popup:
             "macwindow.on.rectangle"
         case .providers:
-            "puzzlepiece.extension.fill"
-        }
-    }
-}
-
-private struct SettingsSidebar: View {
-    @Binding var selectedSection: SettingsSection
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(SettingsSection.allCases) { section in
-                SettingsSidebarRow(
-                    section: section,
-                    isSelected: selectedSection == section
-                ) {
-                    selectedSection = section
-                }
-            }
-
-            Spacer()
-        }
-        .padding(.top, 62)
-        .padding(.horizontal, 14)
-        .frame(width: 210, alignment: .topLeading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(.ultraThinMaterial)
-    }
-}
-
-private struct SettingsSidebarRow: View {
-    let section: SettingsSection
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 11) {
-                Image(systemName: section.symbolName)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 30, height: 30)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(.gray.gradient)
-                    )
-
-                Text(section.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selectionBackground)
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private var selectionBackground: some View {
-        if isSelected {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .selectedContentBackgroundColor).opacity(0.28))
+            "puzzlepiece.extension"
         }
     }
 }
@@ -1182,7 +1180,9 @@ private struct SettingsDetailView: View {
     var body: some View {
         switch section {
         case .general:
-            GeneralSettingsView(providerVisibility: providerVisibility)
+            GeneralSettingsView()
+        case .dropdownMenu:
+            DropdownMenuSettingsView(providerVisibility: providerVisibility)
         case .popup:
             PopupSettingsView(providerVisibility: providerVisibility)
         case .providers:
@@ -1191,142 +1191,226 @@ private struct SettingsDetailView: View {
     }
 }
 
+private struct SettingsForm<Content: View>: View {
+    let title: String
+    private let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        Form {
+            content
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .navigationTitle(title)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+@MainActor
+final class LaunchAtLoginStore: ObservableObject {
+    static let shared = LaunchAtLoginStore()
+
+    @Published private(set) var isEnabled = false
+    @Published private(set) var statusText = "Off."
+
+    private init() {
+        refresh()
+    }
+
+    func refresh() {
+        let status = SMAppService.mainApp.status
+        isEnabled = status == .enabled || status == .requiresApproval
+        statusText = Self.statusText(for: status)
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        let service = SMAppService.mainApp
+        var errorText: String?
+
+        do {
+            if enabled {
+                if service.status == .notRegistered {
+                    try service.register()
+                }
+            } else if service.status == .enabled || service.status == .requiresApproval {
+                try service.unregister()
+            }
+        } catch {
+            errorText = error.localizedDescription
+        }
+
+        refresh()
+        if let errorText {
+            statusText = errorText
+        }
+    }
+
+    private static func statusText(for status: SMAppService.Status) -> String {
+        switch status {
+        case .enabled:
+            "Enabled."
+        case .requiresApproval:
+            "Waiting for approval in Login Items."
+        case .notRegistered:
+            "Off."
+        case .notFound:
+            "Open the bundled AgentsBar.app to manage this setting."
+        @unknown default:
+            "Unavailable."
+        }
+    }
+}
+
 private struct GeneralSettingsView: View {
+    @ObservedObject private var launchAtLogin = LaunchAtLoginStore.shared
+
+    var body: some View {
+        SettingsForm(title: SettingsSection.general.title) {
+            SettingsGroupBox(
+                title: "Startup",
+                subtitle: "Launch behavior for AgentsBar."
+            ) {
+                SettingsToggleRow(
+                    title: "Launch at Login",
+                    subtitle: launchAtLogin.statusText,
+                    isOn: Binding(
+                        get: {
+                            launchAtLogin.isEnabled
+                        },
+                        set: { isEnabled in
+                            launchAtLogin.setEnabled(isEnabled)
+                        }
+                    )
+                )
+            }
+        }
+        .onAppear {
+            launchAtLogin.refresh()
+        }
+    }
+}
+
+private struct DropdownMenuSettingsView: View {
     @ObservedObject var providerVisibility: ProviderVisibilityStore
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 24) {
-                HStack(spacing: 12) {
-                    Image(systemName: SettingsSection.general.symbolName)
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
-                        .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(.gray.gradient)
-                        )
-
-                    Text("General")
-                        .font(.system(size: 24, weight: .bold))
+        SettingsForm(title: SettingsSection.dropdownMenu.title) {
+            SettingsGroupBox(
+                title: "Sessions",
+                subtitle: "Parent rows shown in the menu."
+            ) {
+                SettingsStepperRow(
+                    title: "Count",
+                    subtitle: "Maximum parent sessions shown per provider.",
+                    value: providerVisibility.sessionDisplayCount,
+                    range: 3...10
+                ) { count in
+                    providerVisibility.setSessionDisplayCount(count)
                 }
 
-                SettingsGroupBox(
-                    title: "Sessions",
-                    subtitle: "Parent rows shown in the menu."
-                ) {
-                    SettingsStepperRow(
-                        title: "Count",
-                        subtitle: "Maximum parent sessions shown per provider.",
-                        value: providerVisibility.sessionDisplayCount,
-                        range: 3...10
-                    ) { count in
-                        providerVisibility.setSessionDisplayCount(count)
-                    }
+                SettingsDivider()
 
-                    SettingsDivider()
-
-                    SettingsPickerRow(
-                        title: "Hide After",
-                        subtitle: "Hide inactive history.",
-                        selection: Binding(
-                            get: {
-                                providerVisibility.hideAfterInterval
-                            },
-                            set: { interval in
-                                providerVisibility.setHideAfterInterval(interval)
-                            }
-                        ),
-                        options: ProviderPreferenceDefaults.hideAfterOptions,
-                        labelProvider: ProviderPreferenceDefaults.hideAfterLabel
-                    )
-                }
-
-                SettingsGroupBox(
-                    title: "Response Body",
-                    subtitle: "Preview text shown below each session title."
-                ) {
-                    SettingsStepperRow(
-                        title: "Lines",
-                        subtitle: "Maximum lines shown below each session title.",
-                        value: providerVisibility.latestResponseLineLimit,
-                        range: 1...5
-                    ) { count in
-                        providerVisibility.setLatestResponseLineLimit(count)
-                    }
-
-                    SettingsDivider()
-
-                    SettingsPickerRow(
-                        title: "Hide After",
-                        subtitle: "Hide response text after this interval.",
-                        selection: Binding(
-                            get: {
-                                providerVisibility.latestResponseHideAfterInterval
-                            },
-                            set: { interval in
-                                providerVisibility.setLatestResponseHideAfterInterval(interval)
-                            }
-                        ),
-                        options: ProviderPreferenceDefaults.latestResponseHideAfterOptions,
-                        labelProvider: ProviderPreferenceDefaults.latestResponseHideAfterLabel
-                    )
-                }
-
-                SettingsGroupBox(
-                    title: "Sub-agents",
-                    subtitle: "Nested session rows in the menu."
-                ) {
-                    SettingsToggleRow(
-                        title: "Show",
-                        subtitle: "Show active sub-agent sessions in the drop-down menu.",
-                        isOn: Binding(
-                            get: {
-                                providerVisibility.showsSubagents
-                            },
-                            set: { showsSubagents in
-                                providerVisibility.setShowsSubagents(showsSubagents)
-                            }
-                        )
-                    )
-
-                    SettingsDivider()
-
-                    SettingsStepperRow(
-                        title: "Lines",
-                        subtitle: "Maximum response lines shown for sub-agent rows.",
-                        value: providerVisibility.subagentLatestResponseLineLimit,
-                        range: 1...5
-                    ) { count in
-                        providerVisibility.setSubagentLatestResponseLineLimit(count)
-                    }
-
-                    SettingsDivider()
-
-                    SettingsPickerRow(
-                        title: "Hide After",
-                        subtitle: "Hide inactive sub-agents by timestamp.",
-                        selection: Binding(
-                            get: {
-                                providerVisibility.subagentHideAfterInterval
-                            },
-                            set: { interval in
-                                providerVisibility.setSubagentHideAfterInterval(interval)
-                            }
-                        ),
-                        options: ProviderPreferenceDefaults.subagentHideAfterOptions,
-                        labelProvider: ProviderPreferenceDefaults.subagentHideAfterLabel
-                    )
-                    .disabled(!providerVisibility.showsSubagents)
-                    .opacity(providerVisibility.showsSubagents ? 1 : 0.55)
-                }
+                SettingsPickerRow(
+                    title: "Hide After",
+                    subtitle: "Hide inactive history.",
+                    selection: Binding(
+                        get: {
+                            providerVisibility.hideAfterInterval
+                        },
+                        set: { interval in
+                            providerVisibility.setHideAfterInterval(interval)
+                        }
+                    ),
+                    options: ProviderPreferenceDefaults.hideAfterOptions,
+                    labelProvider: ProviderPreferenceDefaults.hideAfterLabel
+                )
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(.top, 36)
-            .padding(.horizontal, 32)
-            .padding(.bottom, 28)
+
+            SettingsGroupBox(
+                title: "Response Body",
+                subtitle: "Preview text shown below each session title."
+            ) {
+                SettingsStepperRow(
+                    title: "Lines",
+                    subtitle: "Maximum lines shown below each session title.",
+                    value: providerVisibility.latestResponseLineLimit,
+                    range: 1...5
+                ) { count in
+                    providerVisibility.setLatestResponseLineLimit(count)
+                }
+
+                SettingsDivider()
+
+                SettingsPickerRow(
+                    title: "Hide After",
+                    subtitle: "Hide response text after this interval.",
+                    selection: Binding(
+                        get: {
+                            providerVisibility.latestResponseHideAfterInterval
+                        },
+                        set: { interval in
+                            providerVisibility.setLatestResponseHideAfterInterval(interval)
+                        }
+                    ),
+                    options: ProviderPreferenceDefaults.latestResponseHideAfterOptions,
+                    labelProvider: ProviderPreferenceDefaults.latestResponseHideAfterLabel
+                )
+            }
+
+            SettingsGroupBox(
+                title: "Sub-agents",
+                subtitle: "Nested session rows in the menu."
+            ) {
+                SettingsToggleRow(
+                    title: "Show",
+                    subtitle: "Show active sub-agent sessions in the drop-down menu.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.showsSubagents
+                        },
+                        set: { showsSubagents in
+                            providerVisibility.setShowsSubagents(showsSubagents)
+                        }
+                    )
+                )
+
+                SettingsDivider()
+
+                SettingsStepperRow(
+                    title: "Lines",
+                    subtitle: "Maximum response lines shown for sub-agent rows.",
+                    value: providerVisibility.subagentLatestResponseLineLimit,
+                    range: 1...5
+                ) { count in
+                    providerVisibility.setSubagentLatestResponseLineLimit(count)
+                }
+
+                SettingsDivider()
+
+                SettingsPickerRow(
+                    title: "Hide After",
+                    subtitle: "Hide inactive sub-agents by timestamp.",
+                    selection: Binding(
+                        get: {
+                            providerVisibility.subagentHideAfterInterval
+                        },
+                        set: { interval in
+                            providerVisibility.setSubagentHideAfterInterval(interval)
+                        }
+                    ),
+                    options: ProviderPreferenceDefaults.subagentHideAfterOptions,
+                    labelProvider: ProviderPreferenceDefaults.subagentHideAfterLabel
+                )
+                .disabled(!providerVisibility.showsSubagents)
+                .opacity(providerVisibility.showsSubagents ? 1 : 0.55)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -1334,201 +1418,214 @@ private struct PopupSettingsView: View {
     @ObservedObject var providerVisibility: ProviderVisibilityStore
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 24) {
-                HStack(spacing: 12) {
-                    Image(systemName: SettingsSection.popup.symbolName)
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
-                        .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(.blue.gradient)
-                        )
+        SettingsForm(title: SettingsSection.popup.title) {
+            SettingsGroupBox(
+                title: "Display",
+                subtitle: "Latest parent response popup."
+            ) {
+                SettingsToggleRow(
+                    title: "Enable",
+                    subtitle: "Show the latest parent session above other windows.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.popupEnabled
+                        },
+                        set: { isEnabled in
+                            providerVisibility.setPopupEnabled(isEnabled)
+                        }
+                    )
+                )
 
-                    Text("Popup")
-                        .font(.system(size: 24, weight: .bold))
+                SettingsDivider()
 
-                    Spacer(minLength: 0)
-
-                    Button {
-                        providerVisibility.resetPopupPreferences()
-                    } label: {
-                        Label("Reset", systemImage: "arrow.counterclockwise")
-                    }
-                    .controlSize(.small)
+                SettingsStepperRow(
+                    title: "Hide After Idle",
+                    subtitle: "Hide this many seconds after the parent session becomes idle.",
+                    value: Int(providerVisibility.popupDisplayInterval),
+                    range: 1...60,
+                    labelSuffix: "s"
+                ) { count in
+                    providerVisibility.setPopupDisplayInterval(TimeInterval(count))
                 }
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
 
-                SettingsGroupBox(
-                    title: "Display",
-                    subtitle: "Latest parent response popup."
-                ) {
-                    SettingsToggleRow(
-                        title: "Enable",
-                        subtitle: "Show the latest parent session above other windows.",
-                        isOn: Binding(
-                            get: {
-                                providerVisibility.popupEnabled
-                            },
-                            set: { isEnabled in
-                                providerVisibility.setPopupEnabled(isEnabled)
-                            }
-                        )
-                    )
+                SettingsDivider()
 
-                    SettingsDivider()
-
-                    SettingsStepperRow(
-                        title: "Hide After Idle",
-                        subtitle: "Hide this many seconds after the parent session becomes idle.",
-                        value: Int(providerVisibility.popupDisplayInterval),
-                        range: 1...60,
-                        labelSuffix: "s"
-                    ) { count in
-                        providerVisibility.setPopupDisplayInterval(TimeInterval(count))
-                    }
-                    .disabled(!providerVisibility.popupEnabled)
-                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
-
-                    SettingsDivider()
-
-                    SettingsStepperRow(
-                        title: "Sessions",
-                        subtitle: "Maximum recent parent sessions shown in the popup.",
-                        value: providerVisibility.popupParentSessionCount,
-                        range: 1...10
-                    ) { count in
-                        providerVisibility.setPopupParentSessionCount(count)
-                    }
-                    .disabled(!providerVisibility.popupEnabled)
-                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
-
-                    SettingsDivider()
-
-                    SettingsStepperRow(
-                        title: "Characters",
-                        subtitle: "Maximum response body characters per popup session.",
-                        value: providerVisibility.popupResponseCharacterLimit,
-                        range: 40...1000,
-                        step: 10,
-                        labelSuffix: "ch",
-                        labelWidth: 62
-                    ) { count in
-                        providerVisibility.setPopupResponseCharacterLimit(count)
-                    }
-                    .disabled(!providerVisibility.popupEnabled)
-                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+                SettingsStepperRow(
+                    title: "Sessions",
+                    subtitle: "Maximum recent parent sessions shown in the popup.",
+                    value: providerVisibility.popupParentSessionCount,
+                    range: 1...10
+                ) { count in
+                    providerVisibility.setPopupParentSessionCount(count)
                 }
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
 
-                SettingsGroupBox(
-                    title: "Position",
-                    subtitle: "Screen position for the popup window."
-                ) {
-                    SettingsEnumPickerRow(
-                        title: "Window",
-                        subtitle: "Place the popup on the current main screen.",
-                        selection: Binding(
-                            get: {
-                                providerVisibility.popupWindowPosition
-                            },
-                            set: { position in
-                                providerVisibility.setPopupWindowPosition(position)
-                            }
-                        ),
-                        options: PopupWindowPosition.allCases
-                    ) { position in
-                        position.title
-                    }
-                    .disabled(!providerVisibility.popupEnabled)
-                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+                SettingsDivider()
+
+                SettingsToggleRow(
+                    title: "Response Body",
+                    subtitle: "Show response text below each popup session title.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.popupShowsResponseBody
+                        },
+                        set: { showsResponseBody in
+                            providerVisibility.setPopupShowsResponseBody(showsResponseBody)
+                        }
+                    )
+                )
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+                SettingsDivider()
+
+                SettingsStepperRow(
+                    title: "Characters",
+                    subtitle: "Maximum response body characters per popup session.",
+                    value: providerVisibility.popupResponseCharacterLimit,
+                    range: 40...1000,
+                    step: 10,
+                    labelSuffix: "ch",
+                    labelWidth: 62
+                ) { count in
+                    providerVisibility.setPopupResponseCharacterLimit(count)
                 }
+                .disabled(!responseBodyControlsEnabled)
+                .opacity(responseBodyControlsEnabled ? 1 : 0.55)
 
-                SettingsGroupBox(
-                    title: "Appearance",
-                    subtitle: "Popup window size and opacity."
-                ) {
-                    SettingsSliderRow(
-                        title: "Width",
-                        subtitle: "Adjust popup window width.",
-                        value: Binding(
-                            get: {
-                                providerVisibility.popupWindowWidth
-                            },
-                            set: { width in
-                                providerVisibility.setPopupWindowWidth(width)
-                            }
-                        ),
-                        range: 260...620,
-                        label: "\(Int(providerVisibility.popupWindowWidth))px"
-                    )
-                    .disabled(!providerVisibility.popupEnabled)
-                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+                SettingsDivider()
 
-                    SettingsDivider()
-
-                    SettingsSliderRow(
-                        title: "Size",
-                        subtitle: "Scale the whole popup window.",
-                        value: Binding(
-                            get: {
-                                providerVisibility.popupScale
-                            },
-                            set: { scale in
-                                providerVisibility.setPopupScale(scale)
-                            }
-                        ),
-                        range: 0.5...1.5,
-                        label: "\(Int(providerVisibility.popupScale * 100))%"
-                    )
-                    .disabled(!providerVisibility.popupEnabled)
-                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
-
-                    SettingsDivider()
-
-                    SettingsSliderRow(
-                        title: "Text Opacity",
-                        subtitle: "Adjust popup text transparency.",
-                        value: Binding(
-                            get: {
-                                providerVisibility.popupTextOpacity
-                            },
-                            set: { opacity in
-                                providerVisibility.setPopupTextOpacity(opacity)
-                            }
-                        ),
-                        range: 0.35...1.0,
-                        label: "\(Int(providerVisibility.popupTextOpacity * 100))%"
-                    )
-                    .disabled(!providerVisibility.popupEnabled)
-                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
-
-                    SettingsDivider()
-
-                    SettingsSliderRow(
-                        title: "Shadow Strength",
-                        subtitle: "Adjust the text drop shadow intensity.",
-                        value: Binding(
-                            get: {
-                                providerVisibility.popupTextShadowStrength
-                            },
-                            set: { strength in
-                                providerVisibility.setPopupTextShadowStrength(strength)
-                            }
-                        ),
-                        range: 0...3,
-                        label: "\(Int(providerVisibility.popupTextShadowStrength * 100))%"
-                    )
-                    .disabled(!providerVisibility.popupEnabled)
-                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
-
+                SettingsStepperRow(
+                    title: "Lines",
+                    subtitle: "Maximum response body lines per popup session.",
+                    value: providerVisibility.popupResponseLineLimit,
+                    range: 1...10,
+                    labelSuffix: "ln",
+                    labelWidth: 40
+                ) { count in
+                    providerVisibility.setPopupResponseLineLimit(count)
                 }
+                .disabled(!responseBodyControlsEnabled)
+                .opacity(responseBodyControlsEnabled ? 1 : 0.55)
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(.top, 36)
-            .padding(.horizontal, 32)
-            .padding(.bottom, 28)
+
+            SettingsGroupBox(
+                title: "Position",
+                subtitle: "Screen position for the popup window."
+            ) {
+                SettingsEnumPickerRow(
+                    title: "Window",
+                    subtitle: "Place the popup on the current main screen.",
+                    selection: Binding(
+                        get: {
+                            providerVisibility.popupWindowPosition
+                        },
+                        set: { position in
+                            providerVisibility.setPopupWindowPosition(position)
+                        }
+                    ),
+                    options: PopupWindowPosition.allCases
+                ) { position in
+                    position.title
+                }
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+            }
+
+            SettingsGroupBox(
+                title: "Appearance",
+                subtitle: "Popup window size and opacity."
+            ) {
+                SettingsSliderRow(
+                    title: "Width",
+                    subtitle: "Adjust popup window width.",
+                    value: Binding(
+                        get: {
+                            providerVisibility.popupWindowWidth
+                        },
+                        set: { width in
+                            providerVisibility.setPopupWindowWidth(width)
+                        }
+                    ),
+                    range: 260...1500,
+                    label: "\(Int(providerVisibility.popupWindowWidth))px"
+                )
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+                SettingsDivider()
+
+                SettingsSliderRow(
+                    title: "Size",
+                    subtitle: "Scale the whole popup window.",
+                    value: Binding(
+                        get: {
+                            providerVisibility.popupScale
+                        },
+                        set: { scale in
+                            providerVisibility.setPopupScale(scale)
+                        }
+                    ),
+                    range: 0.5...1.5,
+                    label: "\(Int(providerVisibility.popupScale * 100))%"
+                )
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+                SettingsDivider()
+
+                SettingsSliderRow(
+                    title: "Text Opacity",
+                    subtitle: "Adjust popup text transparency.",
+                    value: Binding(
+                        get: {
+                            providerVisibility.popupTextOpacity
+                        },
+                        set: { opacity in
+                            providerVisibility.setPopupTextOpacity(opacity)
+                        }
+                    ),
+                    range: 0.35...1.0,
+                    label: "\(Int(providerVisibility.popupTextOpacity * 100))%"
+                )
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+                SettingsDivider()
+
+                SettingsSliderRow(
+                    title: "Shadow Strength",
+                    subtitle: "Adjust the text drop shadow intensity.",
+                    value: Binding(
+                        get: {
+                            providerVisibility.popupTextShadowStrength
+                        },
+                        set: { strength in
+                            providerVisibility.setPopupTextShadowStrength(strength)
+                        }
+                    ),
+                    range: 0...3,
+                    label: "\(Int(providerVisibility.popupTextShadowStrength * 100))%"
+                )
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .toolbar {
+            Button {
+                providerVisibility.resetPopupPreferences()
+            } label: {
+                Label("Reset", systemImage: "arrow.counterclockwise")
+            }
+            .help("Reset popup settings")
+        }
+    }
+
+    private var responseBodyControlsEnabled: Bool {
+        providerVisibility.popupEnabled && providerVisibility.popupShowsResponseBody
     }
 }
 
@@ -1551,12 +1648,13 @@ private struct ProviderSettingsRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(agent.providerSettingsTitle)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.body)
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .layoutPriority(1)
 
             Spacer()
 
@@ -1575,9 +1673,7 @@ private struct ProviderSettingsRow: View {
                     .frame(width: 18)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 9)
-        .frame(height: 52)
+        .padding(.vertical, 4)
     }
 }
 
@@ -1585,34 +1681,11 @@ private struct ProvidersSettingsView: View {
     @ObservedObject var providerVisibility: ProviderVisibilityStore
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 12) {
-                    Image(systemName: SettingsSection.providers.symbolName)
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
-                        .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(.blue.gradient)
-                        )
-
-                    Text("Providers")
-                        .font(.system(size: 24, weight: .bold))
-                }
-
-                VStack(spacing: 14) {
-                    ProviderPlacementCard(placement: .dropdownMenu, providerVisibility: providerVisibility)
-                    PopupProviderSettingsGroup(providerVisibility: providerVisibility)
-                    ProviderPlacementCard(placement: .menuBar, providerVisibility: providerVisibility)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(.top, 28)
-            .padding(.horizontal, 28)
-            .padding(.bottom, 22)
+        SettingsForm(title: SettingsSection.providers.title) {
+            ProviderPlacementCard(placement: .dropdownMenu, providerVisibility: providerVisibility)
+            PopupProviderSettingsGroup(providerVisibility: providerVisibility)
+            ProviderPlacementCard(placement: .menuBar, providerVisibility: providerVisibility)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -1624,29 +1697,23 @@ private struct PopupProviderSettingsGroup: View {
             title: "Popup",
             subtitle: "Choose providers that can appear in the popup."
         ) {
-            List {
-                ForEach(AgentKind.allCases, id: \.rawValue) { agent in
-                    ProviderSettingsRow(
-                        agent: agent,
-                        subtitle: "Allow this provider in the popup.",
-                        isVisible: Binding(
-                            get: {
-                                providerVisibility.isPopupVisible(for: agent)
-                            },
-                            set: { isVisible in
-                                providerVisibility.setPopupVisible(isVisible, for: agent)
-                            }
-                        ),
-                        showsReorderHandle: false
-                    )
-                    .disabled(!providerVisibility.popupEnabled)
-                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
-                    .listRowInsets(EdgeInsets())
-                }
+            ForEach(AgentKind.allCases, id: \.rawValue) { agent in
+                ProviderSettingsRow(
+                    agent: agent,
+                    subtitle: "Allow this provider in the popup.",
+                    isVisible: Binding(
+                        get: {
+                            providerVisibility.isPopupVisible(for: agent)
+                        },
+                        set: { isVisible in
+                            providerVisibility.setPopupVisible(isVisible, for: agent)
+                        }
+                    ),
+                    showsReorderHandle: false
+                )
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .frame(height: CGFloat(AgentKind.allCases.count) * 52)
         }
     }
 }
@@ -1660,49 +1727,42 @@ private struct ProviderPlacementCard: View {
             title: placement.title,
             subtitle: placement.helperText
         ) {
-            List {
-                if placement.supportsReordering {
-                    ForEach(providerVisibility.orderedAgents(for: placement), id: \.rawValue) { agent in
-                        ProviderSettingsRow(
-                            agent: agent,
-                            subtitle: subtitle(for: placement),
-                            isVisible: Binding(
-                                get: {
-                                    providerVisibility.isVisible(agent, in: placement)
-                                },
-                                set: { isVisible in
-                                    providerVisibility.setVisible(isVisible, for: agent, in: placement)
-                                }
-                            ),
-                            showsReorderHandle: true
-                        )
-                        .listRowInsets(EdgeInsets())
-                    }
-                    .onMove { offsets, destination in
-                        providerVisibility.move(fromOffsets: offsets, toOffset: destination, in: placement)
-                    }
-                } else {
-                    ForEach(providerVisibility.orderedAgents(for: placement), id: \.rawValue) { agent in
-                        ProviderSettingsRow(
-                            agent: agent,
-                            subtitle: subtitle(for: placement),
-                            isVisible: Binding(
-                                get: {
-                                    providerVisibility.isVisible(agent, in: placement)
-                                },
-                                set: { isVisible in
-                                    providerVisibility.setVisible(isVisible, for: agent, in: placement)
-                                }
-                            ),
-                            showsReorderHandle: false
-                        )
-                        .listRowInsets(EdgeInsets())
-                    }
+            if placement.supportsReordering {
+                ForEach(providerVisibility.orderedAgents(for: placement), id: \.rawValue) { agent in
+                    ProviderSettingsRow(
+                        agent: agent,
+                        subtitle: subtitle(for: placement),
+                        isVisible: Binding(
+                            get: {
+                                providerVisibility.isVisible(agent, in: placement)
+                            },
+                            set: { isVisible in
+                                providerVisibility.setVisible(isVisible, for: agent, in: placement)
+                            }
+                        ),
+                        showsReorderHandle: true
+                    )
+                }
+                .onMove { offsets, destination in
+                    providerVisibility.move(fromOffsets: offsets, toOffset: destination, in: placement)
+                }
+            } else {
+                ForEach(providerVisibility.orderedAgents(for: placement), id: \.rawValue) { agent in
+                    ProviderSettingsRow(
+                        agent: agent,
+                        subtitle: subtitle(for: placement),
+                        isVisible: Binding(
+                            get: {
+                                providerVisibility.isVisible(agent, in: placement)
+                            },
+                            set: { isVisible in
+                                providerVisibility.setVisible(isVisible, for: agent, in: placement)
+                            }
+                        ),
+                        showsReorderHandle: false
+                    )
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .frame(height: CGFloat(providerVisibility.orderedAgents(for: placement).count) * 52)
         }
     }
 
@@ -1732,36 +1792,43 @@ private struct SettingsGroupBox<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+        Section {
+            content
+        } header: {
+            Text(title)
+                .font(.headline)
+                .textCase(nil)
+        } footer: {
+            if !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
-            .padding(.horizontal, 2)
-
-            VStack(spacing: 0) {
-                content
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.45))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
         }
     }
 }
 
 private struct SettingsDivider: View {
     var body: some View {
-        Divider()
-            .padding(.leading, 18)
+        EmptyView()
+    }
+}
+
+private struct SettingsRowLabel: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.body)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .layoutPriority(1)
     }
 }
 
@@ -1776,15 +1843,8 @@ private struct SettingsStepperRow: View {
     let onChange: (Int) -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+        HStack(alignment: .center, spacing: 16) {
+            SettingsRowLabel(title: title, subtitle: subtitle)
 
             Spacer()
 
@@ -1801,10 +1861,10 @@ private struct SettingsStepperRow: View {
                     .monospacedDigit()
                     .frame(width: labelWidth, alignment: .trailing)
             }
-            .frame(width: 92)
+            .controlSize(.small)
+            .frame(width: 104)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.vertical, 4)
     }
 }
 
@@ -1816,15 +1876,8 @@ private struct SettingsPickerRow: View {
     let labelProvider: (TimeInterval) -> String
 
     var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+        HStack(alignment: .center, spacing: 16) {
+            SettingsRowLabel(title: title, subtitle: subtitle)
 
             Spacer()
 
@@ -1835,10 +1888,10 @@ private struct SettingsPickerRow: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 130)
+            .controlSize(.small)
+            .frame(width: 150)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.vertical, 4)
     }
 }
 
@@ -1864,15 +1917,8 @@ private struct SettingsEnumPickerRow<Value: Hashable>: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+        HStack(alignment: .center, spacing: 16) {
+            SettingsRowLabel(title: title, subtitle: subtitle)
 
             Spacer()
 
@@ -1883,10 +1929,10 @@ private struct SettingsEnumPickerRow<Value: Hashable>: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 150)
+            .controlSize(.small)
+            .frame(width: 170)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.vertical, 4)
     }
 }
 
@@ -1896,15 +1942,8 @@ private struct SettingsToggleRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+        HStack(alignment: .center, spacing: 16) {
+            SettingsRowLabel(title: title, subtitle: subtitle)
 
             Spacer()
 
@@ -1912,8 +1951,7 @@ private struct SettingsToggleRow: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
+        .padding(.vertical, 5)
     }
 }
 
@@ -1925,21 +1963,14 @@ private struct SettingsSliderRow: View {
     let label: String
 
     var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+        HStack(alignment: .center, spacing: 16) {
+            SettingsRowLabel(title: title, subtitle: subtitle)
 
             Spacer()
 
             HStack(spacing: 10) {
                 Slider(value: $value, in: range)
-                    .frame(width: 130)
+                    .frame(width: 170)
 
                 Text(label)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -1947,8 +1978,7 @@ private struct SettingsSliderRow: View {
                     .frame(width: 50, alignment: .trailing)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.vertical, 4)
     }
 }
 
@@ -1964,8 +1994,8 @@ final class SettingsWindowController: NSWindowController {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 640, height: 380)
-        window.setContentSize(NSSize(width: 720, height: 460))
+        window.minSize = NSSize(width: 760, height: 440)
+        window.setContentSize(NSSize(width: 820, height: 620))
 
         super.init(window: window)
     }
@@ -2717,7 +2747,21 @@ final class SessionPopupController {
             }
             .store(in: &cancellables)
 
+        providerVisibility.$popupShowsResponseBody
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
         providerVisibility.$popupResponseCharacterLimit
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupResponseLineLimit
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updatePopup()
@@ -2767,7 +2811,9 @@ final class SessionPopupController {
             textShadowRadius: CGFloat(ProviderPreferenceDefaults.popupTextShadowRadius),
             alignsHeaderTrailing: providerVisibility.popupWindowPosition.alignsPopupHeaderTrailing,
             placesNewestSessionAtBottom: providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom,
-            responseCharacterLimit: providerVisibility.popupResponseCharacterLimit
+            showsResponseBody: providerVisibility.popupShowsResponseBody,
+            responseCharacterLimit: providerVisibility.popupResponseCharacterLimit,
+            responseLineLimit: providerVisibility.popupResponseLineLimit
         )
         let hostingController = ensureHostingController(rootView: rootView)
         hostingController.rootView = rootView
@@ -2882,7 +2928,9 @@ private struct LatestParentSessionsPopupView: View {
     let textShadowRadius: CGFloat
     let alignsHeaderTrailing: Bool
     let placesNewestSessionAtBottom: Bool
+    let showsResponseBody: Bool
     let responseCharacterLimit: Int
+    let responseLineLimit: Int
 
     var body: some View {
         let metrics = PopupScaleMetrics(
@@ -2898,7 +2946,9 @@ private struct LatestParentSessionsPopupView: View {
                     session: session,
                     metrics: metrics,
                     alignsHeaderTrailing: alignsHeaderTrailing,
-                    responseCharacterLimit: responseCharacterLimit
+                    showsResponseBody: showsResponseBody,
+                    responseCharacterLimit: responseCharacterLimit,
+                    responseLineLimit: responseLineLimit
                 )
             }
         }
@@ -2921,7 +2971,9 @@ private struct PopupSessionRow: View {
     let session: AgentSession
     let metrics: PopupScaleMetrics
     let alignsHeaderTrailing: Bool
+    let showsResponseBody: Bool
     let responseCharacterLimit: Int
+    let responseLineLimit: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
@@ -2959,6 +3011,7 @@ private struct PopupSessionRow: View {
                     .font(.system(size: metrics.responseFontSize))
                     .foregroundStyle(.white.opacity(metrics.textOpacity))
                     .multilineTextAlignment(responseTextAlignment)
+                    .lineLimit(responseLineLimit)
                     .truncationMode(.tail)
                     .popupTextShadow(metrics)
                     .fixedSize(horizontal: false, vertical: true)
@@ -3005,6 +3058,10 @@ private struct PopupSessionRow: View {
     }
 
     private var responseText: String? {
+        guard showsResponseBody else {
+            return nil
+        }
+
         guard let text = AgentTextSanitizer.latestResponseText(session.latestResponseText) else {
             return nil
         }
@@ -3045,8 +3102,8 @@ private struct PopupScaleMetrics {
         self.textShadowRadius = min(max(textShadowRadius, 0), 16)
     }
 
-    var stackSpacing: CGFloat { 6 * scale }
-    var rowSpacing: CGFloat { 4 * scale }
+    var stackSpacing: CGFloat { 10 * scale }
+    var rowSpacing: CGFloat { 2 * scale }
     var titleSpacing: CGFloat { 3 * scale }
     var horizontalPadding: CGFloat { 4 * scale }
     var verticalPadding: CGFloat { 3 * scale }
@@ -3929,19 +3986,7 @@ private struct SessionMenuRow: View {
     }
 
     private var symbolColor: Color {
-        switch session.state {
-        case .working:
-            switch session.agent {
-            case .codex:
-                return Color(nsColor: AgentColors.codexWorking)
-            case .claudeCode:
-                return Color(nsColor: AgentColors.claudeWorking)
-            }
-        case .waiting:
-            return Color(nsColor: AgentColors.waiting)
-        case .idle, .ended:
-            return .secondary
-        }
+        agentStateSymbolColor(for: session.state, agent: session.agent)
     }
 
     private var titleColor: Color {
@@ -4078,6 +4123,17 @@ private struct SessionStateIcon: View {
             }
         }
         .frame(width: symbolWidth, height: symbolFontSize + 3, alignment: .topLeading)
+    }
+}
+
+private func agentStateSymbolColor(for state: AgentState, agent: AgentKind) -> Color {
+    switch state {
+    case .working:
+        return Color(nsColor: AgentColors.working(for: agent))
+    case .waiting:
+        return Color(nsColor: AgentColors.waiting)
+    case .idle, .ended:
+        return .secondary
     }
 }
 
