@@ -26,6 +26,33 @@ final class ClaudeSessionTitleResolverTests: XCTestCase {
         )
     }
 
+    func testResolvesMultipleClaudeAppSessionTitlesFromSameRoot() throws {
+        let root = try makeProjectsRoot()
+        let appRoot = try makeProjectsRoot()
+
+        try writeAppSession(
+            root: appRoot,
+            cliSessionId: "first",
+            title: "First app session",
+            lastActivityAt: 1
+        )
+        try writeAppSession(
+            root: appRoot,
+            cliSessionId: "second",
+            title: "Second app session",
+            lastActivityAt: 2
+        )
+
+        XCTAssertEqual(
+            ClaudeSessionTitleResolver.title(for: "first", projectsRoot: root, appSessionsRoot: appRoot),
+            "First app session"
+        )
+        XCTAssertEqual(
+            ClaudeSessionTitleResolver.title(for: "second", projectsRoot: root, appSessionsRoot: appRoot),
+            "Second app session"
+        )
+    }
+
     func testPrefersCustomTitleOverGeneratedTitleAndPromptFallbacks() throws {
         let root = try makeProjectsRoot()
         let sessionId = "abc"

@@ -2129,7 +2129,7 @@ final class AppController: ObservableObject {
     private var maintenanceTimer: Timer?
     private var claudeResponseRefreshWorkItems: [String: [DispatchWorkItem]] = [:]
     private var cancellables: Set<AnyCancellable> = []
-    private static let claudeResponseRetryDelays: [TimeInterval] = [0.15, 0.5, 1.0, 2.0, 4.0]
+    private static let claudeResponseRetryDelays: [TimeInterval] = [0.5, 2.0]
 
     init() {
         applyDisplayPreferences()
@@ -2856,7 +2856,7 @@ final class SessionPopupController {
     }
 
     private func startRefreshTimer() {
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updatePopup()
             }
@@ -3112,7 +3112,7 @@ private struct PopupSessionRow: View {
     @ViewBuilder
     private var providerIcon: some View {
         if session.state == .working {
-            TimelineView(.animation) { timeline in
+            TimelineView(.periodic(from: Date(), by: AgentIconAnimation.animatedRefreshInterval)) { timeline in
                 providerIconImage(highlightPhase: AgentIconAnimation.highlightPhase(at: timeline.date))
             }
         } else {
@@ -3745,7 +3745,7 @@ private struct AgentHeaderView: View {
     @ViewBuilder
     private var iconView: some View {
         if state == .working {
-            TimelineView(.animation) { timeline in
+            TimelineView(.periodic(from: Date(), by: AgentIconAnimation.animatedRefreshInterval)) { timeline in
                 headerIcon(highlightPhase: AgentIconAnimation.highlightPhase(at: timeline.date))
             }
         } else {
@@ -3783,7 +3783,7 @@ private struct AgentSectionView: View {
     let onLayoutMayChange: () -> Void
     @State private var now = Date()
 
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private let timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
         let rows = store.displayRows(for: agent, now: now)
@@ -4267,7 +4267,7 @@ private enum AgentColors {
 }
 
 private enum AgentIconAnimation {
-    static let animatedRefreshInterval: TimeInterval = 1.0 / 24.0
+    static let animatedRefreshInterval: TimeInterval = 0.5
     private static let highlightDuration: TimeInterval = 1.15
 
     static func highlightPhase(at date: Date, startDate: Date) -> CGFloat {

@@ -7,10 +7,16 @@ final class ClaudeSubagentWatcher {
         let fingerprint: String
     }
 
+    private struct CachedSnapshot {
+        let modifiedAt: Date
+        let snapshot: Snapshot?
+    }
+
     private let queue = DispatchQueue(label: "app.agentsbar.claude-subagent-watcher")
     private let handler: (AgentEvent) -> Void
     private var timer: DispatchSourceTimer?
     private var lastFingerprints: [String: String] = [:]
+    private var cachedSnapshotsByPath: [String: CachedSnapshot] = [:]
 
     init(handler: @escaping (AgentEvent) -> Void) {
         self.handler = handler
@@ -18,7 +24,7 @@ final class ClaudeSubagentWatcher {
 
     func start() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: 1.0)
+        timer.schedule(deadline: .now(), repeating: 5.0)
         timer.setEventHandler { [weak self] in
             self?.poll()
         }
@@ -32,7 +38,15 @@ final class ClaudeSubagentWatcher {
     }
 
     private func poll() {
-        for snapshot in Self.makeSnapshots() {
+        var activePaths: Set<String> = []
+        for file in Self.latestSubagentFiles(limit: 50) {
+            let path = file.path
+            activePaths.insert(path)
+            guard let modifiedAt = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                  let snapshot = snapshot(for: file, modifiedAt: modifiedAt) else {
+                continue
+            }
+
             let key = snapshot.event.sessionId
             guard snapshot.fingerprint != lastFingerprints[key] else {
                 continue
@@ -41,18 +55,63 @@ final class ClaudeSubagentWatcher {
             lastFingerprints[key] = snapshot.fingerprint
             handler(snapshot.event)
         }
+
+        cachedSnapshotsByPath = cachedSnapshotsByPath.filter { activePaths.contains($0.key) }
     }
 
-    private static func makeSnapshots() -> [Snapshot] {
-        latestSubagentFiles(limit: 50).compactMap { file in
-            guard let modifiedAt = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                  let text = tailText(from: file),
-                  let parsed = ClaudeSessionParser.parseSubagentTranscript(transcriptPath: file.path, text: text) else {
-                return nil
-            }
-
-            return snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed)
+    private func snapshot(for file: URL, modifiedAt: Date) -> Snapshot? {
+        let key = file.path
+        if let cached = cachedSnapshotsByPath[key],
+           cached.modifiedAt == modifiedAt {
+            return Self.refreshedSnapshot(cached.snapshot, modifiedAt: modifiedAt)
         }
+
+        let snapshot = Self.makeSnapshot(file: file, modifiedAt: modifiedAt)
+        cachedSnapshotsByPath[key] = CachedSnapshot(modifiedAt: modifiedAt, snapshot: snapshot)
+        return snapshot
+    }
+
+    private static func makeSnapshot(file: URL, modifiedAt: Date) -> Snapshot? {
+        guard let text = tailText(from: file),
+              let parsed = ClaudeSessionParser.parseSubagentTranscript(transcriptPath: file.path, text: text) else {
+            return nil
+        }
+
+        return snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed)
+    }
+
+    private static func refreshedSnapshot(_ snapshot: Snapshot?, modifiedAt: Date) -> Snapshot? {
+        guard let snapshot else {
+            return nil
+        }
+
+        let age = Date().timeIntervalSince(modifiedAt)
+        guard age > 120, snapshot.event.state != .idle else {
+            return snapshot
+        }
+
+        let event = AgentEvent(
+            agent: snapshot.event.agent,
+            sessionId: snapshot.event.sessionId,
+            state: .idle,
+            title: snapshot.event.title,
+            cwd: snapshot.event.cwd,
+            event: snapshot.event.event,
+            terminal: snapshot.event.terminal,
+            pid: snapshot.event.pid,
+            updatedAt: snapshot.event.updatedAt,
+            parentSessionId: snapshot.event.parentSessionId,
+            subagentNickname: snapshot.event.subagentNickname,
+            subagentRole: snapshot.event.subagentRole,
+            subagentDepth: snapshot.event.subagentDepth,
+            transcriptPath: snapshot.event.transcriptPath,
+            latestResponseText: snapshot.event.latestResponseText,
+            latestResponsePhase: snapshot.event.latestResponsePhase
+        )
+        return Snapshot(
+            event: event,
+            fingerprint: snapshot.fingerprint + "|aged-idle"
+        )
     }
 
     private static func snapshot(

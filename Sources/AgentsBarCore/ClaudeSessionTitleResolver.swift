@@ -13,6 +13,96 @@ public enum ClaudeSessionTitleResolver {
         var score: Double
     }
 
+    private final class AppSessionMetadataCache: @unchecked Sendable {
+        private struct Snapshot {
+            var rootPath: String
+            var expiresAt: Date
+            var metadataBySessionId: [String: AppSessionMetadata]
+        }
+
+        private let lock = NSLock()
+        private let ttl: TimeInterval
+        private var snapshot: Snapshot?
+
+        init(ttl: TimeInterval) {
+            self.ttl = ttl
+        }
+
+        func metadata(for sessionId: String, sessionsRoot: URL?) -> AppSessionMetadata? {
+            guard let sessionsRoot else {
+                return nil
+            }
+
+            let rootPath = sessionsRoot.standardizedFileURL.path
+            let now = Date()
+
+            lock.lock()
+            defer { lock.unlock() }
+
+            if let snapshot,
+               snapshot.rootPath == rootPath,
+               snapshot.expiresAt > now {
+                return snapshot.metadataBySessionId[sessionId]
+            }
+
+            let metadataBySessionId = Self.buildMetadataIndex(sessionsRoot: sessionsRoot)
+            snapshot = Snapshot(
+                rootPath: rootPath,
+                expiresAt: now.addingTimeInterval(ttl),
+                metadataBySessionId: metadataBySessionId
+            )
+            return metadataBySessionId[sessionId]
+        }
+
+        func invalidate() {
+            lock.lock()
+            snapshot = nil
+            lock.unlock()
+        }
+
+        private static func buildMetadataIndex(sessionsRoot: URL) -> [String: AppSessionMetadata] {
+            guard let enumerator = FileManager.default.enumerator(
+                at: sessionsRoot,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                return [:]
+            }
+
+            var metadataBySessionId: [String: AppSessionMetadata] = [:]
+
+            for case let url as URL in enumerator {
+                guard url.pathExtension == "json",
+                      let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                      values.isRegularFile == true,
+                      let data = try? Data(contentsOf: url),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let cliSessionId = object["cliSessionId"] as? String,
+                      !cliSessionId.isEmpty else {
+                    continue
+                }
+
+                let title = (object["title"] as? String).flatMap(ClaudeSessionTitleResolver.sanitizedTitle)
+                let score = ClaudeSessionTitleResolver.timestampScore(from: object)
+                    ?? values.contentModificationDate?.timeIntervalSince1970
+                    ?? 0
+                let metadata = AppSessionMetadata(
+                    title: title,
+                    isArchived: object["isArchived"] as? Bool == true,
+                    score: score
+                )
+
+                if metadataBySessionId[cliSessionId] == nil || score >= metadataBySessionId[cliSessionId]!.score {
+                    metadataBySessionId[cliSessionId] = metadata
+                }
+            }
+
+            return metadataBySessionId
+        }
+    }
+
+    private static let appSessionMetadataCache = AppSessionMetadataCache(ttl: 2)
+
     public static func title(for sessionId: String) -> String? {
         title(
             for: sessionId,
@@ -147,43 +237,7 @@ public enum ClaudeSessionTitleResolver {
     }
 
     private static func appSessionMetadata(for sessionId: String, sessionsRoot: URL?) -> AppSessionMetadata? {
-        guard let sessionsRoot,
-              let enumerator = FileManager.default.enumerator(
-                  at: sessionsRoot,
-                  includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-                  options: [.skipsHiddenFiles]
-              ) else {
-            return nil
-        }
-
-        var bestMatch: AppSessionMetadata?
-
-        for case let url as URL in enumerator {
-            guard url.pathExtension == "json",
-                  let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
-                  values.isRegularFile == true,
-                  let data = try? Data(contentsOf: url),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  object["cliSessionId"] as? String == sessionId else {
-                continue
-            }
-
-            let title = (object["title"] as? String).flatMap(sanitizedTitle)
-            let score = timestampScore(from: object)
-                ?? values.contentModificationDate?.timeIntervalSince1970
-                ?? 0
-            let metadata = AppSessionMetadata(
-                title: title,
-                isArchived: object["isArchived"] as? Bool == true,
-                score: score
-            )
-
-            if bestMatch == nil || score >= bestMatch!.score {
-                bestMatch = metadata
-            }
-        }
-
-        return bestMatch
+        appSessionMetadataCache.metadata(for: sessionId, sessionsRoot: sessionsRoot)
     }
 
     private static func transcriptFile(for sessionId: String, projectsRoot: URL) -> URL? {
