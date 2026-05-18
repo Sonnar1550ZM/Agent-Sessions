@@ -1,7 +1,7 @@
-import AgentsBarCore
+import AgentSessionsCore
 import Foundation
 
-final class CodexSessionWatcher {
+final class ClaudeSubagentWatcher {
     private struct Snapshot {
         let event: AgentEvent
         let fingerprint: String
@@ -12,7 +12,7 @@ final class CodexSessionWatcher {
         let snapshot: Snapshot?
     }
 
-    private let queue = DispatchQueue(label: "app.agentsbar.codex-session-watcher")
+    private let queue = DispatchQueue(label: "app.agentsessions.claude-subagent-watcher")
     private let handler: (AgentEvent) -> Void
     private var timer: DispatchSourceTimer?
     private var lastFingerprints: [String: String] = [:]
@@ -37,26 +37,9 @@ final class CodexSessionWatcher {
         timer = nil
     }
 
-    static func title(for sessionId: String) -> String? {
-        threadTitle(for: sessionId)
-    }
-
-    static func shouldHideSession(_ sessionId: String) -> Bool {
-        guard let file = rolloutFile(for: sessionId),
-              let text = contextText(from: file) else {
-            return false
-        }
-
-        return CodexSessionParser.parse(text, fallbackSessionId: sessionId).isInternalSubagent
-    }
-
-    static func fileStatus(for sessionId: String) -> CodexSessionFileStatus {
-        CodexSessionFileIndex().status(for: sessionId)
-    }
-
     private func poll() {
         var activePaths: Set<String> = []
-        for file in Self.latestRolloutFiles(limit: 50) {
+        for file in Self.latestSubagentFiles(limit: 50) {
             let path = file.path
             activePaths.insert(path)
             guard let modifiedAt = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
@@ -89,12 +72,8 @@ final class CodexSessionWatcher {
     }
 
     private static func makeSnapshot(file: URL, modifiedAt: Date) -> Snapshot? {
-        guard let text = contextText(from: file) else {
-            return nil
-        }
-
-        let parsed = CodexSessionParser.parse(text, fallbackSessionId: fallbackSessionId(from: file))
-        guard !parsed.cwd.isEmpty, !parsed.isInternalSubagent else {
+        guard let text = tailText(from: file),
+              let parsed = ClaudeSessionParser.parseSubagentTranscript(transcriptPath: file.path, text: text) else {
             return nil
         }
 
@@ -138,29 +117,29 @@ final class CodexSessionWatcher {
     private static func snapshot(
         file: URL,
         modifiedAt: Date,
-        parsed: CodexParsedSession
+        parsed: ClaudeParsedSubagent
     ) -> Snapshot {
         let age = Date().timeIntervalSince(modifiedAt)
         let state: AgentState = age > 120 ? .idle : parsed.state
-        let title = threadTitle(for: parsed.sessionId)
-            ?? parsed.title
+        let metadata = parsed.metadata
 
         let event = AgentEvent(
-            agent: .codex,
-            sessionId: parsed.sessionId,
+            agent: .claudeCode,
+            sessionId: metadata.sessionId,
             state: state,
-            title: title,
+            title: parsed.title,
             cwd: parsed.cwd,
-            event: parsed.event.isEmpty ? "JSONLWatch" : parsed.event,
+            event: "JSONLWatch",
             terminal: "",
             pid: nil,
             updatedAt: modifiedAt,
-            parentSessionId: parsed.parentSessionId,
-            subagentNickname: parsed.subagentNickname,
-            subagentRole: parsed.subagentRole,
-            subagentDepth: parsed.subagentDepth,
+            parentSessionId: metadata.parentSessionId,
+            subagentNickname: metadata.subagentNickname,
+            subagentRole: metadata.subagentRole,
+            subagentDepth: metadata.subagentDepth,
+            transcriptPath: file.path,
             latestResponseText: parsed.latestResponseText,
-            latestResponsePhase: parsed.latestResponsePhase
+            latestResponsePhase: parsed.latestResponseText == nil ? nil : "assistant"
         )
 
         return Snapshot(
@@ -169,20 +148,21 @@ final class CodexSessionWatcher {
                 file.path,
                 String(modifiedAt.timeIntervalSince1970),
                 state.rawValue,
-                title,
-                parsed.event,
-                parsed.parentSessionId ?? "",
-                parsed.subagentNickname ?? "",
-                parsed.subagentRole ?? "",
-                parsed.subagentDepth.map(String.init) ?? "",
-                parsed.latestResponseText ?? "",
-                parsed.latestResponsePhase ?? ""
+                parsed.title,
+                parsed.cwd,
+                metadata.parentSessionId,
+                metadata.subagentNickname,
+                metadata.subagentRole,
+                metadata.subagentDepth.description,
+                parsed.latestResponseText ?? ""
             ].joined(separator: "|")
         )
     }
 
-    private static func latestRolloutFiles(limit: Int) -> [URL] {
-        let root = CodexSessionFileIndex.defaultActiveRoot()
+    private static func latestSubagentFiles(limit: Int) -> [URL] {
+        let root = FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects", isDirectory: true)
 
         guard let enumerator = FileManager.default.enumerator(
             at: root,
@@ -194,8 +174,8 @@ final class CodexSessionWatcher {
 
         var files: [(url: URL, modifiedAt: Date)] = []
         for case let url as URL in enumerator {
-            guard url.lastPathComponent.hasPrefix("rollout-"),
-                  url.pathExtension == "jsonl",
+            guard url.pathExtension == "jsonl",
+                  url.pathComponents.contains("subagents"),
                   let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                   values.isRegularFile == true,
                   let modifiedAt = values.contentModificationDate else {
@@ -209,10 +189,6 @@ final class CodexSessionWatcher {
             .sorted { $0.modifiedAt > $1.modifiedAt }
             .prefix(limit)
             .map(\.url)
-    }
-
-    private static func rolloutFile(for sessionId: String) -> URL? {
-        CodexSessionFileIndex().activeRolloutFile(for: sessionId)
     }
 
     private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
@@ -233,65 +209,5 @@ final class CodexSessionWatcher {
             text = String(text[text.index(after: newline)...])
         }
         return text
-    }
-
-    private static func headText(from url: URL, limit: Int = 128_000) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return nil
-        }
-        defer { try? handle.close() }
-
-        let data = (try? handle.read(upToCount: limit)) ?? Data()
-        return String(data: data, encoding: .utf8)
-    }
-
-    private static func contextText(from url: URL) -> String? {
-        guard let tail = tailText(from: url) else {
-            return nil
-        }
-
-        guard let head = headText(from: url), !head.isEmpty else {
-            return tail
-        }
-
-        return head + "\n" + tail
-    }
-
-    private static func threadTitle(for sessionId: String) -> String? {
-        let url = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/session_index.jsonl")
-
-        guard let text = tailText(from: url, limit: 2_000_000) else {
-            return nil
-        }
-
-        var matchedTitle: String?
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let data = line.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  object["id"] as? String == sessionId,
-                  let title = object["thread_name"] as? String else {
-                continue
-            }
-            matchedTitle = sanitizedTitle(title)
-        }
-
-        return matchedTitle
-    }
-
-    private static func sanitizedTitle(_ value: String) -> String? {
-        let title = value
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        guard !title.isEmpty else {
-            return nil
-        }
-        return String(title.prefix(160))
-    }
-
-    private static func fallbackSessionId(from url: URL) -> String {
-        CodexSessionFileIndex.sessionId(fromRolloutURL: url)
     }
 }

@@ -20,7 +20,7 @@ public final class EventServer: @unchecked Sendable {
 
     private let host: NWEndpoint.Host
     private let port: NWEndpoint.Port
-    private let queue = DispatchQueue(label: "app.agentsbar.event-server")
+    private let queue = DispatchQueue(label: "app.agentsessions.event-server")
     private let handler: Handler
     private var listener: NWListener?
 
@@ -149,7 +149,7 @@ public final class EventServer: @unchecked Sendable {
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
-            if let date = AgentsBarDates.date(from: value) {
+            if let date = AgentSessionsDates.date(from: value) {
                 return date
             }
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO8601 date")

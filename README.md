@@ -1,13 +1,13 @@
-# AgentsBar
+# Agent Sessions
 
-AgentsBar is a local macOS menu bar app for tracking multiple Codex and Claude Code sessions from one menu bar item.
+Agent Sessions is a local macOS menu bar app for tracking multiple Codex and Claude Code sessions from one menu bar item.
 
 ## MVP
 
 - AppKit `NSStatusItem` menu bar app.
 - Local event receiver: `http://127.0.0.1:7823/event`.
 - Sessions are keyed by `agent + sessionId`.
-- State persists to `~/Library/Application Support/AgentsBar/state.json`.
+- State persists to `~/Library/Application Support/Agent Sessions/state.json`.
 - Menu bar label shows Codex and Claude as separate status items that open the same shared menu.
 - Each icon uses the mono asset normally and switches to the color asset while Working.
 - Waiting sessions tint the mono icon yellow.
@@ -21,14 +21,14 @@ AgentsBar is a local macOS menu bar app for tracking multiple Codex and Claude C
 
 ```bash
 swift test
-swift run AgentsBar
+swift run AgentSessions
 ```
 
 To build a menu-bar-only `.app` bundle:
 
 ```bash
 ./scripts/build-app.sh
-open ./AgentsBar.app
+open "./Agent Sessions.app"
 ```
 
 ## Event API
@@ -62,7 +62,7 @@ Accepted fields:
 
 Hook scripts live in `scripts/`:
 
-- `scripts/agentsbar-codex-hook.sh`
-- `scripts/agentsbar-claude-hook.sh`
+- `scripts/agent-sessions-codex-hook.sh`
+- `scripts/agent-sessions-claude-hook.sh`
 
-They read hook JSON from stdin, post to `127.0.0.1:7823/event`, and always exit `0` so Codex or Claude Code continues normally when AgentsBar is not running.
+They read hook JSON from stdin, post to `127.0.0.1:7823/event`, and always exit `0` so Codex or Claude Code continues normally when Agent Sessions is not running.

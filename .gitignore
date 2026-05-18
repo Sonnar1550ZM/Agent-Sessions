@@ -2,6 +2,8 @@
 .swiftpm/
 DerivedData/
 AgentsBar.app/
+Agent Sessions.app/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 *.DS_Store
+.claude/worktrees/

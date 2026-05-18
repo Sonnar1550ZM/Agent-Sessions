@@ -1,5 +1,5 @@
 import XCTest
-@testable import AgentsBarCore
+@testable import AgentSessionsCore
 
 final class ClaudeSessionTitleResolverTests: XCTestCase {
     func testPrefersClaudeAppSessionTitleOverTranscriptPromptFallbacks() throws {

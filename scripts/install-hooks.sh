@@ -13,13 +13,23 @@ from datetime import datetime
 root = pathlib.Path(os.environ["ROOT"])
 home = pathlib.Path.home()
 stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+trust_project = os.environ.get("AGENT_SESSIONS_TRUST_PROJECT") == "1"
 
 codex_hooks_path = home / ".codex" / "hooks.json"
 codex_config_path = home / ".codex" / "config.toml"
 claude_settings_path = home / ".claude" / "settings.json"
 
-codex_script = root / "scripts" / "agentsbar-codex-hook.sh"
-claude_script = root / "scripts" / "agentsbar-claude-hook.sh"
+codex_script = root / "scripts" / "agent-sessions-codex-hook.sh"
+claude_script = root / "scripts" / "agent-sessions-claude-hook.sh"
+CODEX_HOOK_MARKERS = (
+    "agent-sessions-codex-hook",
+    "agentsbar-codex-hook",
+)
+CLAUDE_HOOK_MARKERS = (
+    "agent-sessions-claude-hook",
+    "agentsbar-claude-hook",
+)
+CODEX_FEATURE_MARKER = "agent-sessions-managed-codex-hooks"
 
 
 def backup(path: pathlib.Path) -> None:
@@ -57,10 +67,7 @@ def ensure_codex_hooks() -> None:
     backup(codex_hooks_path)
     data = load_json(codex_hooks_path)
     hooks = data.setdefault("hooks", {})
-    command = f"'{codex_script}' # agentsbar-codex-hook"
-    markers = (
-        "agentsbar-codex-hook",
-    )
+    command = f"'{codex_script}' # agent-sessions-codex-hook"
 
     defaults = {
         "PostToolUse": {},
@@ -79,7 +86,7 @@ def ensure_codex_hooks() -> None:
                 entry.pop("matcher", None)
             for key, value in default_entry.items():
                 entry.setdefault(key, value)
-            replace_managed_hook(entry, command, markers)
+            replace_managed_hook(entry, command, CODEX_HOOK_MARKERS)
 
     save_json(codex_hooks_path, data)
 
@@ -88,9 +95,6 @@ def ensure_claude_hooks() -> None:
     backup(claude_settings_path)
     data = load_json(claude_settings_path)
     hooks = data.setdefault("hooks", {})
-    markers = (
-        "agentsbar-claude-hook",
-    )
     states = {
         "SessionEnd": "Ended",
         "Notification": "Waiting",
@@ -106,9 +110,9 @@ def ensure_claude_hooks() -> None:
         entries = hooks.setdefault(event_name, [])
         if not entries:
             entries.append({})
-        command = f"'{claude_script}' {state} # agentsbar-claude-hook"
+        command = f"'{claude_script}' {state} # agent-sessions-claude-hook"
         for entry in entries:
-            replace_managed_hook(entry, command, markers)
+            replace_managed_hook(entry, command, CLAUDE_HOOK_MARKERS)
 
     save_json(claude_settings_path, data)
 
@@ -128,7 +132,7 @@ def ensure_codex_config() -> None:
     if features_index is None:
         if lines and lines[-1].strip():
             lines.append("")
-        lines.extend(["[features]", "codex_hooks = true  # agentsbar-managed-codex-hooks"])
+        lines.extend(["[features]", f"codex_hooks = true  # {CODEX_FEATURE_MARKER}"])
     else:
         next_section = len(lines)
         for index in range(features_index + 1, len(lines)):
@@ -144,14 +148,14 @@ def ensure_codex_config() -> None:
                 break
 
         if codex_hooks_index is None:
-            lines.insert(features_index + 1, "codex_hooks = true  # agentsbar-managed-codex-hooks")
+            lines.insert(features_index + 1, f"codex_hooks = true  # {CODEX_FEATURE_MARKER}")
         else:
-            lines[codex_hooks_index] = "codex_hooks = true  # agentsbar-managed-codex-hooks"
+            lines[codex_hooks_index] = f"codex_hooks = true  # {CODEX_FEATURE_MARKER}"
 
     codex_config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def ensure_agentsbar_project_trust() -> None:
+def ensure_agent_sessions_project_trust() -> None:
     text = codex_config_path.read_text(encoding="utf-8") if codex_config_path.exists() else ""
     project_header = f'[projects."{root}"]'
     if project_header in text:
@@ -165,9 +169,12 @@ def ensure_agentsbar_project_trust() -> None:
 ensure_codex_hooks()
 ensure_claude_hooks()
 ensure_codex_config()
-ensure_agentsbar_project_trust()
+if trust_project:
+    ensure_agent_sessions_project_trust()
 
 print(f"Updated {codex_hooks_path}")
 print(f"Updated {codex_config_path}")
 print(f"Updated {claude_settings_path}")
+if not trust_project:
+    print("Skipped project trust update; set AGENT_SESSIONS_TRUST_PROJECT=1 to enable it.")
 PY

@@ -3,34 +3,34 @@
 import PackageDescription
 
 let package = Package(
-    name: "AgentsBar",
+    name: "AgentSessions",
     platforms: [
         .macOS(.v14)
     ],
     products: [
         .library(
-            name: "AgentsBarCore",
-            targets: ["AgentsBarCore"]
+            name: "AgentSessionsCore",
+            targets: ["AgentSessionsCore"]
         ),
         .executable(
-            name: "AgentsBar",
-            targets: ["AgentsBar"]
+            name: "AgentSessions",
+            targets: ["AgentSessions"]
         )
     ],
     targets: [
         .target(
-            name: "AgentsBarCore"
+            name: "AgentSessionsCore"
         ),
         .executableTarget(
-            name: "AgentsBar",
-            dependencies: ["AgentsBarCore"],
+            name: "AgentSessions",
+            dependencies: ["AgentSessionsCore"],
             resources: [
                 .process("Resources")
             ]
         ),
         .testTarget(
-            name: "AgentsBarCoreTests",
-            dependencies: ["AgentsBarCore"]
+            name: "AgentSessionsCoreTests",
+            dependencies: ["AgentSessionsCore"]
         )
     ]
 )

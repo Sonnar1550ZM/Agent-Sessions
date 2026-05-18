@@ -1,5 +1,5 @@
 import XCTest
-@testable import AgentsBarCore
+@testable import AgentSessionsCore
 
 final class AgentStateStoreTests: XCTestCase {
     func testSameSessionUpdatesExistingRow() {
@@ -837,7 +837,7 @@ final class AgentStateStoreTests: XCTestCase {
 
     func testAgentSessionDecodesOldPersistedStateWithoutSubagentMetadata() throws {
         let stateURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("agentsbar-\(UUID().uuidString).json")
+            .appendingPathComponent("agent-sessions-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: stateURL) }
 
         let json = """

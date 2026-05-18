@@ -344,7 +344,7 @@ public final class AgentStateStore: ObservableObject {
     }
 
     private func persist() {
-        try? persistence?.save(AgentsBarDocument(sessions: sessions.sorted(by: sessionSort)))
+        try? persistence?.save(AgentSessionsDocument(sessions: sessions.sorted(by: sessionSort)))
     }
 
     private func trimStoredSessions(now: Date) {

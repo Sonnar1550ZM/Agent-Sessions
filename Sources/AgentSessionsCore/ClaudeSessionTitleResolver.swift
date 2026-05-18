@@ -313,7 +313,7 @@ public enum ClaudeSessionTitleResolver {
                     return number
                 }
 
-                if let date = AgentsBarDates.date(from: value) {
+                if let date = AgentSessionsDates.date(from: value) {
                     return date.timeIntervalSince1970
                 }
             }

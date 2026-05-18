@@ -2,12 +2,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="AgentsBar"
-APP_DIR="${ROOT}/${APP_NAME}.app"
+APP_DISPLAY_NAME="Agent Sessions"
+EXECUTABLE_NAME="AgentSessions"
+APP_DIR="${ROOT}/${APP_DISPLAY_NAME}.app"
 BUILD_DIR="${ROOT}/.build/release"
-BINARY="${BUILD_DIR}/${APP_NAME}"
-BUNDLE_ID="app.agentsbar"
-ICON_FILE="Sources/AgentsBar/Resources/codex-icon.icns"
+BINARY="${BUILD_DIR}/${EXECUTABLE_NAME}"
+BUNDLE_ID="app.agentsessions"
+ICON_FILE="Sources/AgentSessions/Resources/codex-icon.icns"
 ICON_PLIST_ENTRY=""
 
 cd "$ROOT"
@@ -17,9 +18,9 @@ BUILD_DIR="$(cd "$BUILD_DIR" && pwd -P)"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
-cp "$BINARY" "$APP_DIR/Contents/MacOS/${APP_NAME}"
+cp "$BINARY" "$APP_DIR/Contents/MacOS/${EXECUTABLE_NAME}"
 
-RESOURCE_BUNDLE="$(find "$BUILD_DIR" -maxdepth 1 -name "${APP_NAME}_${APP_NAME}.bundle" -type d -print -quit)"
+RESOURCE_BUNDLE="$(find "$BUILD_DIR" -maxdepth 1 -name "${EXECUTABLE_NAME}_${EXECUTABLE_NAME}.bundle" -type d -print -quit)"
 if [ -n "${RESOURCE_BUNDLE:-}" ]; then
   cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/"
 fi
@@ -37,14 +38,16 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>${APP_NAME}</string>
+  <string>${EXECUTABLE_NAME}</string>
 ${ICON_PLIST_ENTRY}
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>${APP_NAME}</string>
+  <string>${APP_DISPLAY_NAME}</string>
+  <key>CFBundleDisplayName</key>
+  <string>${APP_DISPLAY_NAME}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

@@ -1,10 +1,10 @@
 import XCTest
-@testable import AgentsBarCore
+@testable import AgentSessionsCore
 
 final class CodexSessionFileIndexTests: XCTestCase {
     func testDistinguishesActiveArchivedAndMissingSessions() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("agentsbar-codex-index-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("agent-sessions-codex-index-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
         let activeRoot = root.appendingPathComponent("sessions", isDirectory: true)
@@ -24,7 +24,7 @@ final class CodexSessionFileIndexTests: XCTestCase {
 
     func testActiveSessionWinsWhenArchiveCopyAlsoExists() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("agentsbar-codex-index-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("agent-sessions-codex-index-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
         let activeRoot = root.appendingPathComponent("sessions", isDirectory: true)

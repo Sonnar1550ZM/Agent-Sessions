@@ -1,11 +1,11 @@
-import AgentsBarCore
+import AgentSessionsCore
 import AppKit
 import Combine
 import ServiceManagement
 import SwiftUI
 
 @main
-struct AgentsBarApp: App {
+struct AgentSessionsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
@@ -1297,7 +1297,7 @@ final class LaunchAtLoginStore: ObservableObject {
         case .notRegistered:
             "Off."
         case .notFound:
-            "Open the bundled AgentsBar.app to manage this setting."
+            "Open the bundled Agent Sessions.app to manage this setting."
         @unknown default:
             "Unavailable."
         }
@@ -1311,7 +1311,7 @@ private struct GeneralSettingsView: View {
         SettingsForm(title: SettingsSection.general.title) {
             SettingsGroupBox(
                 title: "Startup",
-                subtitle: "Launch behavior for AgentsBar."
+                subtitle: "Launch behavior for Agent Sessions."
             ) {
                 SettingsToggleRow(
                     title: "Launch at Login",
@@ -2076,7 +2076,7 @@ final class SettingsWindowController: NSWindowController {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.toolbarStyle = .unifiedCompact
-        let toolbar = NSToolbar(identifier: NSToolbar.Identifier("AgentsBarSettingsToolbar"))
+        let toolbar = NSToolbar(identifier: NSToolbar.Identifier("AgentSessionsSettingsToolbar"))
         toolbar.showsBaselineSeparator = false
         window.toolbar = toolbar
         window.isReleasedWhenClosed = false
@@ -3038,6 +3038,7 @@ private struct LatestParentSessionsPopupView: View {
                 )
             }
         }
+        .animation(Self.reorderAnimation, value: displayedSessionIDs)
         .padding(.horizontal, metrics.horizontalPadding + metrics.shadowBleedPadding)
         .padding(.vertical, metrics.verticalPadding + metrics.shadowBleedPadding)
         .frame(width: popupWidth * metrics.scale, alignment: .leading)
@@ -3051,6 +3052,17 @@ private struct LatestParentSessionsPopupView: View {
 
         return sessions
     }
+
+    private var displayedSessionIDs: [String] {
+        displayedSessions.map(\.id)
+    }
+
+    private static let reorderAnimation = Animation.interpolatingSpring(
+        mass: 0.85,
+        stiffness: 260,
+        damping: 30,
+        initialVelocity: 0.15
+    )
 }
 
 private struct PopupSessionRow: View {
@@ -3396,7 +3408,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
-        let label = agent.map { "AgentsBar - \($0.displayName)" } ?? "AgentsBar"
+        let label = agent.map { "Agent Sessions - \($0.displayName)" } ?? "Agent Sessions"
         button.toolTip = label
         button.setAccessibilityLabel(label)
     }
@@ -3643,7 +3655,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(popupPositionMenuItem())
         menu.addItem(actionItem(title: "Settings", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
-        menu.addItem(actionItem(title: "Quit AgentsBar", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(actionItem(title: "Quit Agent Sessions", action: #selector(quit), keyEquivalent: "q"))
     }
 
     private func popupToggleMenuItem() -> NSMenuItem {
@@ -4453,7 +4465,7 @@ enum AgentImages {
         renderedImageCache.image(for: "menuBarStatus|fallback") {
             renderImage(size: fallbackMenuBarStatusSize, isTemplate: true) {
                 let rect = NSRect(origin: .zero, size: fallbackMenuBarStatusSize)
-            guard let symbol = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "AgentsBar") else {
+            guard let symbol = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Agent Sessions") else {
                 NSColor.labelColor.setStroke()
                 NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).stroke()
                     return

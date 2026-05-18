@@ -475,7 +475,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
             updatedAt = date
         } else if let dateString = try container.decodeIfPresent(String.self, forKey: .updatedAt)
             ?? container.decodeIfPresent(String.self, forKey: .updated_at) {
-            updatedAt = AgentsBarDates.date(from: dateString)
+            updatedAt = AgentSessionsDates.date(from: dateString)
         } else {
             updatedAt = nil
         }
@@ -492,7 +492,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         try container.encode(terminal, forKey: .terminal)
         try container.encodeIfPresent(pid, forKey: .pid)
         if let updatedAt {
-            try container.encode(AgentsBarDates.string(from: updatedAt), forKey: .updatedAt)
+            try container.encode(AgentSessionsDates.string(from: updatedAt), forKey: .updatedAt)
         }
         try container.encodeIfPresent(parentSessionId, forKey: .parentSessionId)
         try container.encodeIfPresent(subagentNickname, forKey: .subagentNickname)
@@ -528,7 +528,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
     }
 }
 
-public enum AgentsBarDates {
+public enum AgentSessionsDates {
     public static func string(from date: Date) -> String {
         formatter().string(from: date)
     }
