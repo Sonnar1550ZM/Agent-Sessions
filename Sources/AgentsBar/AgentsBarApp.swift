@@ -1683,8 +1683,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var cancellables: Set<AnyCancellable> = []
     private var isMenuOpen = false
     private var needsMenuRebuild = true
+    private var isMenuResizeScheduled = false
     private var hostedViews: [NSView] = []
     private static let statusItemHorizontalPadding: CGFloat = 1
+    private static let menuLayoutSizeEpsilon: CGFloat = 0.5
     private static let idleStatusIconRefreshInterval: TimeInterval = 1
     private static let animatedStatusIconRefreshInterval = AgentIconAnimation.animatedRefreshInterval
 
@@ -1798,11 +1800,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
+        isMenuResizeScheduled = false
         rebuildMenuIfNeeded()
+        resizeMenuNow()
     }
 
     func menuDidClose(_ menu: NSMenu) {
         isMenuOpen = false
+        isMenuResizeScheduled = false
     }
 
     private func configureStatusButton(_ statusItem: NSStatusItem, agent: AgentKind?) {
@@ -1949,7 +1954,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             return
         }
 
-        rebuildMenu()
+        resizeMenuIfOpen()
     }
 
     private func rebuildMenuIfNeeded() {
@@ -1961,24 +1966,51 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func resizeMenuIfOpen() {
-        guard isMenuOpen else {
+        guard isMenuOpen, !isMenuResizeScheduled else {
             return
         }
 
+        isMenuResizeScheduled = true
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isMenuOpen else {
+            guard let self else {
                 return
             }
 
-            for view in self.hostedViews {
-                view.frame.size = view.fittingSize
+            self.isMenuResizeScheduled = false
+            guard self.isMenuOpen else {
+                return
             }
-            self.menu.update()
+            self.resizeMenuNow()
         }
+    }
+
+    private func resizeMenuNow() {
+        var didResize = false
+
+        for view in hostedViews {
+            view.layoutSubtreeIfNeeded()
+            let fittingSize = view.fittingSize
+            guard !Self.isMenuLayoutSize(view.frame.size, closeTo: fittingSize) else {
+                continue
+            }
+
+            view.frame.size = fittingSize
+            didResize = true
+        }
+
+        if didResize {
+            menu.update()
+        }
+    }
+
+    private static func isMenuLayoutSize(_ lhs: NSSize, closeTo rhs: NSSize) -> Bool {
+        abs(lhs.width - rhs.width) <= menuLayoutSizeEpsilon
+            && abs(lhs.height - rhs.height) <= menuLayoutSizeEpsilon
     }
 
     private func rebuildMenu() {
         needsMenuRebuild = false
+        isMenuResizeScheduled = false
         hostedViews.removeAll()
         menu.removeAllItems()
         let visibleAgents = providerVisibility.orderedAgents(for: .dropdownMenu)
@@ -2017,6 +2049,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func hostedItem<Content: View>(_ view: Content) -> NSMenuItem {
         let item = NSMenuItem()
         let hostingView = NSHostingView(rootView: view)
+        hostingView.layoutSubtreeIfNeeded()
         hostingView.frame.size = hostingView.fittingSize
         item.view = hostingView
         hostedViews.append(hostingView)
@@ -2109,6 +2142,7 @@ private struct AgentSectionView: View {
 
     var body: some View {
         let rows = store.displayRows(for: agent, now: now)
+        let layoutSignature = layoutSignature(for: rows, now: now)
         let state = AgentDisplayState.displayState(
             for: agent,
             aggregateState: store.aggregateState(for: agent, now: now),
@@ -2139,8 +2173,54 @@ private struct AgentSectionView: View {
         }
         .onReceive(timer) { date in
             now = date
+        }
+        .onChange(of: layoutSignature) { _, _ in
             onLayoutMayChange()
         }
+    }
+
+    private func layoutSignature(for rows: [AgentSessionDisplayRow], now: Date) -> LayoutSignature {
+        LayoutSignature(rows: rows.map { row in
+            switch row {
+            case .session(let session, let indentLevel):
+                RowLayoutSignature(
+                    id: session.id,
+                    indentLevel: indentLevel,
+                    latestResponseLineLimit: effectiveLatestResponseLineLimit(for: session),
+                    latestResponseText: visibleLatestResponseText(for: session, now: now)
+                )
+            }
+        })
+    }
+
+    private func visibleLatestResponseText(for session: AgentSession, now: Date) -> String? {
+        guard effectiveLatestResponseLineLimit(for: session) > 0,
+              shouldShowLatestResponseText(for: session, now: now),
+              let text = AgentTextSanitizer.latestResponseText(session.latestResponseText),
+              !text.isEmpty else {
+            return nil
+        }
+        return text
+    }
+
+    private func shouldShowLatestResponseText(for session: AgentSession, now: Date) -> Bool {
+        let responseUpdatedAt = session.latestResponseUpdatedAt ?? session.updatedAt
+        return now.timeIntervalSince(responseUpdatedAt) <= latestResponseHideAfterInterval
+    }
+
+    private func effectiveLatestResponseLineLimit(for session: AgentSession) -> Int {
+        session.isSubagent ? subagentLatestResponseLineLimit : latestResponseLineLimit
+    }
+
+    private struct LayoutSignature: Equatable {
+        var rows: [RowLayoutSignature]
+    }
+
+    private struct RowLayoutSignature: Equatable {
+        var id: String
+        var indentLevel: Int
+        var latestResponseLineLimit: Int
+        var latestResponseText: String?
     }
 }
 
