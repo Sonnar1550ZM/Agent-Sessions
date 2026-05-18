@@ -76,6 +76,137 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(session?.latestResponseUpdatedAt, secondTime)
     }
 
+    func testLatestPopupParentSessionUsesNewestSessionTimestamp() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "older-session",
+            state: .idle,
+            updatedAt: base.addingTimeInterval(20),
+            latestResponseText: "Newer response"
+        ))
+        store.apply(AgentEvent(
+            agent: .claudeCode,
+            sessionId: "newer-session",
+            state: .idle,
+            updatedAt: base.addingTimeInterval(30),
+            latestResponseText: "Older response"
+        ))
+        store.apply(AgentEvent(
+            agent: .claudeCode,
+            sessionId: "newer-session",
+            state: .idle,
+            title: "Metadata only",
+            updatedAt: base.addingTimeInterval(40)
+        ))
+
+        let session = store.latestPopupParentSession(
+            now: base.addingTimeInterval(41),
+            displayInterval: 10
+        )
+
+        XCTAssertEqual(session?.sessionId, "newer-session")
+    }
+
+    func testLatestPopupParentSessionExcludesSubagentsAndOldIdleSessions() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "parent",
+            state: .idle,
+            updatedAt: base,
+            latestResponseText: "Parent"
+        ))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "child",
+            state: .working,
+            updatedAt: base.addingTimeInterval(50),
+            parentSessionId: "parent",
+            latestResponseText: "Child"
+        ))
+
+        XCTAssertNil(store.latestPopupParentSession(
+            now: base.addingTimeInterval(11),
+            displayInterval: 10
+        ))
+    }
+
+    func testLatestPopupParentSessionKeepsActiveSessionPastIdleDisplayInterval() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, activeStaleInterval: 60)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "active",
+            state: .working,
+            updatedAt: base,
+            latestResponseText: "Still working"
+        ))
+
+        let session = store.latestPopupParentSession(
+            now: base.addingTimeInterval(9),
+            displayInterval: 1
+        )
+
+        XCTAssertEqual(session?.sessionId, "active")
+    }
+
+    func testLatestPopupParentSessionRespectsIncludedProviders() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "codex",
+            state: .idle,
+            updatedAt: base.addingTimeInterval(1),
+            latestResponseText: "Codex"
+        ))
+        store.apply(AgentEvent(
+            agent: .claudeCode,
+            sessionId: "claude",
+            state: .idle,
+            updatedAt: base.addingTimeInterval(2),
+            latestResponseText: "Claude"
+        ))
+
+        let session = store.latestPopupParentSession(
+            now: base.addingTimeInterval(3),
+            displayInterval: 60,
+            includedAgents: [.codex]
+        )
+
+        XCTAssertEqual(session?.sessionId, "codex")
+    }
+
+    func testPopupParentSessionsRespectLimit() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil)
+
+        for index in 0..<4 {
+            store.apply(AgentEvent(
+                agent: .codex,
+                sessionId: "parent-\(index)",
+                state: .idle,
+                updatedAt: base.addingTimeInterval(TimeInterval(index)),
+                latestResponseText: "Response \(index)"
+            ))
+        }
+
+        let sessions = store.popupParentSessions(
+            now: base.addingTimeInterval(5),
+            displayInterval: 10,
+            limit: 2
+        )
+
+        XCTAssertEqual(sessions.map(\.sessionId), ["parent-3", "parent-2"])
+    }
+
     func testActiveSessionsSortBeforeHistoryThenByRecency() {
         let store = AgentStateStore(persistence: nil)
         let base = Date(timeIntervalSince1970: 1_000)

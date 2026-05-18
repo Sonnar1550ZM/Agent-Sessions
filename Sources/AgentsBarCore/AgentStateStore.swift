@@ -147,6 +147,57 @@ public final class AgentStateStore: ObservableObject {
         return Self.displayRows(visibleSessions: visible, allSessions: eligibleSessions)
     }
 
+    public func latestPopupParentSession(
+        now: Date = Date(),
+        displayInterval: TimeInterval,
+        includedAgents: Set<AgentKind> = Set(AgentKind.allCases)
+    ) -> AgentSession? {
+        popupParentSessions(
+            now: now,
+            displayInterval: displayInterval,
+            includedAgents: includedAgents,
+            limit: 1
+        ).first
+    }
+
+    public func popupParentSessions(
+        now: Date = Date(),
+        displayInterval: TimeInterval,
+        includedAgents: Set<AgentKind> = Set(AgentKind.allCases),
+        limit: Int
+    ) -> [AgentSession] {
+        guard displayInterval > 0, !includedAgents.isEmpty else {
+            return []
+        }
+
+        return Array(sessions
+            .map { sessionForDisplay($0, now: now) }
+            .filter { session in
+                guard includedAgents.contains(session.agent),
+                      !session.isSubagent,
+                      session.state != .ended,
+                      !AgentSessionVisibility.isCodexMemoryWorkspace(agent: session.agent, cwd: session.cwd),
+                      let latestResponseText = AgentTextSanitizer.latestResponseText(session.latestResponseText),
+                      !latestResponseText.isEmpty else {
+                    return false
+                }
+
+                return session.state.isActive || now.timeIntervalSince(session.updatedAt) <= displayInterval
+            }
+            .sorted { lhs, rhs in
+                if lhs.updatedAt != rhs.updatedAt {
+                    return lhs.updatedAt > rhs.updatedAt
+                }
+                let lhsResponseUpdatedAt = lhs.latestResponseUpdatedAt ?? lhs.updatedAt
+                let rhsResponseUpdatedAt = rhs.latestResponseUpdatedAt ?? rhs.updatedAt
+                if lhsResponseUpdatedAt != rhsResponseUpdatedAt {
+                    return lhsResponseUpdatedAt > rhsResponseUpdatedAt
+                }
+                return lhs.sessionId < rhs.sessionId
+            }
+            .prefix(max(limit, 0)))
+    }
+
     public static func displayRows(
         visibleSessions: [AgentSession],
         allSessions: [AgentSession]
