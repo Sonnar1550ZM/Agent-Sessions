@@ -929,6 +929,25 @@ final class ProviderVisibilityStore: ObservableObject {
         setOrder(order, for: placement)
     }
 
+    func move(_ agent: AgentKind, by offset: Int, in placement: ProviderPlacement) {
+        guard offset != 0 else {
+            return
+        }
+
+        var order = orderIDs(for: placement)
+        guard let index = order.firstIndex(of: agent.rawValue) else {
+            return
+        }
+
+        let destination = index + offset
+        guard order.indices.contains(destination) else {
+            return
+        }
+
+        order.swapAt(index, destination)
+        setOrder(order, for: placement)
+    }
+
     private func update(_ agent: AgentKind, _ transform: (inout ProviderVisibility) -> Void) {
         var nextValues = values
         var visibility = nextValues[agent.rawValue] ?? .visible
@@ -1109,14 +1128,13 @@ final class ProviderVisibilityStore: ObservableObject {
 
 private struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .general
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @ObservedObject private var providerVisibility = ProviderVisibilityStore.shared
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: $selectedSection) {
                 ForEach(SettingsSection.allCases) { section in
-                    Label(section.title, systemImage: section.symbolName)
+                    SettingsSidebarRow(section: section)
                         .tag(section)
                 }
             }
@@ -1142,7 +1160,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case dropdownMenu
     case popup
-    case providers
+    case menuBar
 
     var id: Self { self }
 
@@ -1154,8 +1172,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
             "Dropdown Menu"
         case .popup:
             "Popup"
-        case .providers:
-            "Providers"
+        case .menuBar:
+            "Menubar"
         }
     }
 
@@ -1167,9 +1185,28 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
             "list.bullet.rectangle"
         case .popup:
             "macwindow.on.rectangle"
-        case .providers:
-            "puzzlepiece.extension"
+        case .menuBar:
+            "menubar.rectangle"
         }
+    }
+}
+
+private struct SettingsSidebarRow: View {
+    let section: SettingsSection
+
+    var body: some View {
+        Label {
+            Text(section.title)
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: section.symbolName)
+                .font(.system(size: 14, weight: .medium))
+                .imageScale(.medium)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 18, height: 18)
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -1185,8 +1222,8 @@ private struct SettingsDetailView: View {
             DropdownMenuSettingsView(providerVisibility: providerVisibility)
         case .popup:
             PopupSettingsView(providerVisibility: providerVisibility)
-        case .providers:
-            ProvidersSettingsView(providerVisibility: providerVisibility)
+        case .menuBar:
+            MenuBarSettingsView(providerVisibility: providerVisibility)
         }
     }
 }
@@ -1301,6 +1338,13 @@ private struct DropdownMenuSettingsView: View {
 
     var body: some View {
         SettingsForm(title: SettingsSection.dropdownMenu.title) {
+            ProviderPlacementCard(
+                placement: .dropdownMenu,
+                providerVisibility: providerVisibility,
+                title: "Providers",
+                subtitle: "Provider order and visibility in the drop-down menu."
+            )
+
             SettingsGroupBox(
                 title: "Sessions",
                 subtitle: "Parent rows shown in the menu."
@@ -1419,6 +1463,8 @@ private struct PopupSettingsView: View {
 
     var body: some View {
         SettingsForm(title: SettingsSection.popup.title) {
+            PopupProviderSettingsGroup(providerVisibility: providerVisibility)
+
             SettingsGroupBox(
                 title: "Display",
                 subtitle: "Latest parent response popup."
@@ -1613,14 +1659,20 @@ private struct PopupSettingsView: View {
                 .disabled(!providerVisibility.popupEnabled)
                 .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
             }
-        }
-        .toolbar {
-            Button {
-                providerVisibility.resetPopupPreferences()
-            } label: {
-                Label("Reset", systemImage: "arrow.counterclockwise")
+
+            SettingsGroupBox(
+                title: "Reset",
+                subtitle: "Restore popup settings to their defaults."
+            ) {
+                Button {
+                    providerVisibility.resetPopupPreferences()
+                } label: {
+                    Label("Reset Popup Settings", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .help("Reset popup settings")
             }
-            .help("Reset popup settings")
         }
     }
 
@@ -1633,7 +1685,10 @@ private struct ProviderSettingsRow: View {
     let agent: AgentKind
     let subtitle: String
     @Binding var isVisible: Bool
-    let showsReorderHandle: Bool
+    var moveUp: (() -> Void)?
+    var moveDown: (() -> Void)?
+    var canMoveUp = false
+    var canMoveDown = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1662,29 +1717,49 @@ private struct ProviderSettingsRow: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
 
-            if showsReorderHandle {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 18)
-                    .help("Drag to reorder")
+            if moveUp != nil || moveDown != nil {
+                HStack(spacing: 2) {
+                    Button {
+                        moveUp?()
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .disabled(!canMoveUp)
+                    .help("Move up")
+
+                    Button {
+                        moveDown?()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .disabled(!canMoveDown)
+                    .help("Move down")
+                }
+                .frame(width: 54, alignment: .trailing)
             } else {
                 Color.clear
-                    .frame(width: 18)
+                    .frame(width: 54)
             }
         }
         .padding(.vertical, 4)
     }
 }
 
-private struct ProvidersSettingsView: View {
+private struct MenuBarSettingsView: View {
     @ObservedObject var providerVisibility: ProviderVisibilityStore
 
     var body: some View {
-        SettingsForm(title: SettingsSection.providers.title) {
-            ProviderPlacementCard(placement: .dropdownMenu, providerVisibility: providerVisibility)
-            PopupProviderSettingsGroup(providerVisibility: providerVisibility)
-            ProviderPlacementCard(placement: .menuBar, providerVisibility: providerVisibility)
+        SettingsForm(title: SettingsSection.menuBar.title) {
+            ProviderPlacementCard(
+                placement: .menuBar,
+                providerVisibility: providerVisibility,
+                title: "Providers",
+                subtitle: "Choose providers that appear as menu bar icons."
+            )
         }
     }
 }
@@ -1694,7 +1769,7 @@ private struct PopupProviderSettingsGroup: View {
 
     var body: some View {
         SettingsGroupBox(
-            title: "Popup",
+            title: "Providers",
             subtitle: "Choose providers that can appear in the popup."
         ) {
             ForEach(AgentKind.allCases, id: \.rawValue) { agent in
@@ -1708,8 +1783,7 @@ private struct PopupProviderSettingsGroup: View {
                         set: { isVisible in
                             providerVisibility.setPopupVisible(isVisible, for: agent)
                         }
-                    ),
-                    showsReorderHandle: false
+                    )
                 )
                 .disabled(!providerVisibility.popupEnabled)
                 .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
@@ -1721,47 +1795,51 @@ private struct PopupProviderSettingsGroup: View {
 private struct ProviderPlacementCard: View {
     let placement: ProviderPlacement
     @ObservedObject var providerVisibility: ProviderVisibilityStore
+    let title: String
+    let subtitle: String
+
+    init(
+        placement: ProviderPlacement,
+        providerVisibility: ProviderVisibilityStore,
+        title: String? = nil,
+        subtitle: String? = nil
+    ) {
+        self.placement = placement
+        self.providerVisibility = providerVisibility
+        self.title = title ?? placement.title
+        self.subtitle = subtitle ?? placement.helperText
+    }
 
     var body: some View {
+        let agents = providerVisibility.orderedAgents(for: placement)
+
         SettingsGroupBox(
-            title: placement.title,
-            subtitle: placement.helperText
+            title: title,
+            subtitle: subtitle
         ) {
-            if placement.supportsReordering {
-                ForEach(providerVisibility.orderedAgents(for: placement), id: \.rawValue) { agent in
-                    ProviderSettingsRow(
-                        agent: agent,
-                        subtitle: subtitle(for: placement),
-                        isVisible: Binding(
-                            get: {
-                                providerVisibility.isVisible(agent, in: placement)
-                            },
-                            set: { isVisible in
-                                providerVisibility.setVisible(isVisible, for: agent, in: placement)
-                            }
-                        ),
-                        showsReorderHandle: true
-                    )
-                }
-                .onMove { offsets, destination in
-                    providerVisibility.move(fromOffsets: offsets, toOffset: destination, in: placement)
-                }
-            } else {
-                ForEach(providerVisibility.orderedAgents(for: placement), id: \.rawValue) { agent in
-                    ProviderSettingsRow(
-                        agent: agent,
-                        subtitle: subtitle(for: placement),
-                        isVisible: Binding(
-                            get: {
-                                providerVisibility.isVisible(agent, in: placement)
-                            },
-                            set: { isVisible in
-                                providerVisibility.setVisible(isVisible, for: agent, in: placement)
-                            }
-                        ),
-                        showsReorderHandle: false
-                    )
-                }
+            ForEach(agents, id: \.rawValue) { agent in
+                let index = agents.firstIndex(of: agent) ?? 0
+
+                ProviderSettingsRow(
+                    agent: agent,
+                    subtitle: subtitle(for: placement),
+                    isVisible: Binding(
+                        get: {
+                            providerVisibility.isVisible(agent, in: placement)
+                        },
+                        set: { isVisible in
+                            providerVisibility.setVisible(isVisible, for: agent, in: placement)
+                        }
+                    ),
+                    moveUp: placement.supportsReordering ? {
+                        providerVisibility.move(agent, by: -1, in: placement)
+                    } : nil,
+                    moveDown: placement.supportsReordering ? {
+                        providerVisibility.move(agent, by: 1, in: placement)
+                    } : nil,
+                    canMoveUp: placement.supportsReordering && index > 0,
+                    canMoveDown: placement.supportsReordering && index < agents.count - 1
+                )
             }
         }
     }
@@ -1848,21 +1926,25 @@ private struct SettingsStepperRow: View {
 
             Spacer()
 
-            Stepper(value: Binding(
-                get: {
-                    value
-                },
-                set: { nextValue in
-                    onChange(nextValue)
-                }
-            ), in: range, step: max(step, 1)) {
+            HStack(spacing: 8) {
                 Text("\(value)\(labelSuffix)")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .frame(width: labelWidth, alignment: .trailing)
+                    .frame(minWidth: labelWidth, alignment: .trailing)
+
+                Stepper("", value: Binding(
+                    get: {
+                        value
+                    },
+                    set: { nextValue in
+                        onChange(nextValue)
+                    }
+                ), in: range, step: max(step, 1))
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
             }
-            .controlSize(.small)
-            .frame(width: 104)
+            .fixedSize()
         }
         .padding(.vertical, 4)
     }
@@ -1993,6 +2075,10 @@ final class SettingsWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        window.toolbarStyle = .unifiedCompact
+        let toolbar = NSToolbar(identifier: NSToolbar.Identifier("AgentsBarSettingsToolbar"))
+        toolbar.showsBaselineSeparator = false
+        window.toolbar = toolbar
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 760, height: 440)
         window.setContentSize(NSSize(width: 820, height: 620))
