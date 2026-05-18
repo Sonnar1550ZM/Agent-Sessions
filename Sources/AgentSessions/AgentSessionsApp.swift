@@ -2117,6 +2117,361 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+private extension AgentEvent {
+    func settingUpdatedAtIfMissing(_ date: Date) -> AgentEvent {
+        guard updatedAt == nil else {
+            return self
+        }
+
+        return AgentEvent(
+            agent: agent,
+            sessionId: sessionId,
+            state: state,
+            title: title,
+            cwd: cwd,
+            event: event,
+            terminal: terminal,
+            pid: pid,
+            updatedAt: date,
+            parentSessionId: parentSessionId,
+            subagentNickname: subagentNickname,
+            subagentRole: subagentRole,
+            subagentDepth: subagentDepth,
+            transcriptPath: transcriptPath,
+            latestResponseText: latestResponseText,
+            latestResponsePhase: latestResponsePhase
+        )
+    }
+}
+
+private enum AgentEventEnricher {
+    static func enrichedEvent(for event: AgentEvent) -> AgentEvent {
+        let responseEvent = eventWithClaudeLatestResponse(event)
+        let enrichedEvent = eventWithClaudeSubagentMetadata(responseEvent)
+        return eventWithResolvedTitle(enrichedEvent)
+    }
+
+    static func shouldHideImmediately(_ event: AgentEvent) -> Bool {
+        guard hasUsableSessionIdentity(sessionId: event.sessionId, cwd: event.cwd) else {
+            return true
+        }
+
+        switch event.agent {
+        case .codex:
+            return AgentSessionVisibility.isCodexMemoryWorkspace(agent: .codex, cwd: event.cwd)
+        case .claudeCode:
+            return !event.isSubagent && isClaudeProbeSession(cwd: event.cwd, title: event.title)
+        }
+    }
+
+    static func shouldHide(_ event: AgentEvent) -> Bool {
+        switch event.agent {
+        case .codex:
+            shouldHideCodexSession(
+                sessionId: event.sessionId,
+                state: event.state,
+                title: event.title,
+                cwd: event.cwd,
+                event: event.event,
+                allowsUnresolvedLiveSession: true
+            )
+        case .claudeCode:
+            shouldHideClaudeSession(
+                sessionId: event.sessionId,
+                state: event.state,
+                cwd: event.cwd,
+                event: event.event,
+                title: event.title,
+                isSubagent: event.isSubagent,
+                allowsUnresolvedLiveSession: true
+            )
+        }
+    }
+
+    private static func eventWithClaudeLatestResponse(_ event: AgentEvent) -> AgentEvent {
+        guard event.agent == .claudeCode,
+              event.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+              let transcriptPath = claudeTranscriptPath(
+                  sessionId: event.sessionId,
+                  transcriptPath: event.transcriptPath
+              ),
+              let text = tailText(from: URL(fileURLWithPath: transcriptPath)),
+              let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text) else {
+            return event
+        }
+
+        return AgentEvent(
+            agent: event.agent,
+            sessionId: event.sessionId,
+            state: event.state,
+            title: event.title,
+            cwd: event.cwd,
+            event: event.event,
+            terminal: event.terminal,
+            pid: event.pid,
+            updatedAt: event.updatedAt,
+            parentSessionId: event.parentSessionId,
+            subagentNickname: event.subagentNickname,
+            subagentRole: event.subagentRole,
+            subagentDepth: event.subagentDepth,
+            transcriptPath: transcriptPath,
+            latestResponseText: latestResponseText,
+            latestResponsePhase: "assistant"
+        )
+    }
+
+    private static func eventWithClaudeSubagentMetadata(_ event: AgentEvent) -> AgentEvent {
+        guard event.agent == .claudeCode,
+              let metadata = ClaudeSessionParser.subagentMetadata(transcriptPath: event.transcriptPath) else {
+            return event
+        }
+
+        return AgentEvent(
+            agent: event.agent,
+            sessionId: metadata.sessionId,
+            state: event.state,
+            title: event.title,
+            cwd: event.cwd,
+            event: event.event,
+            terminal: event.terminal,
+            pid: event.pid,
+            updatedAt: event.updatedAt,
+            parentSessionId: event.parentSessionId ?? metadata.parentSessionId,
+            subagentNickname: event.subagentNickname ?? metadata.subagentNickname,
+            subagentRole: event.subagentRole ?? metadata.subagentRole,
+            subagentDepth: event.subagentDepth ?? metadata.subagentDepth,
+            transcriptPath: event.transcriptPath,
+            latestResponseText: event.latestResponseText,
+            latestResponsePhase: event.latestResponsePhase
+        )
+    }
+
+    private static func eventWithResolvedTitle(_ event: AgentEvent) -> AgentEvent {
+        let title: String
+        switch event.agent {
+        case .codex:
+            title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
+                ?? event.title
+        case .claudeCode:
+            title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
+                ?? fallbackTitle(for: event)
+        }
+
+        guard title != event.title else {
+            return event
+        }
+
+        return AgentEvent(
+            agent: event.agent,
+            sessionId: event.sessionId,
+            state: event.state,
+            title: title,
+            cwd: event.cwd,
+            event: event.event,
+            terminal: event.terminal,
+            pid: event.pid,
+            updatedAt: event.updatedAt,
+            parentSessionId: event.parentSessionId,
+            subagentNickname: event.subagentNickname,
+            subagentRole: event.subagentRole,
+            subagentDepth: event.subagentDepth,
+            transcriptPath: event.transcriptPath,
+            latestResponseText: event.latestResponseText,
+            latestResponsePhase: event.latestResponsePhase
+        )
+    }
+
+    private static func resolvedTitle(agent: AgentKind, sessionId: String) -> String? {
+        switch agent {
+        case .codex:
+            CodexSessionWatcher.title(for: sessionId)
+        case .claudeCode:
+            ClaudeSessionTitleResolver.title(for: sessionId)
+        }
+    }
+
+    private static func claudeTranscriptPath(sessionId: String, transcriptPath: String?) -> String? {
+        if let path = transcriptPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !path.isEmpty {
+            return path
+        }
+
+        return ClaudeSessionTitleResolver.transcriptPath(for: sessionId)
+    }
+
+    private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return nil
+        }
+        defer { try? handle.close() }
+
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > limit ? size - limit : 0
+        try? handle.seek(toOffset: start)
+        let data = (try? handle.readToEnd()) ?? Data()
+        guard var text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        if start > 0, let newline = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: newline)...])
+        }
+        return text
+    }
+
+    private static func shouldHideCodexSession(
+        sessionId: String,
+        state: AgentState,
+        title: String,
+        cwd: String,
+        event: String,
+        allowsUnresolvedLiveSession: Bool
+    ) -> Bool {
+        switch CodexSessionWatcher.fileStatus(for: sessionId) {
+        case .active:
+            break
+        case .archived, .missing:
+            return !(allowsUnresolvedLiveSession && shouldKeepUnresolvedCodexSession(
+                sessionId: sessionId,
+                state: state,
+                cwd: cwd,
+                event: event
+            ))
+        }
+
+        if CodexSessionWatcher.shouldHideSession(sessionId) {
+            return true
+        }
+
+        if AgentSessionVisibility.isCodexMemoryWorkspace(agent: .codex, cwd: cwd) {
+            return true
+        }
+
+        if shouldKeepUnresolvedCodexSession(sessionId: sessionId, state: state, cwd: cwd, event: event) {
+            return false
+        }
+
+        if CodexSessionWatcher.title(for: sessionId) != nil {
+            return false
+        }
+
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTitle.isEmpty else {
+            return true
+        }
+
+        let fallback = fallbackTitle(cwd: cwd, sessionId: sessionId)
+        return normalizedTitle == fallback
+    }
+
+    private static func shouldKeepUnresolvedCodexSession(
+        sessionId: String,
+        state: AgentState,
+        cwd: String,
+        event: String
+    ) -> Bool {
+        guard hasUsableSessionIdentity(sessionId: sessionId, cwd: cwd) else {
+            return false
+        }
+
+        return state.isActive || event == "SessionStart"
+    }
+
+    private static func shouldHideClaudeSession(
+        sessionId: String,
+        state: AgentState,
+        cwd: String,
+        event: String,
+        title: String,
+        isSubagent: Bool,
+        allowsUnresolvedLiveSession: Bool
+    ) -> Bool {
+        if isClaudeProbeSession(cwd: cwd, title: title) {
+            return true
+        }
+
+        guard !isSubagent else {
+            return false
+        }
+
+        switch ClaudeSessionTitleResolver.appSessionStatus(sessionId: sessionId) {
+        case .active:
+            return false
+        case .archived:
+            return true
+        case .missing:
+            return !(allowsUnresolvedLiveSession && shouldKeepUnresolvedClaudeSession(
+                sessionId: sessionId,
+                state: state,
+                cwd: cwd,
+                event: event
+            ))
+        }
+    }
+
+    private static func shouldKeepUnresolvedClaudeSession(
+        sessionId: String,
+        state: AgentState,
+        cwd: String,
+        event: String
+    ) -> Bool {
+        guard hasUsableSessionIdentity(sessionId: sessionId, cwd: cwd) else {
+            return false
+        }
+
+        return state.isActive || event == "SessionStart" || event == "Start"
+    }
+
+    private static func hasUsableSessionIdentity(sessionId: String, cwd: String) -> Bool {
+        let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSessionId.isEmpty else {
+            return false
+        }
+
+        if trimmedSessionId != "default" {
+            return true
+        }
+
+        return !cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private static func isClaudeProbeSession(cwd: String, title: String) -> Bool {
+        let normalizedCWD = cwd
+            .replacingOccurrences(of: "\\", with: "/")
+            .lowercased()
+        if normalizedCWD.contains("/application support/codexbar/claudeprobe") {
+            return true
+        }
+
+        let normalizedTitle = title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+        return normalizedTitle == "claudeprobe"
+    }
+
+    private static func fallbackTitle(for event: AgentEvent) -> String {
+        if event.agent == .codex {
+            return event.title
+        }
+        guard !event.isSubagent else {
+            return event.title
+        }
+
+        return fallbackTitle(cwd: event.cwd, sessionId: event.sessionId)
+    }
+
+    private static func fallbackTitle(cwd: String, sessionId: String) -> String {
+        let trimmedCWD = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCWD.isEmpty else {
+            return sessionId
+        }
+
+        let lastPathComponent = URL(fileURLWithPath: trimmedCWD).lastPathComponent
+        return lastPathComponent.isEmpty ? sessionId : lastPathComponent
+    }
+}
+
 @MainActor
 final class AppController: ObservableObject {
     @Published var serverMessage = "Listening on 127.0.0.1:7823"
@@ -2127,6 +2482,7 @@ final class AppController: ObservableObject {
     private var codexWatcher: CodexSessionWatcher?
     private var claudeSubagentWatcher: ClaudeSubagentWatcher?
     private var maintenanceTimer: Timer?
+    private let eventEnrichmentQueue = DispatchQueue(label: "app.agentsessions.event-enrichment", qos: .utility)
     private var claudeResponseRefreshWorkItems: [String: [DispatchWorkItem]] = [:]
     private var cancellables: Set<AnyCancellable> = []
     private static let claudeResponseRetryDelays: [TimeInterval] = [0.5, 2.0]
@@ -2228,49 +2584,55 @@ final class AppController: ObservableObject {
     }
 
     private func applyEvent(_ event: AgentEvent) {
-        let responseEvent = eventWithClaudeLatestResponse(event)
-        let enrichedEvent = eventWithClaudeSubagentMetadata(responseEvent)
-        let resolvedEvent = eventWithResolvedTitle(enrichedEvent)
+        let immediateEvent = event.settingUpdatedAtIfMissing(Date())
 
-        guard !shouldHideSession(resolvedEvent) else {
+        guard !AgentEventEnricher.shouldHideImmediately(immediateEvent) else {
             pruneHiddenSessions()
             return
         }
 
-        let session = store.apply(resolvedEvent)
+        let session = store.apply(immediateEvent)
         scheduleClaudeResponseRefreshes(for: session)
+        enrichEventAfterInitialApply(immediateEvent)
     }
 
-    private func eventWithClaudeLatestResponse(_ event: AgentEvent) -> AgentEvent {
-        guard event.agent == .claudeCode,
-              event.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
-              let transcriptPath = Self.claudeTranscriptPath(
-                  sessionId: event.sessionId,
-                  transcriptPath: event.transcriptPath
-              ),
-              let text = Self.tailText(from: URL(fileURLWithPath: transcriptPath)),
-              let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text) else {
-            return event
+    private func enrichEventAfterInitialApply(_ event: AgentEvent) {
+        let queue = eventEnrichmentQueue
+        queue.async {
+            let resolvedEvent = AgentEventEnricher.enrichedEvent(for: event)
+            let shouldHide = AgentEventEnricher.shouldHide(resolvedEvent)
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                guard !shouldHide else {
+                    self.pruneHiddenSessions()
+                    return
+                }
+
+                guard resolvedEvent != event,
+                      self.shouldApplyEnrichedEvent(resolvedEvent) else {
+                    return
+                }
+
+                let session = self.store.apply(resolvedEvent)
+                self.scheduleClaudeResponseRefreshes(for: session)
+            }
+        }
+    }
+
+    private func shouldApplyEnrichedEvent(_ event: AgentEvent) -> Bool {
+        guard let updatedAt = event.updatedAt,
+              let existing = store.sessions.first(where: {
+                  $0.agent == event.agent && $0.sessionId == event.sessionId
+              }) else {
+            return true
         }
 
-        return AgentEvent(
-            agent: event.agent,
-            sessionId: event.sessionId,
-            state: event.state,
-            title: event.title,
-            cwd: event.cwd,
-            event: event.event,
-            terminal: event.terminal,
-            pid: event.pid,
-            updatedAt: event.updatedAt,
-            parentSessionId: event.parentSessionId,
-            subagentNickname: event.subagentNickname,
-            subagentRole: event.subagentRole,
-            subagentDepth: event.subagentDepth,
-            transcriptPath: transcriptPath,
-            latestResponseText: latestResponseText,
-            latestResponsePhase: "assistant"
-        )
+        let existingStateReferenceDate = existing.stateChangedAt ?? existing.updatedAt
+        return updatedAt >= existingStateReferenceDate
     }
 
     private static func claudeTranscriptPath(sessionId: String, transcriptPath: String?) -> String? {
@@ -2425,67 +2787,6 @@ final class AppController: ObservableObject {
         }
     }
 
-    private func eventWithClaudeSubagentMetadata(_ event: AgentEvent) -> AgentEvent {
-        guard event.agent == .claudeCode,
-              let metadata = ClaudeSessionParser.subagentMetadata(transcriptPath: event.transcriptPath) else {
-            return event
-        }
-
-        return AgentEvent(
-            agent: event.agent,
-            sessionId: metadata.sessionId,
-            state: event.state,
-            title: event.title,
-            cwd: event.cwd,
-            event: event.event,
-            terminal: event.terminal,
-            pid: event.pid,
-            updatedAt: event.updatedAt,
-            parentSessionId: event.parentSessionId ?? metadata.parentSessionId,
-            subagentNickname: event.subagentNickname ?? metadata.subagentNickname,
-            subagentRole: event.subagentRole ?? metadata.subagentRole,
-            subagentDepth: event.subagentDepth ?? metadata.subagentDepth,
-            transcriptPath: event.transcriptPath,
-            latestResponseText: event.latestResponseText,
-            latestResponsePhase: event.latestResponsePhase
-        )
-    }
-
-    private func eventWithResolvedTitle(_ event: AgentEvent) -> AgentEvent {
-        let title: String
-        switch event.agent {
-        case .codex:
-            title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
-                ?? event.title
-        case .claudeCode:
-            title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
-                ?? fallbackTitle(for: event)
-        }
-
-        guard title != event.title else {
-            return event
-        }
-
-        return AgentEvent(
-            agent: event.agent,
-            sessionId: event.sessionId,
-            state: event.state,
-            title: title,
-            cwd: event.cwd,
-            event: event.event,
-            terminal: event.terminal,
-            pid: event.pid,
-            updatedAt: event.updatedAt,
-            parentSessionId: event.parentSessionId,
-            subagentNickname: event.subagentNickname,
-            subagentRole: event.subagentRole,
-            subagentDepth: event.subagentDepth,
-            transcriptPath: event.transcriptPath,
-            latestResponseText: event.latestResponseText,
-            latestResponsePhase: event.latestResponsePhase
-        )
-    }
-
     private func resolvedTitle(for session: AgentSession) -> String? {
         resolvedTitle(agent: session.agent, sessionId: session.sessionId)
     }
@@ -2508,17 +2809,6 @@ final class AppController: ObservableObject {
         }
 
         return fallbackTitle(cwd: session.cwd, sessionId: session.sessionId)
-    }
-
-    private func fallbackTitle(for event: AgentEvent) -> String {
-        if event.agent == .codex {
-            return event.title
-        }
-        guard !event.isSubagent else {
-            return event.title
-        }
-
-        return fallbackTitle(cwd: event.cwd, sessionId: event.sessionId)
     }
 
     private func fallbackTitle(cwd: String, sessionId: String) -> String {
@@ -2557,30 +2847,6 @@ final class AppController: ObservableObject {
                 title: session.title,
                 isSubagent: session.isSubagent,
                 allowsUnresolvedLiveSession: false
-            )
-        }
-    }
-
-    private func shouldHideSession(_ event: AgentEvent) -> Bool {
-        switch event.agent {
-        case .codex:
-            shouldHideCodexSession(
-                sessionId: event.sessionId,
-                state: event.state,
-                title: event.title,
-                cwd: event.cwd,
-                event: event.event,
-                allowsUnresolvedLiveSession: true
-            )
-        case .claudeCode:
-            shouldHideClaudeSession(
-                sessionId: event.sessionId,
-                state: event.state,
-                cwd: event.cwd,
-                event: event.event,
-                title: event.title,
-                isSubagent: event.isSubagent,
-                allowsUnresolvedLiveSession: true
             )
         }
     }
@@ -3244,9 +3510,46 @@ private extension View {
 }
 
 @MainActor
+private final class DropdownMenuRefreshClock: ObservableObject {
+    @Published private(set) var now = Date()
+    @Published private(set) var isRunning = false
+
+    private let interval: TimeInterval
+    private var timer: Timer?
+
+    init(interval: TimeInterval) {
+        self.interval = interval
+    }
+
+    func start() {
+        now = Date()
+
+        guard timer == nil else {
+            return
+        }
+
+        isRunning = true
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.now = Date()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        isRunning = false
+    }
+}
+
+@MainActor
 final class StatusMenuController: NSObject, NSMenuDelegate {
     private let controller: AppController
     private let providerVisibility = ProviderVisibilityStore.shared
+    private let menuRefreshClock = DropdownMenuRefreshClock(interval: 1)
     private let menu = NSMenu()
     private var statusItems: [AgentKind: NSStatusItem] = [:]
     private var fallbackStatusItem: NSStatusItem?
@@ -3392,11 +3695,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
         isMenuResizeScheduled = false
+        menuRefreshClock.start()
         rebuildMenuIfNeeded()
         resizeMenuNow()
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        menuRefreshClock.stop()
         isMenuOpen = false
         isMenuResizeScheduled = false
     }
@@ -3689,8 +3994,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func appendAgentSection(_ agent: AgentKind) {
         menu.addItem(hostedItem(AgentSectionView(
             store: controller.store,
+            refreshClock: menuRefreshClock,
             agent: agent,
-            usesColorIcon: providerVisibility.usesColorDropdownIcons,
             latestResponseLineLimit: providerVisibility.latestResponseLineLimit,
             subagentLatestResponseLineLimit: providerVisibility.subagentLatestResponseLineLimit,
             latestResponseHideAfterInterval: providerVisibility.latestResponseHideAfterInterval,
@@ -3764,9 +4069,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
 private struct AgentHeaderView: View {
     let agent: AgentKind
-    let usesColorIcon: Bool
     let state: AgentState
     let workingSessionCounts: AgentWorkingSessionCounts
+    let animatesWorkingIcon: Bool
 
     var body: some View {
         HStack(spacing: 7) {
@@ -3793,7 +4098,7 @@ private struct AgentHeaderView: View {
 
     @ViewBuilder
     private var iconView: some View {
-        if state == .working {
+        if state == .working, animatesWorkingIcon {
             TimelineView(.periodic(from: Date(), by: AgentIconAnimation.animatedRefreshInterval)) { timeline in
                 headerIcon(highlightPhase: AgentIconAnimation.highlightPhase(at: timeline.date))
             }
@@ -3805,12 +4110,12 @@ private struct AgentHeaderView: View {
     private func headerIcon(highlightPhase: CGFloat?) -> some View {
         Image(nsImage: AgentImages.menuHeaderIcon(
             for: agent,
-            color: usesColorIcon,
+            color: true,
             state: state,
             highlightPhase: highlightPhase
         ))
         .resizable()
-        .renderingMode(state == .working || usesColorIcon ? .original : .template)
+        .renderingMode(.original)
         .foregroundStyle(.primary)
         .aspectRatio(contentMode: .fit)
         .frame(width: 16, height: 16)
@@ -3824,17 +4129,15 @@ private struct AgentHeaderView: View {
 
 private struct AgentSectionView: View {
     @ObservedObject var store: AgentStateStore
+    @ObservedObject var refreshClock: DropdownMenuRefreshClock
     let agent: AgentKind
-    let usesColorIcon: Bool
     let latestResponseLineLimit: Int
     let subagentLatestResponseLineLimit: Int
     let latestResponseHideAfterInterval: TimeInterval
     let onLayoutMayChange: () -> Void
-    @State private var now = Date()
-
-    private let timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
+        let now = refreshClock.now
         let rows = store.displayRows(for: agent, now: now)
         let layoutSignature = layoutSignature(for: rows, now: now)
         let state = AgentDisplayState.displayState(
@@ -3848,9 +4151,9 @@ private struct AgentSectionView: View {
         VStack(alignment: .leading, spacing: 0) {
             AgentHeaderView(
                 agent: agent,
-                usesColorIcon: usesColorIcon,
                 state: state,
-                workingSessionCounts: workingSessionCounts
+                workingSessionCounts: workingSessionCounts,
+                animatesWorkingIcon: refreshClock.isRunning
             )
 
             if rows.isEmpty {
@@ -3870,9 +4173,6 @@ private struct AgentSectionView: View {
                     }
                 }
             }
-        }
-        .onReceive(timer) { date in
-            now = date
         }
         .onChange(of: layoutSignature) { _, _ in
             onLayoutMayChange()

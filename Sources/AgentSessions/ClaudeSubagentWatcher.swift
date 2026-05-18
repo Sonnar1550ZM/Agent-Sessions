@@ -15,8 +15,15 @@ final class ClaudeSubagentWatcher {
     private let queue = DispatchQueue(label: "app.agentsessions.claude-subagent-watcher")
     private let handler: (AgentEvent) -> Void
     private var timer: DispatchSourceTimer?
+    private var activityMonitor: FileSystemActivityMonitor?
+    private var pendingChangePoll: DispatchWorkItem?
+    private var pendingChangedPaths: Set<String> = []
+    private var lastPollDate = Date.distantPast
     private var lastFingerprints: [String: String] = [:]
     private var cachedSnapshotsByPath: [String: CachedSnapshot] = [:]
+    private static let changePollDelay: TimeInterval = 0.18
+    private static let minimumChangePollInterval: TimeInterval = 0.35
+    private static let fallbackPollInterval: TimeInterval = 30
 
     init(handler: @escaping (AgentEvent) -> Void) {
         self.handler = handler
@@ -24,39 +31,91 @@ final class ClaudeSubagentWatcher {
 
     func start() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: 5.0)
+        timer.schedule(deadline: .now(), repeating: Self.fallbackPollInterval, leeway: .seconds(5))
         timer.setEventHandler { [weak self] in
             self?.poll()
         }
         self.timer = timer
+        activityMonitor = FileSystemActivityMonitor(
+            paths: [Self.watchRoot()],
+            latency: Self.changePollDelay,
+            queue: queue
+        ) { [weak self] paths in
+            self?.scheduleChangedPathPoll(paths)
+        }
+        activityMonitor?.start()
         timer.resume()
     }
 
     func stop() {
         timer?.cancel()
         timer = nil
+        activityMonitor?.stop()
+        activityMonitor = nil
+        pendingChangePoll?.cancel()
+        pendingChangePoll = nil
+        pendingChangedPaths.removeAll()
     }
 
     private func poll() {
+        lastPollDate = Date()
         var activePaths: Set<String> = []
         for file in Self.latestSubagentFiles(limit: 50) {
             let path = file.path
             activePaths.insert(path)
-            guard let modifiedAt = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                  let snapshot = snapshot(for: file, modifiedAt: modifiedAt) else {
-                continue
-            }
-
-            let key = snapshot.event.sessionId
-            guard snapshot.fingerprint != lastFingerprints[key] else {
-                continue
-            }
-
-            lastFingerprints[key] = snapshot.fingerprint
-            handler(snapshot.event)
+            ingest(file)
         }
 
         cachedSnapshotsByPath = cachedSnapshotsByPath.filter { activePaths.contains($0.key) }
+    }
+
+    private func scheduleChangedPathPoll(_ paths: [String]) {
+        let relevantPaths = paths.filter(Self.isRelevantSubagentPath)
+        guard !relevantPaths.isEmpty else {
+            return
+        }
+
+        pendingChangedPaths.formUnion(relevantPaths)
+        guard pendingChangePoll == nil else {
+            return
+        }
+
+        let elapsed = Date().timeIntervalSince(lastPollDate)
+        let delay = max(Self.changePollDelay, Self.minimumChangePollInterval - elapsed)
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let paths = self.pendingChangedPaths
+            self.pendingChangedPaths.removeAll()
+            self.pendingChangePoll = nil
+            self.pollChangedPaths(paths)
+        }
+        pendingChangePoll = workItem
+        queue.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func pollChangedPaths(_ paths: Set<String>) {
+        lastPollDate = Date()
+        for path in paths {
+            ingest(URL(fileURLWithPath: path))
+        }
+    }
+
+    private func ingest(_ file: URL) {
+        guard let modifiedAt = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+              let snapshot = snapshot(for: file, modifiedAt: modifiedAt) else {
+            return
+        }
+
+        let key = snapshot.event.sessionId
+        guard snapshot.fingerprint != lastFingerprints[key] else {
+            return
+        }
+
+        lastFingerprints[key] = snapshot.fingerprint
+        handler(snapshot.event)
     }
 
     private func snapshot(for file: URL, modifiedAt: Date) -> Snapshot? {
@@ -160,9 +219,7 @@ final class ClaudeSubagentWatcher {
     }
 
     private static func latestSubagentFiles(limit: Int) -> [URL] {
-        let root = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/projects", isDirectory: true)
+        let root = watchRoot()
 
         guard let enumerator = FileManager.default.enumerator(
             at: root,
@@ -189,6 +246,17 @@ final class ClaudeSubagentWatcher {
             .sorted { $0.modifiedAt > $1.modifiedAt }
             .prefix(limit)
             .map(\.url)
+    }
+
+    private static func watchRoot() -> URL {
+        FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects", isDirectory: true)
+    }
+
+    private static func isRelevantSubagentPath(_ path: String) -> Bool {
+        let url = URL(fileURLWithPath: path)
+        return url.pathExtension == "jsonl" && url.pathComponents.contains("subagents")
     }
 
     private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
