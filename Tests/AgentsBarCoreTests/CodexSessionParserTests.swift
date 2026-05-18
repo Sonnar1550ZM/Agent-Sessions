@@ -13,6 +13,7 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.sessionId, "parent")
         XCTAssertEqual(parsed.cwd, "/tmp/project")
         XCTAssertEqual(parsed.state, .working)
+        XCTAssertEqual(parsed.title, "")
         XCTAssertFalse(parsed.isInternalSubagent)
         XCTAssertNil(parsed.parentSessionId)
         XCTAssertNil(parsed.subagentNickname)
@@ -72,6 +73,52 @@ final class CodexSessionParserTests: XCTestCase {
         let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
 
         XCTAssertEqual(parsed.title, "Fix menu bar layout spacing")
+    }
+
+    func testUsesUserPromptAsTemporaryTitleWhenThreadNameIsMissing() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Codexで新しくセッション始めた時の表示を直して"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "Codexで新しくセッション始めた時の表示を直して")
+    }
+
+    func testThreadNameOverridesTemporaryUserPromptTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode","thread_name":"Generated session title"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Initial prompt title"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "Generated session title")
+    }
+
+    func testParsesTemporaryTitleFromUserMessageEvent() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"user_message","message":"メニュー行の暫定タイトルをプロンプトにして"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "メニュー行の暫定タイトルをプロンプトにして")
+        XCTAssertEqual(parsed.state, .working)
+        XCTAssertEqual(parsed.event, "user_message")
+    }
+
+    func testIgnoresBootstrapContextWhenChoosingTemporaryPromptTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/project\\n\\n<INSTRUCTIONS>test</INSTRUCTIONS>"},{"type":"input_text","text":"<environment_context>\\n  <cwd>/tmp/project</cwd>\\n</environment_context>"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "")
     }
 
     func testParsesLatestAssistantResponseFromResponseItems() {

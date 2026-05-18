@@ -59,11 +59,32 @@ try:
 except Exception:
     pid = None
 
+def sanitized_title(value):
+    if not isinstance(value, str):
+        return ""
+    title = " ".join(value.split())
+    return title[:160]
+
+def prompt_title(event):
+    if hook_event != "UserPromptSubmit":
+        return ""
+    for key in ("prompt", "message", "input", "text", "user_prompt", "userPrompt"):
+        title = sanitized_title(event.get(key))
+        if title:
+            return title
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        for key in ("prompt", "message", "input", "text", "user_prompt", "userPrompt"):
+            title = sanitized_title(payload.get(key))
+            if title:
+                return title
+    return ""
+
 payload = {
     "agent": "Codex",
     "sessionId": event.get("session_id") or event.get("sessionId") or "default",
     "state": state,
-    "title": "",
+    "title": prompt_title(event),
     "cwd": event.get("cwd") or "",
     "event": hook_event,
     "terminal": term_map.get(os.environ.get("TERM_PROGRAM") or "", os.environ.get("TERM_PROGRAM") or ""),

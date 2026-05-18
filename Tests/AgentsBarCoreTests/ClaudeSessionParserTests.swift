@@ -82,6 +82,21 @@ final class ClaudeSessionParserTests: XCTestCase {
         XCTAssertNil(parsed?.latestResponseText)
     }
 
+    func testSubagentKeepsProgressResponseAfterToolResult() {
+        let text = """
+        {"agentId":"a2d0709031a162f40","attributionAgent":"general-purpose","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"中身を確認します。"}],"stop_reason":"tool_use"},"cwd":"/tmp/project","sessionId":"parent-session"}
+        {"agentId":"a2d0709031a162f40","type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_123","type":"tool_result","content":"file-a\\nfile-b","is_error":false}]},"cwd":"/tmp/project","sessionId":"parent-session"}
+        """
+
+        let parsed = ClaudeSessionParser.parseSubagentTranscript(
+            transcriptPath: "/Users/me/.claude/projects/project/parent-session/subagents/agent-a2d0709031a162f40.jsonl",
+            text: text
+        )
+
+        XCTAssertEqual(parsed?.state, .working)
+        XCTAssertEqual(parsed?.latestResponseText, "中身を確認します。")
+    }
+
     func testParsesLatestAssistantResponseTextFromTranscript() {
         let text = """
         {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"古い応答"}],"stop_reason":"end_turn"},"sessionId":"parent-session"}
@@ -103,5 +118,17 @@ final class ClaudeSessionParserTests: XCTestCase {
         let response = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text)
 
         XCTAssertNil(response)
+    }
+
+    func testLatestAssistantResponseSurvivesToolResultUserMessage() {
+        let text = """
+        {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"カレントディレクトリの中身を見てみます。"}],"stop_reason":"tool_use"},"sessionId":"parent-session"}
+        {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_123","name":"Bash","input":{"command":"ls"}}],"stop_reason":"tool_use"},"sessionId":"parent-session"}
+        {"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_123","type":"tool_result","content":"total 0","is_error":false}]},"sessionId":"parent-session"}
+        """
+
+        let response = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text)
+
+        XCTAssertEqual(response, "カレントディレクトリの中身を見てみます。")
     }
 }

@@ -2011,7 +2011,9 @@ final class AppController: ObservableObject {
     private var codexWatcher: CodexSessionWatcher?
     private var claudeSubagentWatcher: ClaudeSubagentWatcher?
     private var maintenanceTimer: Timer?
+    private var claudeResponseRefreshWorkItems: [String: [DispatchWorkItem]] = [:]
     private var cancellables: Set<AnyCancellable> = []
+    private static let claudeResponseRetryDelays: [TimeInterval] = [0.15, 0.5, 1.0, 2.0, 4.0]
 
     init() {
         applyDisplayPreferences()
@@ -2119,7 +2121,8 @@ final class AppController: ObservableObject {
             return
         }
 
-        store.apply(resolvedEvent)
+        let session = store.apply(resolvedEvent)
+        scheduleClaudeResponseRefreshes(for: session)
     }
 
     private func eventWithClaudeLatestResponse(_ event: AgentEvent) -> AgentEvent {
@@ -2196,6 +2199,73 @@ final class AppController: ObservableObject {
         return text
     }
 
+    private func scheduleClaudeResponseRefreshes(for session: AgentSession) {
+        guard session.agent == .claudeCode else {
+            return
+        }
+
+        let sessionId = session.sessionId
+        let transcriptPath = session.transcriptPath
+        claudeResponseRefreshWorkItems[sessionId]?.forEach { $0.cancel() }
+
+        var workItems: [DispatchWorkItem] = []
+        for (index, delay) in Self.claudeResponseRetryDelays.enumerated() {
+            let item = DispatchWorkItem { [weak self] in
+                self?.refreshClaudeResponse(sessionId: sessionId, transcriptPath: transcriptPath)
+                if index == Self.claudeResponseRetryDelays.count - 1 {
+                    self?.claudeResponseRefreshWorkItems[sessionId] = nil
+                }
+            }
+            workItems.append(item)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+        }
+
+        claudeResponseRefreshWorkItems[sessionId] = workItems
+    }
+
+    private func refreshClaudeResponse(sessionId: String, transcriptPath: String?) {
+        guard let session = store.sessions.first(where: {
+            $0.agent == .claudeCode && $0.sessionId == sessionId
+        }) else {
+            return
+        }
+
+        let title = resolvedTitle(for: session) ?? fallbackTitle(for: session)
+        guard let latestClaudeResponse = Self.latestClaudeResponse(
+            for: session.sessionId,
+            transcriptPath: transcriptPath ?? session.transcriptPath
+        ) else {
+            return
+        }
+
+        let responseTextChanged = latestClaudeResponse.text != session.latestResponseText
+        guard title != session.title
+            || responseTextChanged
+            || latestClaudeResponse.transcriptPath != session.transcriptPath
+            || session.latestResponsePhase != "assistant" else {
+            return
+        }
+
+        store.apply(AgentEvent(
+            agent: session.agent,
+            sessionId: session.sessionId,
+            state: session.state,
+            title: title,
+            cwd: session.cwd,
+            event: session.event,
+            terminal: session.terminal,
+            pid: session.pid,
+            updatedAt: responseTextChanged ? Date() : session.updatedAt,
+            parentSessionId: session.parentSessionId,
+            subagentNickname: session.subagentNickname,
+            subagentRole: session.subagentRole,
+            subagentDepth: session.subagentDepth,
+            transcriptPath: latestClaudeResponse.transcriptPath,
+            latestResponseText: latestClaudeResponse.text,
+            latestResponsePhase: "assistant"
+        ))
+    }
+
     private func refreshSessionTitles() {
         pruneHiddenSessions()
         store.expireStaleActiveSessions()
@@ -2208,6 +2278,8 @@ final class AppController: ObservableObject {
             let latestResponseText = latestClaudeResponse?.text ?? session.latestResponseText
             let latestResponsePhase = latestClaudeResponse == nil ? session.latestResponsePhase : "assistant"
             let transcriptPath = latestClaudeResponse?.transcriptPath ?? session.transcriptPath
+            let responseTextChanged = latestClaudeResponse != nil
+                && latestResponseText != session.latestResponseText
 
             guard title != session.title
                 || latestResponseText != session.latestResponseText
@@ -2225,7 +2297,7 @@ final class AppController: ObservableObject {
                 event: session.event,
                 terminal: session.terminal,
                 pid: session.pid,
-                updatedAt: session.updatedAt,
+                updatedAt: responseTextChanged ? Date() : session.updatedAt,
                 parentSessionId: session.parentSessionId,
                 subagentNickname: session.subagentNickname,
                 subagentRole: session.subagentRole,
@@ -2264,12 +2336,19 @@ final class AppController: ObservableObject {
     }
 
     private func eventWithResolvedTitle(_ event: AgentEvent) -> AgentEvent {
-        guard event.title.isEmpty || event.agent == .claudeCode else {
-            return event
+        let title: String
+        switch event.agent {
+        case .codex:
+            title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
+                ?? event.title
+        case .claudeCode:
+            title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
+                ?? fallbackTitle(for: event)
         }
 
-        let title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
-            ?? fallbackTitle(for: event)
+        guard title != event.title else {
+            return event
+        }
 
         return AgentEvent(
             agent: event.agent,
@@ -2317,9 +2396,6 @@ final class AppController: ObservableObject {
 
     private func fallbackTitle(for event: AgentEvent) -> String {
         if event.agent == .codex {
-            if event.state.isActive || event.event == "SessionStart" {
-                return fallbackTitle(cwd: event.cwd, sessionId: event.sessionId)
-            }
             return event.title
         }
         guard !event.isSubagent else {
@@ -2922,7 +2998,7 @@ private struct PopupSessionRow: View {
     private var titleText: String {
         if session.state == .working,
            session.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Thinking"
+            return "Thinking..."
         }
 
         return session.displayTitle
@@ -3909,13 +3985,21 @@ private struct SessionMenuRow: View {
     }
 
     private var titleText: String {
-        if !session.isSubagent,
-           session.state == .working,
-           session.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Thinking"
+        if shouldShowPendingTitle {
+            return "Thinking..."
         }
 
         return session.isSubagent ? session.subagentSessionTitle : session.displayTitle
+    }
+
+    private var shouldShowPendingTitle: Bool {
+        guard !session.isSubagent,
+              session.agent == .codex,
+              session.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+
+        return session.state == .working || session.event == "SessionStart" || session.event == "JSONLWatch"
     }
 
     private var latestResponseText: String? {

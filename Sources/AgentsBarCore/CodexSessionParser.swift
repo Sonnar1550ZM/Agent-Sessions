@@ -48,6 +48,7 @@ public enum CodexSessionParser {
         var sessionId = fallbackSessionId
         var state = AgentState.idle
         var title = ""
+        var promptTitle = ""
         var cwd = ""
         var event = ""
         var isInternalSubagent = false
@@ -127,6 +128,10 @@ public enum CodexSessionParser {
                 if itemType == "message", let role = payload["role"] as? String, role == "user" {
                     state = .working
                     event = "user_message"
+                    if promptTitle.isEmpty,
+                       let userTitle = extractPromptTitle(fromUserMessagePayload: payload) {
+                        promptTitle = userTitle
+                    }
                     latestResponseText = nil
                     latestResponsePhase = nil
                 }
@@ -159,13 +164,22 @@ public enum CodexSessionParser {
                 if let eventCwd = payload["cwd"] as? String, !eventCwd.isEmpty {
                     cwd = eventCwd
                 }
+                if eventType == "user_message" {
+                    state = .working
+                    if promptTitle.isEmpty,
+                       let userTitle = sanitizedUserPromptTitle(payload["message"] as? String) {
+                        promptTitle = userTitle
+                    }
+                    latestResponseText = nil
+                    latestResponsePhase = nil
+                }
             }
         }
 
         return CodexParsedSession(
             sessionId: sessionId,
             state: state,
-            title: title,
+            title: title.isEmpty ? promptTitle : title,
             cwd: cwd,
             event: event,
             isInternalSubagent: isInternalSubagent,
@@ -246,6 +260,53 @@ public enum CodexSessionParser {
             return sanitized
         }
         return nil
+    }
+
+    private static func extractPromptTitle(fromUserMessagePayload payload: [String: Any]) -> String? {
+        if let text = payload["content"] as? String {
+            return sanitizedUserPromptTitle(text)
+        }
+
+        guard let content = payload["content"] as? [[String: Any]] else {
+            return nil
+        }
+
+        let text = content.compactMap { item -> String? in
+            let type = item["type"] as? String
+            guard type == "input_text" || type == "text" else {
+                return nil
+            }
+            return item["text"] as? String
+        }
+        .compactMap(sanitizedUserPromptTitle)
+        .joined(separator: " ")
+
+        return sanitizedTitle(text)
+    }
+
+    private static func sanitizedUserPromptTitle(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isBootstrapContext(trimmed) else {
+            return nil
+        }
+
+        return sanitizedTitle(trimmed)
+    }
+
+    private static func isBootstrapContext(_ value: String) -> Bool {
+        let lowercased = value.lowercased()
+        return lowercased.hasPrefix("# agents.md instructions")
+            || lowercased.hasPrefix("<environment_context>")
+            || lowercased.hasPrefix("<permissions instructions>")
+            || lowercased.hasPrefix("<apps_instructions>")
+            || lowercased.hasPrefix("<skills_instructions>")
+            || lowercased.hasPrefix("<plugins_instructions>")
+            || lowercased.hasPrefix("<collaboration_mode>")
+            || lowercased.hasPrefix("## memory")
     }
 
     private static func sanitizedTitle(_ value: String) -> String? {

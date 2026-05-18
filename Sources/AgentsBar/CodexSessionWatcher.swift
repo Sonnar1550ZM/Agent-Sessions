@@ -88,7 +88,7 @@ final class CodexSessionWatcher {
         let age = Date().timeIntervalSince(modifiedAt)
         let state: AgentState = age > 120 ? .idle : parsed.state
         let title = threadTitle(for: parsed.sessionId)
-            ?? URL(fileURLWithPath: parsed.cwd).lastPathComponent
+            ?? parsed.title
 
         let event = AgentEvent(
             agent: .codex,

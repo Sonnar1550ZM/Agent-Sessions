@@ -124,9 +124,13 @@ public enum ClaudeSessionParser {
                 } else if message["stop_reason"] as? String == "end_turn" {
                     state = .idle
                 }
-            } else if type == "user" || type == "attachment" {
+            } else if type == "user" {
                 state = .working
-                latestResponseText = nil
+                if isHumanUserMessage(object) {
+                    latestResponseText = nil
+                }
+            } else if type == "attachment" {
+                state = .working
             }
         }
 
@@ -161,8 +165,10 @@ public enum ClaudeSessionParser {
                     continue
                 }
                 latestResponseText = responseText
-            case "user", "attachment":
-                latestResponseText = nil
+            case "user":
+                if isHumanUserMessage(object) {
+                    latestResponseText = nil
+                }
             default:
                 continue
             }
@@ -186,6 +192,29 @@ public enum ClaudeSessionParser {
 
         return parts.contains { part in
             part["type"] as? String == "tool_use"
+        }
+    }
+
+    private static func isHumanUserMessage(_ object: [String: Any]) -> Bool {
+        guard object["type"] as? String == "user",
+              let message = object["message"] as? [String: Any] else {
+            return false
+        }
+
+        if let content = message["content"] as? String {
+            return !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        guard let parts = message["content"] as? [[String: Any]] else {
+            return false
+        }
+
+        return parts.contains { part in
+            guard let type = part["type"] as? String else {
+                return false
+            }
+
+            return type == "text" || type == "input_text"
         }
     }
 
