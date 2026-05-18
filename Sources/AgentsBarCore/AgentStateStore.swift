@@ -12,6 +12,20 @@ public enum AgentSessionDisplayRow: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct AgentWorkingSessionCounts: Equatable, Sendable {
+    public var main: Int
+    public var subagent: Int
+
+    public init(main: Int = 0, subagent: Int = 0) {
+        self.main = main
+        self.subagent = subagent
+    }
+
+    public var total: Int {
+        main + subagent
+    }
+}
+
 public final class AgentStateStore: ObservableObject {
     @Published public private(set) var sessions: [AgentSession]
 
@@ -19,6 +33,8 @@ public final class AgentStateStore: ObservableObject {
     public var showsSubagents: Bool
     public var subagentHideAfterInterval: TimeInterval
     public var historyVisibilityInterval: TimeInterval
+    public var historyRetentionInterval: TimeInterval
+    public var historyRetentionLimitPerAgent: Int
     public var activeStaleInterval: TimeInterval
 
     private let persistence: StatePersistence?
@@ -30,6 +46,8 @@ public final class AgentStateStore: ObservableObject {
         showsSubagents: Bool = true,
         subagentHideAfterInterval: TimeInterval = 3 * 60,
         historyVisibilityInterval: TimeInterval = 24 * 60 * 60,
+        historyRetentionInterval: TimeInterval = 7 * 24 * 60 * 60,
+        historyRetentionLimitPerAgent: Int = 10,
         activeStaleInterval: TimeInterval = 10 * 60,
         clock: @escaping () -> Date = Date.init
     ) {
@@ -38,6 +56,8 @@ public final class AgentStateStore: ObservableObject {
         self.showsSubagents = showsSubagents
         self.subagentHideAfterInterval = subagentHideAfterInterval
         self.historyVisibilityInterval = historyVisibilityInterval
+        self.historyRetentionInterval = historyRetentionInterval
+        self.historyRetentionLimitPerAgent = historyRetentionLimitPerAgent
         self.activeStaleInterval = activeStaleInterval
         self.clock = clock
 
@@ -200,6 +220,26 @@ public final class AgentStateStore: ObservableObject {
         return .idle
     }
 
+    public func workingSessionCounts(for agent: AgentKind, now: Date = Date()) -> AgentWorkingSessionCounts {
+        let allAgentSessions = sessions
+            .filter { $0.agent == agent }
+            .map { sessionForDisplay($0, now: now) }
+        let eligibleSessions = displayEligibleSessions(from: allAgentSessions, now: now)
+        let eligibleSessionIds = Set(eligibleSessions.map(\.sessionId))
+        let mainSessions = eligibleSessions.filter { !$0.isSubagent }
+        let subagentSessions = displayEligibleSubagents(
+            from: eligibleSessions.filter(\.isSubagent),
+            now: now,
+            visibleParentIds: Set(mainSessions.map(\.sessionId)),
+            allSessionIds: eligibleSessionIds
+        )
+
+        return AgentWorkingSessionCounts(
+            main: mainSessions.filter { $0.state == .working }.count,
+            subagent: subagentSessions.filter { $0.state == .working }.count
+        )
+    }
+
     public func reloadFromDisk() {
         guard let document = try? persistence?.load() else {
             return
@@ -246,20 +286,21 @@ public final class AgentStateStore: ObservableObject {
         for agent in AgentKind.allCases {
             let allAgentSessions = sessions.filter { $0.agent == agent }
                 .map { sessionForDisplay($0, now: now) }
-            let eligibleSessions = displayEligibleSessions(from: allAgentSessions, now: now)
-            let visibleParents = Array(
-                eligibleSessions
+            let retentionEligibleSessions = retentionEligibleSessions(from: allAgentSessions, now: now)
+            let retentionLimit = max(maxHistoryPerAgent, historyRetentionLimitPerAgent)
+            let retainedParents = Array(
+                retentionEligibleSessions
                     .filter { !$0.isSubagent }
                     .sorted(by: sessionSort)
-                    .prefix(maxHistoryPerAgent)
+                    .prefix(retentionLimit)
             )
             let retainedSubagents = subagentsForRetention(
-                from: eligibleSessions.filter(\.isSubagent),
+                from: retentionEligibleSessions.filter(\.isSubagent),
                 now: now,
-                retainedParentIds: Set(visibleParents.map(\.sessionId)),
+                retainedParentIds: Set(retainedParents.map(\.sessionId)),
                 allSessionIds: Set(allAgentSessions.map(\.sessionId))
             )
-            var agentSessions = visibleParents + retainedSubagents
+            var agentSessions = retainedParents + retainedSubagents
             var retainedIds = Set(agentSessions.map(\.sessionId))
 
             for activeSession in allAgentSessions where activeSession.state.isActive && !retainedIds.contains(activeSession.sessionId) {
@@ -278,6 +319,14 @@ public final class AgentStateStore: ObservableObject {
         }
 
         sessions = retained.sorted(by: sessionSort)
+    }
+
+    private func retentionEligibleSessions(from sessions: [AgentSession], now: Date) -> [AgentSession] {
+        sessions.filter { session in
+            session.state != .ended
+                && !AgentSessionVisibility.isCodexMemoryWorkspace(agent: session.agent, cwd: session.cwd)
+                && (session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyRetentionInterval)
+        }
     }
 
     private func displayEligibleSessions(from sessions: [AgentSession], now: Date) -> [AgentSession] {

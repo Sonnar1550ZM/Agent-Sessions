@@ -100,6 +100,35 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(2)), .waiting)
     }
 
+    func testWorkingSessionCountsSeparateMainAndSubagents() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "main-working", state: .working, updatedAt: base))
+        store.apply(AgentEvent(agent: .codex, sessionId: "main-waiting", state: .waiting, updatedAt: base.addingTimeInterval(1)))
+        store.apply(AgentEvent(agent: .codex, sessionId: "parent", state: .idle, updatedAt: base.addingTimeInterval(2)))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "subagent-working",
+            state: .working,
+            updatedAt: base.addingTimeInterval(3),
+            parentSessionId: "parent"
+        ))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "orphan-subagent",
+            state: .working,
+            updatedAt: base.addingTimeInterval(4),
+            parentSessionId: "missing"
+        ))
+        store.apply(AgentEvent(agent: .claudeCode, sessionId: "other-agent", state: .working, updatedAt: base.addingTimeInterval(5)))
+
+        XCTAssertEqual(
+            store.workingSessionCounts(for: .codex, now: base.addingTimeInterval(6)),
+            AgentWorkingSessionCounts(main: 1, subagent: 1)
+        )
+    }
+
     func testHistoryIsLimitedPerAgent() {
         let store = AgentStateStore(persistence: nil, maxHistoryPerAgent: 5)
         let base = Date(timeIntervalSince1970: 1_000)
@@ -132,7 +161,7 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(visible.map(\.sessionId), ["waiting", "working", "latest-idle"])
     }
 
-    func testStoredSessionsAreTrimmedAcrossAllStates() {
+    func testStoredSessionsKeepRetentionBufferBeyondVisibleLimit() {
         let store = AgentStateStore(persistence: nil, maxHistoryPerAgent: 2)
         let base = Date(timeIntervalSince1970: 1_000)
 
@@ -140,7 +169,11 @@ final class AgentStateStoreTests: XCTestCase {
         store.apply(AgentEvent(agent: .codex, sessionId: "working", state: .working, updatedAt: base.addingTimeInterval(1)))
         store.apply(AgentEvent(agent: .codex, sessionId: "waiting", state: .waiting, updatedAt: base.addingTimeInterval(2)))
 
-        XCTAssertEqual(store.sessions.map(\.sessionId), ["waiting", "working"])
+        XCTAssertEqual(
+            store.visibleSessions(for: .codex, now: base.addingTimeInterval(3)).map(\.sessionId),
+            ["waiting", "working"]
+        )
+        XCTAssertEqual(store.sessions.map(\.sessionId), ["waiting", "working", "idle"])
     }
 
     func testOldHistoryIsHidden() {
@@ -157,6 +190,31 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(
             store.visibleSessions(for: .codex, now: base.addingTimeInterval(100)).map(\.sessionId),
             ["recent"]
+        )
+    }
+
+    func testHiddenHistoryReappearsWhenHideAfterIsIncreased() {
+        let store = AgentStateStore(
+            persistence: nil,
+            maxHistoryPerAgent: 5,
+            historyVisibilityInterval: 60
+        )
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "old", state: .idle, updatedAt: base))
+        store.apply(AgentEvent(agent: .codex, sessionId: "recent", state: .idle, updatedAt: base.addingTimeInterval(100)))
+
+        XCTAssertEqual(
+            store.visibleSessions(for: .codex, now: base.addingTimeInterval(100)).map(\.sessionId),
+            ["recent"]
+        )
+        XCTAssertTrue(store.sessions.contains { $0.sessionId == "old" })
+
+        store.historyVisibilityInterval = 120
+
+        XCTAssertEqual(
+            store.visibleSessions(for: .codex, now: base.addingTimeInterval(100)).map(\.sessionId),
+            ["recent", "old"]
         )
     }
 

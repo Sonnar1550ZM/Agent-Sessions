@@ -2129,6 +2129,7 @@ private struct AgentHeaderView: View {
     let agent: AgentKind
     let usesColorIcon: Bool
     let state: AgentState
+    let workingSessionCounts: AgentWorkingSessionCounts
 
     var body: some View {
         HStack(spacing: 7) {
@@ -2137,6 +2138,14 @@ private struct AgentHeaderView: View {
             Text(agent.menuHeaderTitle)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 12)
+
+            Text(workingCountText)
+                .font(.system(size: 11, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(workingSessionCounts.total > 0 ? Color(nsColor: AgentColors.working(for: agent)) : .secondary)
                 .lineLimit(1)
         }
         .frame(width: 320, alignment: .leading)
@@ -2170,6 +2179,10 @@ private struct AgentHeaderView: View {
         .frame(width: 16, height: 16)
         .accessibilityHidden(true)
     }
+
+    private var workingCountText: String {
+        "Working \(workingSessionCounts.main) · Sub \(workingSessionCounts.subagent)"
+    }
 }
 
 private struct AgentSectionView: View {
@@ -2193,9 +2206,15 @@ private struct AgentSectionView: View {
             store: store,
             now: now
         )
+        let workingSessionCounts = store.workingSessionCounts(for: agent, now: now)
 
         VStack(alignment: .leading, spacing: 0) {
-            AgentHeaderView(agent: agent, usesColorIcon: usesColorIcon, state: state)
+            AgentHeaderView(
+                agent: agent,
+                usesColorIcon: usesColorIcon,
+                state: state,
+                workingSessionCounts: workingSessionCounts
+            )
 
             if rows.isEmpty {
                 EmptyAgentRow()
