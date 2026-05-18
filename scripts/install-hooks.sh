@@ -23,11 +23,9 @@ codex_script = root / "scripts" / "agent-sessions-codex-hook.sh"
 claude_script = root / "scripts" / "agent-sessions-claude-hook.sh"
 CODEX_HOOK_MARKERS = (
     "agent-sessions-codex-hook",
-    "agentsbar-codex-hook",
 )
 CLAUDE_HOOK_MARKERS = (
     "agent-sessions-claude-hook",
-    "agentsbar-claude-hook",
 )
 CODEX_FEATURE_MARKER = "agent-sessions-managed-codex-hooks"
 

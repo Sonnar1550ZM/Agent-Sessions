@@ -1,7 +1,6 @@
 .build/
 .swiftpm/
 DerivedData/
-AgentsBar.app/
 Agent Sessions.app/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/

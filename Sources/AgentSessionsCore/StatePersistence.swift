@@ -10,18 +10,9 @@ public struct AgentSessionsDocument: Codable, Equatable, Sendable {
 
 public final class StatePersistence: @unchecked Sendable {
     public let stateURL: URL
-    private let legacyStateURL: URL?
 
-    public convenience init() {
-        self.init(
-            stateURL: StatePersistence.defaultStateURL(),
-            legacyStateURL: StatePersistence.defaultLegacyStateURL()
-        )
-    }
-
-    public init(stateURL: URL, legacyStateURL: URL? = nil) {
+    public init(stateURL: URL = StatePersistence.defaultStateURL()) {
         self.stateURL = stateURL
-        self.legacyStateURL = legacyStateURL
     }
 
     public static func defaultStateURL() -> URL {
@@ -31,22 +22,9 @@ public final class StatePersistence: @unchecked Sendable {
             .appendingPathComponent("state.json", isDirectory: false)
     }
 
-    public static func defaultLegacyStateURL() -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return appSupport
-            .appendingPathComponent("AgentsBar", isDirectory: true)
-            .appendingPathComponent("state.json", isDirectory: false)
-    }
-
     public func load() throws -> AgentSessionsDocument {
         if FileManager.default.fileExists(atPath: stateURL.path) {
             return try loadDocument(from: stateURL)
-        }
-
-        if let legacyStateURL, FileManager.default.fileExists(atPath: legacyStateURL.path) {
-            let document = try loadDocument(from: legacyStateURL)
-            try save(document)
-            return document
         }
 
         return AgentSessionsDocument()
