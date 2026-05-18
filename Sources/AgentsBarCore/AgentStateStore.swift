@@ -70,7 +70,8 @@ public final class AgentStateStore: ObservableObject {
 
     @discardableResult
     public func apply(_ event: AgentEvent) -> AgentSession {
-        let now = event.updatedAt ?? clock()
+        let receivedAt = clock()
+        let now = event.updatedAt ?? receivedAt
         let key = Self.key(agent: event.agent, sessionId: event.sessionId)
         let existing = sessions.first { Self.key(agent: $0.agent, sessionId: $0.sessionId) == key }
         let latestResponseText = event.latestResponseText ?? existing?.latestResponseText
@@ -80,6 +81,12 @@ public final class AgentStateStore: ObservableObject {
             eventText: event.latestResponseText,
             resolvedText: latestResponseText,
             now: now
+        )
+        let stateChangedAt = Self.stateChangedAt(
+            existing: existing,
+            eventState: event.state,
+            eventUpdatedAt: now,
+            receivedAt: receivedAt
         )
 
         let next = AgentSession(
@@ -99,7 +106,8 @@ public final class AgentStateStore: ObservableObject {
             transcriptPath: event.transcriptPath ?? existing?.transcriptPath,
             latestResponseText: latestResponseText,
             latestResponsePhase: latestResponsePhase,
-            latestResponseUpdatedAt: latestResponseUpdatedAt
+            latestResponseUpdatedAt: latestResponseUpdatedAt,
+            stateChangedAt: stateChangedAt
         )
 
         if let index = sessions.firstIndex(where: { Self.key(agent: $0.agent, sessionId: $0.sessionId) == key }) {
@@ -166,7 +174,7 @@ public final class AgentStateStore: ObservableObject {
         includedAgents: Set<AgentKind> = Set(AgentKind.allCases),
         limit: Int
     ) -> [AgentSession] {
-        guard displayInterval > 0, !includedAgents.isEmpty else {
+        guard displayInterval > 0, !includedAgents.isEmpty, limit > 0 else {
             return []
         }
 
@@ -182,7 +190,7 @@ public final class AgentStateStore: ObservableObject {
                     return false
                 }
 
-                return session.state.isActive || now.timeIntervalSince(session.updatedAt) <= displayInterval
+                return session.state.isActive || now.timeIntervalSince(popupDisplayReferenceDate(for: session)) <= displayInterval
             }
             .sorted { lhs, rhs in
                 if lhs.updatedAt != rhs.updatedAt {
@@ -195,7 +203,7 @@ public final class AgentStateStore: ObservableObject {
                 }
                 return lhs.sessionId < rhs.sessionId
             }
-            .prefix(max(limit, 0)))
+            .prefix(limit))
     }
 
     public static func displayRows(
@@ -471,7 +479,12 @@ public final class AgentStateStore: ObservableObject {
 
         var next = session
         next.state = .idle
+        next.stateChangedAt = session.updatedAt.addingTimeInterval(activeStaleInterval)
         return next
+    }
+
+    private func popupDisplayReferenceDate(for session: AgentSession) -> Date {
+        max(session.stateChangedAt ?? session.updatedAt, session.updatedAt)
     }
 
     private func sessionSort(_ lhs: AgentSession, _ rhs: AgentSession) -> Bool {
@@ -526,5 +539,28 @@ public final class AgentStateStore: ObservableObject {
         }
 
         return existing?.latestResponseUpdatedAt ?? existing?.updatedAt ?? now
+    }
+
+    private static func stateChangedAt(
+        existing: AgentSession?,
+        eventState: AgentState,
+        eventUpdatedAt: Date,
+        receivedAt: Date
+    ) -> Date {
+        guard let existing else {
+            return eventUpdatedAt
+        }
+
+        guard existing.state != eventState else {
+            return existing.stateChangedAt ?? existing.updatedAt
+        }
+
+        if existing.state.isActive,
+           eventState == .idle,
+           eventUpdatedAt <= existing.updatedAt {
+            return receivedAt
+        }
+
+        return eventUpdatedAt
     }
 }

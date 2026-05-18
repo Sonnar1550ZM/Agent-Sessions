@@ -100,6 +100,14 @@ enum PopupWindowPosition: String, Codable, CaseIterable, Identifiable {
     case topCenter
     case bottomCenter
 
+    static let allCases: [PopupWindowPosition] = [
+        .topRight,
+        .topLeft,
+        .bottomRight,
+        .bottomLeft,
+        .topCenter
+    ]
+
     var id: Self { self }
 
     var title: String {
@@ -118,6 +126,15 @@ enum PopupWindowPosition: String, Codable, CaseIterable, Identifiable {
             "Bottom Center"
         }
     }
+
+    var alignsPopupHeaderTrailing: Bool {
+        switch self {
+        case .topRight, .bottomRight:
+            true
+        case .topLeft, .bottomLeft, .topCenter, .bottomCenter:
+            false
+        }
+    }
 }
 
 private enum ProviderPreferenceDefaults {
@@ -128,13 +145,18 @@ private enum ProviderPreferenceDefaults {
     static let showsSubagents = true
     static let subagentHideAfterInterval: TimeInterval = 3 * 60
     static let popupEnabled = true
-    static let popupDisplayInterval: TimeInterval = 5
-    static let popupOpacity = 0.92
-    static let popupWindowPosition = PopupWindowPosition.topRight
-    static let popupWindowWidth = 320.0
-    static let popupScale = 1.0
-    static let popupParentSessionCount = 1
-    static let popupResponseLineLimit = 4
+    static let popupDisplayInterval: TimeInterval = 10
+    static let popupOpacity = 0.7957142857142857
+    static let popupWindowPosition = PopupWindowPosition.bottomRight
+    static let popupWindowWidth = 400.4190051020408
+    static let popupScale = 1.0075659049513415
+    static let popupBackdropOpacity = 0.05
+    static let popupTextOpacity = 1.0
+    static let legacyPopupTextShadowStrength = 0.65
+    static let popupTextShadowStrength = 2.005479379251701
+    static let popupTextShadowRadius = 4.259222530445234
+    static let popupParentSessionCount = 5
+    static let popupResponseCharacterLimit = 500
     static let latestResponseHideAfterOptions: [TimeInterval] = [
         60,
         3 * 60,
@@ -163,18 +185,7 @@ private enum ProviderPreferenceDefaults {
         24 * 60 * 60,
         7 * 24 * 60 * 60
     ]
-    static let popupDisplayOptions: [TimeInterval] = [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10
-    ]
+    static let popupDisplayOptions: [TimeInterval] = (1...60).map(TimeInterval.init)
 
     static func sanitizedSessionDisplayCount(_ count: Int?) -> Int {
         min(max(count ?? sessionDisplayCount, 3), 10)
@@ -232,12 +243,56 @@ private enum ProviderPreferenceDefaults {
         min(max(scale ?? popupScale, 0.5), 1.5)
     }
 
-    static func sanitizedPopupParentSessionCount(_ count: Int?) -> Int {
-        min(max(count ?? popupParentSessionCount, 1), 5)
+    static func sanitizedPopupWindowPosition(_ position: PopupWindowPosition?) -> PopupWindowPosition {
+        guard let position, PopupWindowPosition.allCases.contains(position) else {
+            return popupWindowPosition
+        }
+
+        return position
     }
 
-    static func sanitizedPopupResponseLineLimit(_ count: Int?) -> Int {
-        min(max(count ?? popupResponseLineLimit, 1), 10)
+    static func sanitizedPopupBackdropOpacity(_ opacity: Double?) -> Double {
+        min(max(opacity ?? popupBackdropOpacity, 0.05), 0.85)
+    }
+
+    static func sanitizedPopupTextOpacity(_ opacity: Double?) -> Double {
+        min(max(opacity ?? popupTextOpacity, 0.35), 1.0)
+    }
+
+    static func sanitizedPopupTextShadowStrength(_ strength: Double?) -> Double {
+        min(max(strength ?? popupTextShadowStrength, 0), 3.0)
+    }
+
+    static func migratedPopupTextShadowStrength(_ strength: Double?) -> Double? {
+        guard let strength else {
+            return nil
+        }
+
+        if abs(strength - legacyPopupTextShadowStrength) < 0.0001 {
+            return popupTextShadowStrength
+        }
+
+        return strength
+    }
+
+    static func sanitizedPopupTextShadowRadius(_ radius: Double?) -> Double {
+        min(max(radius ?? popupTextShadowRadius, 0), 16)
+    }
+
+    static func sanitizedPopupParentSessionCount(_ count: Int?) -> Int {
+        min(max(count ?? popupParentSessionCount, 1), 10)
+    }
+
+    static func sanitizedPopupResponseCharacterLimit(_ count: Int?) -> Int {
+        min(max(count ?? popupResponseCharacterLimit, 40), 1000)
+    }
+
+    static func popupResponseCharacterLimit(fromLegacyLineLimit count: Int?) -> Int? {
+        guard let count else {
+            return nil
+        }
+
+        return sanitizedPopupResponseCharacterLimit(count * 60)
     }
 
     static func subagentHideAfterLabel(for interval: TimeInterval) -> String {
@@ -326,7 +381,7 @@ private enum ProviderPreferenceDefaults {
         case 10:
             "10 seconds"
         default:
-            "5 seconds"
+            "\(Int(sanitizedPopupDisplayInterval(interval))) seconds"
         }
     }
 }
@@ -350,8 +405,12 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var popupWindowPosition: PopupWindowPosition
     var popupWindowWidth: Double
     var popupScale: Double
+    var popupBackdropOpacity: Double
+    var popupTextOpacity: Double
+    var popupTextShadowStrength: Double
+    var popupTextShadowRadius: Double
     var popupParentSessionCount: Int
-    var popupResponseLineLimit: Int
+    var popupResponseCharacterLimit: Int
 
     init(
         values: [String: ProviderVisibility],
@@ -372,8 +431,12 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupWindowPosition: PopupWindowPosition = ProviderPreferenceDefaults.popupWindowPosition,
         popupWindowWidth: Double = ProviderPreferenceDefaults.popupWindowWidth,
         popupScale: Double = ProviderPreferenceDefaults.popupScale,
+        popupBackdropOpacity: Double = ProviderPreferenceDefaults.popupBackdropOpacity,
+        popupTextOpacity: Double = ProviderPreferenceDefaults.popupTextOpacity,
+        popupTextShadowStrength: Double = ProviderPreferenceDefaults.popupTextShadowStrength,
+        popupTextShadowRadius: Double = ProviderPreferenceDefaults.popupTextShadowRadius,
         popupParentSessionCount: Int = ProviderPreferenceDefaults.popupParentSessionCount,
-        popupResponseLineLimit: Int = ProviderPreferenceDefaults.popupResponseLineLimit
+        popupResponseCharacterLimit: Int = ProviderPreferenceDefaults.popupResponseCharacterLimit
     ) {
         self.values = values
         self.menuBarOrder = menuBarOrder
@@ -390,11 +453,15 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.popupDisplayInterval = popupDisplayInterval
         self.popupProviderVisibility = Self.sanitizedPopupProviderVisibility(popupProviderVisibility)
         self.popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(popupOpacity)
-        self.popupWindowPosition = popupWindowPosition
+        self.popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(popupWindowPosition)
         self.popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(popupWindowWidth)
         self.popupScale = ProviderPreferenceDefaults.sanitizedPopupScale(popupScale)
+        self.popupBackdropOpacity = ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(popupBackdropOpacity)
+        self.popupTextOpacity = ProviderPreferenceDefaults.sanitizedPopupTextOpacity(popupTextOpacity)
+        self.popupTextShadowStrength = ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(popupTextShadowStrength)
+        self.popupTextShadowRadius = ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(popupTextShadowRadius)
         self.popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(popupParentSessionCount)
-        self.popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(popupResponseLineLimit)
+        self.popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(popupResponseCharacterLimit)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -417,7 +484,13 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case popupWindowPosition
         case popupWindowWidth
         case popupScale
+        case popupBackdropOpacity
+        case popupTextOpacity
+        case popupTextShadowStrength
+        case popupTextShadowRadius
+        case popupBackdropBlurRadius
         case popupParentSessionCount
+        case popupResponseCharacterLimit
         case popupResponseLineLimit
     }
 
@@ -464,19 +537,38 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(
             try container.decodeIfPresent(Double.self, forKey: .popupOpacity)
         )
-        popupWindowPosition = try container.decodeIfPresent(PopupWindowPosition.self, forKey: .popupWindowPosition)
-            ?? ProviderPreferenceDefaults.popupWindowPosition
+        popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(
+            try container.decodeIfPresent(PopupWindowPosition.self, forKey: .popupWindowPosition)
+        )
         popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(
             try container.decodeIfPresent(Double.self, forKey: .popupWindowWidth)
         )
         popupScale = ProviderPreferenceDefaults.sanitizedPopupScale(
             try container.decodeIfPresent(Double.self, forKey: .popupScale)
         )
+        popupBackdropOpacity = ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(
+            try container.decodeIfPresent(Double.self, forKey: .popupBackdropOpacity)
+        )
+        popupTextOpacity = ProviderPreferenceDefaults.sanitizedPopupTextOpacity(
+            try container.decodeIfPresent(Double.self, forKey: .popupTextOpacity)
+        )
+        let decodedTextShadowStrength = try container.decodeIfPresent(Double.self, forKey: .popupTextShadowStrength)
+        popupTextShadowStrength = ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(
+            ProviderPreferenceDefaults.migratedPopupTextShadowStrength(decodedTextShadowStrength)
+        )
+        let decodedTextShadowRadius = try container.decodeIfPresent(Double.self, forKey: .popupTextShadowRadius)
+        let legacyBackdropBlurRadius = try container.decodeIfPresent(Double.self, forKey: .popupBackdropBlurRadius)
+        popupTextShadowRadius = ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(
+            decodedTextShadowRadius ?? legacyBackdropBlurRadius
+        )
         popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(
             try container.decodeIfPresent(Int.self, forKey: .popupParentSessionCount)
         )
-        popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(
-            try container.decodeIfPresent(Int.self, forKey: .popupResponseLineLimit)
+        let decodedResponseCharacterLimit = try container.decodeIfPresent(Int.self, forKey: .popupResponseCharacterLimit)
+        let legacyResponseLineLimit = try container.decodeIfPresent(Int.self, forKey: .popupResponseLineLimit)
+        popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(
+            decodedResponseCharacterLimit
+                ?? ProviderPreferenceDefaults.popupResponseCharacterLimit(fromLegacyLineLimit: legacyResponseLineLimit)
         )
     }
 
@@ -500,8 +592,12 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(popupWindowPosition, forKey: .popupWindowPosition)
         try container.encode(popupWindowWidth, forKey: .popupWindowWidth)
         try container.encode(popupScale, forKey: .popupScale)
+        try container.encode(popupBackdropOpacity, forKey: .popupBackdropOpacity)
+        try container.encode(popupTextOpacity, forKey: .popupTextOpacity)
+        try container.encode(popupTextShadowStrength, forKey: .popupTextShadowStrength)
+        try container.encode(popupTextShadowRadius, forKey: .popupTextShadowRadius)
         try container.encode(popupParentSessionCount, forKey: .popupParentSessionCount)
-        try container.encode(popupResponseLineLimit, forKey: .popupResponseLineLimit)
+        try container.encode(popupResponseCharacterLimit, forKey: .popupResponseCharacterLimit)
     }
 
     static var defaultPopupProviderVisibility: [String: Bool] {
@@ -542,8 +638,12 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var popupWindowPosition: PopupWindowPosition
     @Published private(set) var popupWindowWidth: Double
     @Published private(set) var popupScale: Double
+    @Published private(set) var popupBackdropOpacity: Double
+    @Published private(set) var popupTextOpacity: Double
+    @Published private(set) var popupTextShadowStrength: Double
+    @Published private(set) var popupTextShadowRadius: Double
     @Published private(set) var popupParentSessionCount: Int
-    @Published private(set) var popupResponseLineLimit: Int
+    @Published private(set) var popupResponseCharacterLimit: Int
 
     private let defaults: UserDefaults
     private let storageKey = "ProviderPreferences"
@@ -575,11 +675,15 @@ final class ProviderVisibilityStore: ObservableObject {
         popupDisplayInterval = ProviderPreferenceDefaults.sanitizedPopupDisplayInterval(document.popupDisplayInterval)
         popupProviderVisibility = ProviderPreferencesDocument.sanitizedPopupProviderVisibility(document.popupProviderVisibility)
         popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(document.popupOpacity)
-        popupWindowPosition = document.popupWindowPosition
+        popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(document.popupWindowPosition)
         popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(document.popupWindowWidth)
         popupScale = ProviderPreferenceDefaults.sanitizedPopupScale(document.popupScale)
+        popupBackdropOpacity = ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(document.popupBackdropOpacity)
+        popupTextOpacity = ProviderPreferenceDefaults.sanitizedPopupTextOpacity(document.popupTextOpacity)
+        popupTextShadowStrength = ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(document.popupTextShadowStrength)
+        popupTextShadowRadius = ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(document.popupTextShadowRadius)
         popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(document.popupParentSessionCount)
-        popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(document.popupResponseLineLimit)
+        popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(document.popupResponseCharacterLimit)
         save()
     }
 
@@ -674,7 +778,7 @@ final class ProviderVisibilityStore: ObservableObject {
     }
 
     func setPopupWindowPosition(_ position: PopupWindowPosition) {
-        popupWindowPosition = position
+        popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(position)
         save()
     }
 
@@ -688,13 +792,68 @@ final class ProviderVisibilityStore: ObservableObject {
         save()
     }
 
+    func setPopupBackdropOpacity(_ opacity: Double) {
+        popupBackdropOpacity = ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(opacity)
+        save()
+    }
+
+    func setPopupTextOpacity(_ opacity: Double) {
+        popupTextOpacity = ProviderPreferenceDefaults.sanitizedPopupTextOpacity(opacity)
+        save()
+    }
+
+    func setPopupTextShadowStrength(_ strength: Double) {
+        popupTextShadowStrength = ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(strength)
+        save()
+    }
+
+    func setPopupTextShadowRadius(_ radius: Double) {
+        popupTextShadowRadius = ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(radius)
+        save()
+    }
+
     func setPopupParentSessionCount(_ count: Int) {
         popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(count)
         save()
     }
 
-    func setPopupResponseLineLimit(_ count: Int) {
-        popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(count)
+    func setPopupResponseCharacterLimit(_ count: Int) {
+        popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(count)
+        save()
+    }
+
+    func resetPopupPreferences() {
+        popupEnabled = ProviderPreferenceDefaults.popupEnabled
+        popupDisplayInterval = ProviderPreferenceDefaults.sanitizedPopupDisplayInterval(
+            ProviderPreferenceDefaults.popupDisplayInterval
+        )
+        popupProviderVisibility = ProviderPreferencesDocument.defaultPopupProviderVisibility
+        popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(ProviderPreferenceDefaults.popupOpacity)
+        popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(
+            ProviderPreferenceDefaults.popupWindowPosition
+        )
+        popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(
+            ProviderPreferenceDefaults.popupWindowWidth
+        )
+        popupScale = ProviderPreferenceDefaults.sanitizedPopupScale(ProviderPreferenceDefaults.popupScale)
+        popupBackdropOpacity = ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(
+            ProviderPreferenceDefaults.popupBackdropOpacity
+        )
+        popupTextOpacity = ProviderPreferenceDefaults.sanitizedPopupTextOpacity(
+            ProviderPreferenceDefaults.popupTextOpacity
+        )
+        popupTextShadowStrength = ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(
+            ProviderPreferenceDefaults.popupTextShadowStrength
+        )
+        popupTextShadowRadius = ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(
+            ProviderPreferenceDefaults.popupTextShadowRadius
+        )
+        popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(
+            ProviderPreferenceDefaults.popupParentSessionCount
+        )
+        popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(
+            ProviderPreferenceDefaults.popupResponseCharacterLimit
+        )
         save()
     }
 
@@ -773,8 +932,12 @@ final class ProviderVisibilityStore: ObservableObject {
             popupWindowPosition: popupWindowPosition,
             popupWindowWidth: popupWindowWidth,
             popupScale: popupScale,
+            popupBackdropOpacity: popupBackdropOpacity,
+            popupTextOpacity: popupTextOpacity,
+            popupTextShadowStrength: popupTextShadowStrength,
+            popupTextShadowRadius: popupTextShadowRadius,
             popupParentSessionCount: popupParentSessionCount,
-            popupResponseLineLimit: popupResponseLineLimit
+            popupResponseCharacterLimit: popupResponseCharacterLimit
         )
 
         guard let data = try? JSONEncoder().encode(document) else {
@@ -810,8 +973,12 @@ final class ProviderVisibilityStore: ObservableObject {
                 popupWindowPosition: ProviderPreferenceDefaults.popupWindowPosition,
                 popupWindowWidth: ProviderPreferenceDefaults.popupWindowWidth,
                 popupScale: ProviderPreferenceDefaults.popupScale,
+                popupBackdropOpacity: ProviderPreferenceDefaults.popupBackdropOpacity,
+                popupTextOpacity: ProviderPreferenceDefaults.popupTextOpacity,
+                popupTextShadowStrength: ProviderPreferenceDefaults.popupTextShadowStrength,
+                popupTextShadowRadius: ProviderPreferenceDefaults.popupTextShadowRadius,
                 popupParentSessionCount: ProviderPreferenceDefaults.popupParentSessionCount,
-                popupResponseLineLimit: ProviderPreferenceDefaults.popupResponseLineLimit
+                popupResponseCharacterLimit: ProviderPreferenceDefaults.popupResponseCharacterLimit
             )
         }
 
@@ -835,11 +1002,17 @@ final class ProviderVisibilityStore: ObservableObject {
             popupDisplayInterval: ProviderPreferenceDefaults.sanitizedPopupDisplayInterval(document.popupDisplayInterval),
             popupProviderVisibility: ProviderPreferencesDocument.sanitizedPopupProviderVisibility(document.popupProviderVisibility),
             popupOpacity: ProviderPreferenceDefaults.sanitizedPopupOpacity(document.popupOpacity),
-            popupWindowPosition: document.popupWindowPosition,
+            popupWindowPosition: ProviderPreferenceDefaults.sanitizedPopupWindowPosition(document.popupWindowPosition),
             popupWindowWidth: ProviderPreferenceDefaults.sanitizedPopupWindowWidth(document.popupWindowWidth),
             popupScale: ProviderPreferenceDefaults.sanitizedPopupScale(document.popupScale),
+            popupBackdropOpacity: ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(document.popupBackdropOpacity),
+            popupTextOpacity: ProviderPreferenceDefaults.sanitizedPopupTextOpacity(document.popupTextOpacity),
+            popupTextShadowStrength: ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(document.popupTextShadowStrength),
+            popupTextShadowRadius: ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(document.popupTextShadowRadius),
             popupParentSessionCount: ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(document.popupParentSessionCount),
-            popupResponseLineLimit: ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(document.popupResponseLineLimit)
+            popupResponseCharacterLimit: ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(
+                document.popupResponseCharacterLimit
+            )
         )
     }
 
@@ -1166,6 +1339,15 @@ private struct PopupSettingsView: View {
 
                     Text("Popup")
                         .font(.system(size: 24, weight: .bold))
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        providerVisibility.resetPopupPreferences()
+                    } label: {
+                        Label("Reset", systemImage: "arrow.counterclockwise")
+                    }
+                    .controlSize(.small)
                 }
 
                 SettingsGroupBox(
@@ -1187,20 +1369,15 @@ private struct PopupSettingsView: View {
 
                     SettingsDivider()
 
-                    SettingsPickerRow(
+                    SettingsStepperRow(
                         title: "Hide After Idle",
                         subtitle: "Hide this many seconds after the parent session becomes idle.",
-                        selection: Binding(
-                            get: {
-                                providerVisibility.popupDisplayInterval
-                            },
-                            set: { interval in
-                                providerVisibility.setPopupDisplayInterval(interval)
-                            }
-                        ),
-                        options: ProviderPreferenceDefaults.popupDisplayOptions,
-                        labelProvider: ProviderPreferenceDefaults.popupDisplayLabel
-                    )
+                        value: Int(providerVisibility.popupDisplayInterval),
+                        range: 1...60,
+                        labelSuffix: "s"
+                    ) { count in
+                        providerVisibility.setPopupDisplayInterval(TimeInterval(count))
+                    }
                     .disabled(!providerVisibility.popupEnabled)
                     .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
 
@@ -1210,7 +1387,7 @@ private struct PopupSettingsView: View {
                         title: "Sessions",
                         subtitle: "Maximum recent parent sessions shown in the popup.",
                         value: providerVisibility.popupParentSessionCount,
-                        range: 1...5
+                        range: 1...10
                     ) { count in
                         providerVisibility.setPopupParentSessionCount(count)
                     }
@@ -1220,12 +1397,15 @@ private struct PopupSettingsView: View {
                     SettingsDivider()
 
                     SettingsStepperRow(
-                        title: "Lines",
-                        subtitle: "Maximum response body lines per popup session.",
-                        value: providerVisibility.popupResponseLineLimit,
-                        range: 1...10
+                        title: "Characters",
+                        subtitle: "Maximum response body characters per popup session.",
+                        value: providerVisibility.popupResponseCharacterLimit,
+                        range: 40...1000,
+                        step: 10,
+                        labelSuffix: "ch",
+                        labelWidth: 62
                     ) { count in
-                        providerVisibility.setPopupResponseLineLimit(count)
+                        providerVisibility.setPopupResponseCharacterLimit(count)
                     }
                     .disabled(!providerVisibility.popupEnabled)
                     .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
@@ -1297,21 +1477,41 @@ private struct PopupSettingsView: View {
                     SettingsDivider()
 
                     SettingsSliderRow(
-                        title: "Opacity",
-                        subtitle: "Adjust the whole popup transparency.",
+                        title: "Text Opacity",
+                        subtitle: "Adjust popup text transparency.",
                         value: Binding(
                             get: {
-                                providerVisibility.popupOpacity
+                                providerVisibility.popupTextOpacity
                             },
                             set: { opacity in
-                                providerVisibility.setPopupOpacity(opacity)
+                                providerVisibility.setPopupTextOpacity(opacity)
                             }
                         ),
                         range: 0.35...1.0,
-                        label: "\(Int(providerVisibility.popupOpacity * 100))%"
+                        label: "\(Int(providerVisibility.popupTextOpacity * 100))%"
                     )
                     .disabled(!providerVisibility.popupEnabled)
                     .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+                    SettingsDivider()
+
+                    SettingsSliderRow(
+                        title: "Shadow Strength",
+                        subtitle: "Adjust the text drop shadow intensity.",
+                        value: Binding(
+                            get: {
+                                providerVisibility.popupTextShadowStrength
+                            },
+                            set: { strength in
+                                providerVisibility.setPopupTextShadowStrength(strength)
+                            }
+                        ),
+                        range: 0...3,
+                        label: "\(Int(providerVisibility.popupTextShadowStrength * 100))%"
+                    )
+                    .disabled(!providerVisibility.popupEnabled)
+                    .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1561,6 +1761,9 @@ private struct SettingsStepperRow: View {
     let subtitle: String
     let value: Int
     let range: ClosedRange<Int>
+    var step: Int = 1
+    var labelSuffix: String = ""
+    var labelWidth: CGFloat = 28
     let onChange: (Int) -> Void
 
     var body: some View {
@@ -1583,11 +1786,11 @@ private struct SettingsStepperRow: View {
                 set: { nextValue in
                     onChange(nextValue)
                 }
-            ), in: range) {
-                Text("\(value)")
+            ), in: range, step: max(step, 1)) {
+                Text("\(value)\(labelSuffix)")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .frame(width: 28, alignment: .trailing)
+                    .frame(width: labelWidth, alignment: .trailing)
             }
             .frame(width: 92)
         }
@@ -2368,8 +2571,7 @@ final class SessionPopupController {
 
         providerVisibility.$popupOpacity
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] opacity in
-                self?.panel?.alphaValue = CGFloat(opacity)
+            .sink { [weak self] _ in
                 self?.updatePopup()
             }
             .store(in: &cancellables)
@@ -2395,6 +2597,34 @@ final class SessionPopupController {
             }
             .store(in: &cancellables)
 
+        providerVisibility.$popupBackdropOpacity
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupTextOpacity
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupTextShadowStrength
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupTextShadowRadius
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
         providerVisibility.$popupParentSessionCount
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -2402,7 +2632,7 @@ final class SessionPopupController {
             }
             .store(in: &cancellables)
 
-        providerVisibility.$popupResponseLineLimit
+        providerVisibility.$popupResponseCharacterLimit
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updatePopup()
@@ -2447,19 +2677,24 @@ final class SessionPopupController {
             sessions: sessions,
             popupWidth: CGFloat(providerVisibility.popupWindowWidth),
             popupScale: CGFloat(providerVisibility.popupScale),
-            responseLineLimit: providerVisibility.popupResponseLineLimit
+            textOpacity: providerVisibility.popupTextOpacity,
+            textShadowStrength: providerVisibility.popupTextShadowStrength,
+            textShadowRadius: CGFloat(ProviderPreferenceDefaults.popupTextShadowRadius),
+            alignsHeaderTrailing: providerVisibility.popupWindowPosition.alignsPopupHeaderTrailing,
+            responseCharacterLimit: providerVisibility.popupResponseCharacterLimit
         )
         let hostingController = ensureHostingController(rootView: rootView)
         hostingController.rootView = rootView
+        hostingController.view.frame.size.width = popupFrameWidth
+        hostingController.view.invalidateIntrinsicContentSize()
         hostingController.view.layoutSubtreeIfNeeded()
 
         let fittingSize = hostingController.view.fittingSize
         let panel = ensurePanel(hostingController: hostingController)
-        panel.alphaValue = CGFloat(providerVisibility.popupOpacity)
-        panel.setFrame(
-            positionedFrame(for: fittingSize, position: providerVisibility.popupWindowPosition),
-            display: true
-        )
+        panel.alphaValue = 1
+        let frame = positionedFrame(for: fittingSize, position: providerVisibility.popupWindowPosition)
+        hostingController.view.frame.size = frame.size
+        panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
     }
 
@@ -2509,8 +2744,8 @@ final class SessionPopupController {
     }
 
     private func positionedFrame(for fittingSize: NSSize, position: PopupWindowPosition) -> NSRect {
+        let width = popupFrameWidth
         let scale = CGFloat(providerVisibility.popupScale)
-        let width = max(fittingSize.width, CGFloat(providerVisibility.popupWindowWidth) * scale)
         let height = max(fittingSize.height, 44 * scale)
         let screenFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -2546,28 +2781,42 @@ final class SessionPopupController {
             height: height
         )
     }
+
+    private var popupFrameWidth: CGFloat {
+        CGFloat(providerVisibility.popupWindowWidth) * CGFloat(providerVisibility.popupScale)
+    }
 }
 
 private struct LatestParentSessionsPopupView: View {
     let sessions: [AgentSession]
     let popupWidth: CGFloat
     let popupScale: CGFloat
-    let responseLineLimit: Int
+    let textOpacity: Double
+    let textShadowStrength: Double
+    let textShadowRadius: CGFloat
+    let alignsHeaderTrailing: Bool
+    let responseCharacterLimit: Int
 
     var body: some View {
-        let metrics = PopupScaleMetrics(scale: popupScale)
+        let metrics = PopupScaleMetrics(
+            scale: popupScale,
+            textOpacity: textOpacity,
+            textShadowStrength: textShadowStrength,
+            textShadowRadius: textShadowRadius
+        )
 
         VStack(alignment: .leading, spacing: metrics.stackSpacing) {
             ForEach(sessions, id: \.id) { session in
                 PopupSessionRow(
                     session: session,
                     metrics: metrics,
-                    responseLineLimit: responseLineLimit
+                    alignsHeaderTrailing: alignsHeaderTrailing,
+                    responseCharacterLimit: responseCharacterLimit
                 )
             }
         }
-        .padding(.horizontal, metrics.horizontalPadding)
-        .padding(.vertical, metrics.verticalPadding)
+        .padding(.horizontal, metrics.horizontalPadding + metrics.shadowBleedPadding)
+        .padding(.vertical, metrics.verticalPadding + metrics.shadowBleedPadding)
         .frame(width: popupWidth * metrics.scale, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
@@ -2576,43 +2825,48 @@ private struct LatestParentSessionsPopupView: View {
 private struct PopupSessionRow: View {
     let session: AgentSession
     let metrics: PopupScaleMetrics
-    let responseLineLimit: Int
+    let alignsHeaderTrailing: Bool
+    let responseCharacterLimit: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
             HStack(alignment: .center, spacing: metrics.titleSpacing) {
+                if alignsHeaderTrailing {
+                    Spacer(minLength: 0)
+                }
+
                 providerIcon
 
                 Text(session.displayTitle)
                     .font(.system(size: metrics.titleFontSize, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.96))
+                    .foregroundStyle(.white.opacity(metrics.textOpacity))
+                    .popupTextShadow(metrics)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.horizontal, metrics.titleHorizontalPadding)
                     .padding(.vertical, metrics.titleVerticalPadding)
-                    .background(
-                        PopupTextBackdrop(
-                            cornerRadius: metrics.titleBackdropCornerRadius,
-                            opacity: metrics.titleBackdropOpacity
-                        )
+                    .frame(
+                        maxWidth: alignsHeaderTrailing ? nil : .infinity,
+                        alignment: alignsHeaderTrailing ? .trailing : .leading
                     )
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .padding(
+                alignsHeaderTrailing ? .trailing : .leading,
+                metrics.responseHorizontalPadding
+            )
+            .frame(
+                maxWidth: .infinity,
+                alignment: alignsHeaderTrailing ? .trailing : .leading
+            )
 
             Text(responseText)
                 .font(.system(size: metrics.responseFontSize))
-                .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(responseLineLimit)
+                .foregroundStyle(.white.opacity(metrics.textOpacity))
                 .truncationMode(.tail)
+                .popupTextShadow(metrics)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, metrics.responseHorizontalPadding)
                 .padding(.vertical, metrics.responseVerticalPadding)
-                .background(
-                    PopupTextBackdrop(
-                        cornerRadius: metrics.responseBackdropCornerRadius,
-                        opacity: metrics.responseBackdropOpacity
-                    )
-                )
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2630,8 +2884,10 @@ private struct PopupSessionRow: View {
     }
 
     private func providerIconImage(highlightPhase: CGFloat?) -> some View {
-        Image(nsImage: AgentImages.menuBarStatus(
-            [AgentMenuBarStatus(agent: session.agent, state: session.state)],
+        Image(nsImage: AgentImages.menuHeaderIcon(
+            for: session.agent,
+            color: true,
+            state: session.state,
             highlightPhase: highlightPhase
         ))
         .resizable()
@@ -2642,44 +2898,76 @@ private struct PopupSessionRow: View {
     }
 
     private var responseText: String {
-        AgentTextSanitizer.latestResponseText(session.latestResponseText) ?? ""
+        let text = AgentTextSanitizer.latestResponseText(session.latestResponseText) ?? ""
+        return Self.truncated(text, to: responseCharacterLimit)
     }
-}
 
-private struct PopupTextBackdrop: View {
-    let cornerRadius: CGFloat
-    let opacity: Double
+    private static func truncated(_ text: String, to limit: Int) -> String {
+        guard text.count > limit else {
+            return text
+        }
 
-    var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(Color.black.opacity(opacity))
-            .shadow(color: .black.opacity(0.18), radius: 3, x: 0, y: 1)
+        let truncatedLimit = max(limit - 3, 1)
+        let truncatedText = String(text.prefix(truncatedLimit))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return truncatedText + "..."
     }
 }
 
 private struct PopupScaleMetrics {
     let scale: CGFloat
+    let textOpacity: Double
+    let textShadowStrength: Double
+    let textShadowRadius: CGFloat
 
-    init(scale: CGFloat) {
+    init(scale: CGFloat, textOpacity: Double, textShadowStrength: Double, textShadowRadius: CGFloat) {
         self.scale = min(max(scale, 0.5), 1.5)
+        self.textOpacity = min(max(textOpacity, 0.35), 1.0)
+        self.textShadowStrength = min(max(textShadowStrength, 0), 3.0)
+        self.textShadowRadius = min(max(textShadowRadius, 0), 16)
     }
 
     var stackSpacing: CGFloat { 6 * scale }
     var rowSpacing: CGFloat { 4 * scale }
-    var titleSpacing: CGFloat { 6 * scale }
+    var titleSpacing: CGFloat { 3 * scale }
     var horizontalPadding: CGFloat { 4 * scale }
     var verticalPadding: CGFloat { 3 * scale }
     var titleHorizontalPadding: CGFloat { 5 * scale }
     var titleVerticalPadding: CGFloat { 2 * scale }
     var responseHorizontalPadding: CGFloat { 6 * scale }
     var responseVerticalPadding: CGFloat { 3 * scale }
-    var titleBackdropCornerRadius: CGFloat { 5 * scale }
-    var responseBackdropCornerRadius: CGFloat { 6 * scale }
-    var titleBackdropOpacity: Double { 0.28 }
-    var responseBackdropOpacity: Double { 0.24 }
+    var shadowBleedPadding: CGFloat { textShadowRadius + 2 * scale }
     var iconSize: CGFloat { 16 * scale }
     var titleFontSize: CGFloat { 12 * scale }
     var responseFontSize: CGFloat { 11 * scale }
+
+    func textShadowLayerOpacity(_ layer: Int) -> Double {
+        min(max(textShadowStrength - Double(layer), 0), 1)
+    }
+}
+
+private extension View {
+    func popupTextShadow(_ metrics: PopupScaleMetrics) -> some View {
+        self
+            .shadow(
+                color: .black.opacity(metrics.textShadowLayerOpacity(0)),
+                radius: metrics.textShadowRadius,
+                x: 0,
+                y: 0
+            )
+            .shadow(
+                color: .black.opacity(metrics.textShadowLayerOpacity(1)),
+                radius: metrics.textShadowRadius,
+                x: 0,
+                y: 0
+            )
+            .shadow(
+                color: .black.opacity(metrics.textShadowLayerOpacity(2)),
+                radius: metrics.textShadowRadius,
+                x: 0,
+                y: 0
+            )
+    }
 }
 
 @MainActor
@@ -2802,6 +3090,20 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .sink { [weak self] _ in
                 self?.controller.applyDisplayPreferences()
                 self?.updateStatusIcons()
+                self?.setNeedsMenuRebuild()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.setNeedsMenuRebuild()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupWindowPosition
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
                 self?.setNeedsMenuRebuild()
             }
             .store(in: &cancellables)
@@ -3039,9 +3341,39 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        menu.addItem(popupToggleMenuItem())
+        menu.addItem(popupPositionMenuItem())
         menu.addItem(actionItem(title: "Settings", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(actionItem(title: "Quit AgentsBar", action: #selector(quit), keyEquivalent: "q"))
+    }
+
+    private func popupToggleMenuItem() -> NSMenuItem {
+        let item = actionItem(title: "Popup", action: #selector(togglePopup))
+        item.image = menuSymbol(named: "bubble.left", accessibilityDescription: "Popup")
+        item.state = providerVisibility.popupEnabled ? .on : .off
+        return item
+    }
+
+    private func popupPositionMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Popup Position", action: nil, keyEquivalent: "")
+        item.image = menuSymbol(named: "mappin.and.ellipse", accessibilityDescription: "Popup Position")
+        let submenu = NSMenu()
+
+        for position in PopupWindowPosition.allCases {
+            let positionItem = NSMenuItem(
+                title: position.title,
+                action: #selector(setPopupWindowPosition(_:)),
+                keyEquivalent: ""
+            )
+            positionItem.target = self
+            positionItem.representedObject = position.rawValue
+            positionItem.state = providerVisibility.popupWindowPosition == position ? .on : .off
+            submenu.addItem(positionItem)
+        }
+
+        item.submenu = submenu
+        return item
     }
 
     private func appendAgentSection(_ agent: AgentKind) {
@@ -3074,6 +3406,18 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         return item
     }
 
+    private func menuSymbol(named systemSymbolName: String, accessibilityDescription: String) -> NSImage? {
+        guard let image = NSImage(
+            systemSymbolName: systemSymbolName,
+            accessibilityDescription: accessibilityDescription
+        ) else {
+            return nil
+        }
+
+        image.isTemplate = true
+        return image.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)) ?? image
+    }
+
     @objc private func reloadState() {
         controller.reload()
         updateStatusIcons()
@@ -3086,6 +3430,21 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func openSettings() {
         SettingsWindowController.shared.open()
+    }
+
+    @objc private func togglePopup() {
+        providerVisibility.setPopupEnabled(!providerVisibility.popupEnabled)
+        setNeedsMenuRebuild()
+    }
+
+    @objc private func setPopupWindowPosition(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let position = PopupWindowPosition(rawValue: rawValue) else {
+            return
+        }
+
+        providerVisibility.setPopupWindowPosition(position)
+        setNeedsMenuRebuild()
     }
 
     @objc private func quit() {

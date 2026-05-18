@@ -164,6 +164,7 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     public var latestResponseText: String?
     public var latestResponsePhase: String?
     public var latestResponseUpdatedAt: Date?
+    public var stateChangedAt: Date?
 
     public var id: String {
         "\(agent.rawValue):\(sessionId)"
@@ -190,7 +191,8 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
         transcriptPath: String? = nil,
         latestResponseText: String? = nil,
         latestResponsePhase: String? = nil,
-        latestResponseUpdatedAt: Date? = nil
+        latestResponseUpdatedAt: Date? = nil,
+        stateChangedAt: Date? = nil
     ) {
         self.agent = agent
         self.sessionId = sessionId
@@ -209,6 +211,7 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
         self.latestResponseText = latestResponseText
         self.latestResponsePhase = latestResponsePhase
         self.latestResponseUpdatedAt = latestResponseUpdatedAt
+        self.stateChangedAt = stateChangedAt ?? updatedAt
     }
 
     public var displayTitle: String {
