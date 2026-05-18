@@ -2929,8 +2929,7 @@ private struct PopupSessionRow: View {
     }
 
     private var responseText: String? {
-        guard session.state != .working,
-              let text = AgentTextSanitizer.latestResponseText(session.latestResponseText) else {
+        guard let text = AgentTextSanitizer.latestResponseText(session.latestResponseText) else {
             return nil
         }
 
@@ -3921,10 +3920,6 @@ private struct SessionMenuRow: View {
 
     private var latestResponseText: String? {
         guard effectiveLatestResponseLineLimit > 0 else {
-            return nil
-        }
-
-        if session.state == .working {
             return nil
         }
 

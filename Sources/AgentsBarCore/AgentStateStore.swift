@@ -74,8 +74,13 @@ public final class AgentStateStore: ObservableObject {
         let now = event.updatedAt ?? receivedAt
         let key = Self.key(agent: event.agent, sessionId: event.sessionId)
         let existing = sessions.first { Self.key(agent: $0.agent, sessionId: $0.sessionId) == key }
-        let latestResponseText = event.latestResponseText ?? existing?.latestResponseText
-        let latestResponsePhase = event.latestResponsePhase ?? existing?.latestResponsePhase
+        let clearsLatestResponse = Self.clearsLatestResponse(existing: existing, event: event)
+        let latestResponseText = clearsLatestResponse
+            ? nil
+            : (event.latestResponseText ?? existing?.latestResponseText)
+        let latestResponsePhase = clearsLatestResponse
+            ? nil
+            : (event.latestResponsePhase ?? existing?.latestResponsePhase)
         let latestResponseUpdatedAt = Self.latestResponseUpdatedAt(
             existing: existing,
             eventText: event.latestResponseText,
@@ -521,6 +526,19 @@ public final class AgentStateStore: ObservableObject {
 
     private static func key(agent: AgentKind, sessionId: String) -> String {
         "\(agent.rawValue):\(sessionId)"
+    }
+
+    private static func clearsLatestResponse(existing: AgentSession?, event: AgentEvent) -> Bool {
+        guard event.latestResponseText == nil,
+              existing?.latestResponseText != nil else {
+            return false
+        }
+
+        if event.event == "UserPromptSubmit" || event.event == "user_message" {
+            return true
+        }
+
+        return event.state == .working && existing?.state != .working
     }
 
     private static func latestResponseUpdatedAt(

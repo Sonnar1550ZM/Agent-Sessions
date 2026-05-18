@@ -76,6 +76,33 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(session?.latestResponseUpdatedAt, secondTime)
     }
 
+    func testLatestResponseClearsWhenNewUserPromptStarts() {
+        let responseTime = Date(timeIntervalSince1970: 1_000)
+        let promptTime = responseTime.addingTimeInterval(30)
+        let store = AgentStateStore(persistence: nil)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "a",
+            state: .idle,
+            updatedAt: responseTime,
+            latestResponseText: "Previous response",
+            latestResponsePhase: "final_answer"
+        ))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "a",
+            state: .working,
+            event: "UserPromptSubmit",
+            updatedAt: promptTime
+        ))
+
+        let session = store.visibleSessions(for: .codex, now: promptTime).first
+        XCTAssertNil(session?.latestResponseText)
+        XCTAssertNil(session?.latestResponsePhase)
+        XCTAssertNil(session?.latestResponseUpdatedAt)
+    }
+
     func testLatestPopupParentSessionUsesNewestSessionTimestamp() {
         let base = Date(timeIntervalSince1970: 1_000)
         let store = AgentStateStore(persistence: nil)

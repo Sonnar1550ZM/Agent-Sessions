@@ -110,4 +110,19 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.latestResponseText, "現在確認しています。")
         XCTAssertEqual(parsed.latestResponsePhase, "commentary")
     }
+
+    func testClearsLatestResponseAfterNewUserMessage() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"前回の応答"}],"phase":"final_answer"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"次の依頼"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .working)
+        XCTAssertEqual(parsed.event, "user_message")
+        XCTAssertNil(parsed.latestResponseText)
+        XCTAssertNil(parsed.latestResponsePhase)
+    }
 }

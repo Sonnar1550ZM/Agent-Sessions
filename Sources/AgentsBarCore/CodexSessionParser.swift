@@ -126,6 +126,9 @@ public enum CodexSessionParser {
                 }
                 if itemType == "message", let role = payload["role"] as? String, role == "user" {
                     state = .working
+                    event = "user_message"
+                    latestResponseText = nil
+                    latestResponsePhase = nil
                 }
                 if itemType == "message", let role = payload["role"] as? String, role == "assistant",
                    let responseText = responseText(from: payload) {

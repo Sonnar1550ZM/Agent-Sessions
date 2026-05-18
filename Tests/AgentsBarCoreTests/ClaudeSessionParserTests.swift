@@ -93,4 +93,15 @@ final class ClaudeSessionParserTests: XCTestCase {
 
         XCTAssertEqual(response, "最新の応答です\n2行目")
     }
+
+    func testLatestAssistantResponseClearsAfterNewUserMessage() {
+        let text = """
+        {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"前回の応答"}],"stop_reason":"end_turn"},"sessionId":"parent-session"}
+        {"type":"user","message":{"role":"user","content":"次の依頼"},"sessionId":"parent-session"}
+        """
+
+        let response = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text)
+
+        XCTAssertNil(response)
+    }
 }

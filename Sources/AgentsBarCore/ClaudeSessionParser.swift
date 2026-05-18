@@ -126,6 +126,7 @@ public enum ClaudeSessionParser {
                 }
             } else if type == "user" || type == "attachment" {
                 state = .working
+                latestResponseText = nil
             }
         }
 
@@ -149,14 +150,22 @@ public enum ClaudeSessionParser {
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let data = line.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  object["type"] as? String == "assistant",
-                  let message = object["message"] as? [String: Any],
-                  let responseText = assistantResponseText(from: message) else {
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 continue
             }
 
-            latestResponseText = responseText
+            switch object["type"] as? String {
+            case "assistant":
+                guard let message = object["message"] as? [String: Any],
+                      let responseText = assistantResponseText(from: message) else {
+                    continue
+                }
+                latestResponseText = responseText
+            case "user", "attachment":
+                latestResponseText = nil
+            default:
+                continue
+            }
         }
 
         return latestResponseText
