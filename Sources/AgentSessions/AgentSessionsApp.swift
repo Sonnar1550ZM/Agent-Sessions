@@ -1,6 +1,7 @@
 import AgentSessionsCore
 import AppKit
 import Combine
+import CoreText
 import QuartzCore
 import ServiceManagement
 import SwiftUI
@@ -1379,6 +1380,7 @@ private struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
+            .contentMargins(.top, 6, for: .scrollContent)
             .navigationTitle("Settings")
             .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
         } detail: {
@@ -1567,6 +1569,30 @@ private struct GeneralSettingsView: View {
                         }
                     )
                 )
+            }
+
+            SettingsGroupBox(
+                title: "Application",
+                subtitle: "App-level actions for Agent Sessions."
+            ) {
+                HStack(alignment: .center, spacing: 16) {
+                    SettingsRowLabel(
+                        title: "Quit",
+                        subtitle: "Close Agent Sessions."
+                    )
+
+                    Spacer()
+
+                    Button(role: .destructive) {
+                        NSApplication.shared.terminate(nil)
+                    } label: {
+                        Label("Quit Agent Sessions", systemImage: "power")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .help("Quit Agent Sessions")
+                }
+                .padding(.vertical, 5)
             }
         }
         .onAppear {
@@ -3408,6 +3434,8 @@ final class AppController: ObservableObject {
 final class SessionPopupController {
     private static let appearanceAnimationDuration: TimeInterval = 0.32
     private static let disappearanceAnimationDuration: TimeInterval = 0.24
+    private static let frameUpdateAnimationDuration: TimeInterval = 0.18
+    private static let emptySessionCloseDelay: TimeInterval = 0.35
     private static let appearanceAnimationOffset: CGFloat = 14
     private static let mouseProximityCheckInterval: TimeInterval = 1.0 / 30.0
     private static let mouseProximityMargin: CGFloat = 30
@@ -3425,6 +3453,7 @@ final class SessionPopupController {
     private var panel: NSPanel?
     private var hostingController: NSHostingController<LatestParentSessionsPopupView>?
     private var refreshTimer: Timer?
+    private var emptyCloseTimer: Timer?
     private var mouseProximityTimer: Timer?
     private var mouseProximityIsDimmed: Bool?
     private var renderedPopupSignature: String?
@@ -3613,15 +3642,7 @@ final class SessionPopupController {
         let displayInterval = providerVisibility.popupDisplayInterval
         let now = Date()
 
-        let sessions = visibleSessions ?? {
-            let includedAgents = Set(AgentKind.allCases.filter { providerVisibility.isPopupVisible(for: $0) })
-            return controller.store.popupParentSessions(
-                now: now,
-                displayInterval: displayInterval,
-                includedAgents: includedAgents,
-                limit: providerVisibility.popupParentSessionCount
-            )
-        }()
+        let sessions = visibleSessions ?? currentPopupSessions(now: now)
 
         var earliestExpiration: Date?
         for session in sessions where !session.state.isActive {
@@ -3649,19 +3670,65 @@ final class SessionPopupController {
 
     private func updatePopup() {
         guard providerVisibility.popupEnabled else {
+            cancelDeferredPopupClose()
             closePopup()
             scheduleNextPopupCheck(visibleSessions: [])
             return
         }
 
         let now = Date()
+        let sessions = currentPopupSessions(now: now)
+        guard !sessions.isEmpty else {
+            deferPopupCloseForTransientEmptyState()
+            scheduleNextPopupCheck(visibleSessions: [])
+            return
+        }
+
+        cancelDeferredPopupClose()
+        showPopup(sessions: sessions)
+        scheduleNextPopupCheck(visibleSessions: sessions)
+    }
+
+    private func currentPopupSessions(now: Date = Date()) -> [AgentSession] {
         let includedAgents = Set(AgentKind.allCases.filter { providerVisibility.isPopupVisible(for: $0) })
-        let sessions = controller.store.popupParentSessions(
+        return controller.store.popupParentSessions(
             now: now,
             displayInterval: providerVisibility.popupDisplayInterval,
             includedAgents: includedAgents,
             limit: providerVisibility.popupParentSessionCount
         )
+    }
+
+    private func deferPopupCloseForTransientEmptyState() {
+        guard panel?.isVisible == true, popupVisibilityState != .hidden else {
+            closePopup()
+            return
+        }
+
+        guard emptyCloseTimer == nil else {
+            return
+        }
+
+        let timer = Timer(timeInterval: Self.emptySessionCloseDelay, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.closePopupIfStillEmpty()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        emptyCloseTimer = timer
+    }
+
+    private func closePopupIfStillEmpty() {
+        emptyCloseTimer?.invalidate()
+        emptyCloseTimer = nil
+
+        guard providerVisibility.popupEnabled else {
+            closePopup()
+            scheduleNextPopupCheck(visibleSessions: [])
+            return
+        }
+
+        let sessions = currentPopupSessions()
         guard !sessions.isEmpty else {
             closePopup()
             scheduleNextPopupCheck(visibleSessions: [])
@@ -3670,6 +3737,11 @@ final class SessionPopupController {
 
         showPopup(sessions: sessions)
         scheduleNextPopupCheck(visibleSessions: sessions)
+    }
+
+    private func cancelDeferredPopupClose() {
+        emptyCloseTimer?.invalidate()
+        emptyCloseTimer = nil
     }
 
     private func showPopup(sessions: [AgentSession]) {
@@ -3709,7 +3781,11 @@ final class SessionPopupController {
         let frame = positionedFrame(for: fittingSize, position: providerVisibility.popupWindowPosition)
         hostingController.view.frame.size = frame.size
 
-        let shouldAnimateAppearance = !panel.isVisible || popupVisibilityState == .hidden || popupVisibilityState == .disappearing
+        if popupVisibilityState == .disappearing {
+            cancelPopupDisappearance(view: hostingController.view)
+        }
+
+        let shouldAnimateAppearance = !panel.isVisible || popupVisibilityState == .hidden
         let appearanceAnimationGeneration: Int?
         if shouldAnimateAppearance {
             popupAnimationGeneration += 1
@@ -3719,7 +3795,7 @@ final class SessionPopupController {
             appearanceAnimationGeneration = nil
         }
 
-        panel.setFrame(frame, display: true)
+        updatePopupFrame(panel, to: frame, animated: !shouldAnimateAppearance && panel.isVisible)
         updatePopupPanelAlpha(animated: false)
 
         if let animationGeneration = appearanceAnimationGeneration {
@@ -3739,6 +3815,12 @@ final class SessionPopupController {
             }
         }
         renderedPopupSignature = renderSignature
+    }
+
+    private func cancelPopupDisappearance(view: NSView) {
+        popupAnimationGeneration += 1
+        popupVisibilityState = .visible
+        resetPopupContentAnimation(view)
     }
 
     private func closePopup() {
@@ -3912,6 +3994,26 @@ final class SessionPopupController {
             dy: -Self.mouseProximityMargin
         )
         return proximityFrame.contains(mouseLocation)
+    }
+
+    private func updatePopupFrame(_ panel: NSPanel, to frame: NSRect, animated: Bool) {
+        guard animated, !framesAreEquivalent(panel.frame, frame) else {
+            panel.setFrame(frame, display: true)
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.frameUpdateAnimationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(frame, display: true)
+        }
+    }
+
+    private func framesAreEquivalent(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+        abs(lhs.origin.x - rhs.origin.x) < 0.5
+            && abs(lhs.origin.y - rhs.origin.y) < 0.5
+            && abs(lhs.size.width - rhs.size.width) < 0.5
+            && abs(lhs.size.height - rhs.size.height) < 0.5
     }
 
     private func positionedFrame(for fittingSize: NSSize, position: PopupWindowPosition) -> NSRect {
@@ -4434,78 +4536,81 @@ private struct PopupJustifiedResponseText: NSViewRepresentable {
     let textOpacity: Double
     let lineLimit: Int
 
-    func makeNSView(context: Context) -> WrappingTextField {
-        let textField = WrappingTextField(labelWithString: "")
-        textField.drawsBackground = false
-        textField.isBezeled = false
-        textField.isBordered = false
-        textField.isEditable = false
-        textField.isSelectable = false
-        textField.usesSingleLineMode = false
-        textField.lineBreakMode = .byWordWrapping
-        textField.cell?.wraps = true
-        textField.cell?.isScrollable = false
-        textField.cell?.usesSingleLineMode = false
-        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        textField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return textField
+    func makeNSView(context: Context) -> JustifiedTextView {
+        let textView = JustifiedTextView()
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return textView
     }
 
-    func updateNSView(_ textField: WrappingTextField, context: Context) {
-        configure(textField)
+    func updateNSView(_ textView: JustifiedTextView, context: Context) {
+        configure(textView)
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: WrappingTextField, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: JustifiedTextView, context: Context) -> CGSize? {
         guard let width = proposal.width, width.isFinite, width > 0 else {
             return nil
         }
 
         configure(nsView)
-        nsView.preferredMaxLayoutWidth = width
-
-        let bounds = NSRect(
-            x: 0,
-            y: 0,
-            width: width,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        let measuredHeight = nsView.cell?.cellSize(forBounds: bounds).height
-            ?? nsView.intrinsicContentSize.height
-        let cappedHeight = min(measuredHeight, maximumHeight(for: nsView.font))
-
-        return CGSize(width: width, height: cappedHeight)
+        return nsView.measuredSize(width: width)
     }
 
-    private func configure(_ textField: NSTextField) {
-        let font = NSFont.systemFont(ofSize: fontSize)
-        textField.font = font
-        textField.maximumNumberOfLines = max(lineLimit, 1)
-        textField.lineBreakMode = .byWordWrapping
-        textField.attributedStringValue = attributedText(font: font)
-    }
-
-    private func attributedText(font: NSFont) -> NSAttributedString {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .justified
-        paragraphStyle.lineBreakMode = .byWordWrapping
-
-        return NSAttributedString(
-            string: text,
-            attributes: [
-                .font: font,
-                .foregroundColor: NSColor.white.withAlphaComponent(min(max(textOpacity, 0), 1)),
-                .paragraphStyle: paragraphStyle
-            ]
+    private func configure(_ textView: JustifiedTextView) {
+        textView.configure(
+            text: text,
+            fontSize: fontSize,
+            textOpacity: textOpacity,
+            lineLimit: lineLimit
         )
     }
 
-    private func maximumHeight(for font: NSFont?) -> CGFloat {
-        let font = font ?? NSFont.systemFont(ofSize: fontSize)
-        let lineHeight = ceil(font.ascender - font.descender + font.leading)
-        return lineHeight * CGFloat(max(lineLimit, 1))
-    }
+    final class JustifiedTextView: NSView {
+        // Full justification on very short wrapped fragments creates large CJK/Latin gaps.
+        private static let minimumFillRatioForFullJustification: CGFloat = 0.76
+        private static let softBreak = "\u{200B}"
+        private static let softBreakCharacters = Set<Character>(".:/_-()[]{}")
 
-    final class WrappingTextField: NSTextField {
+        private var renderedText = ""
+        private var renderedFontSize: CGFloat = 0
+        private var renderedTextOpacity: Double = 1
+        private var renderedLineLimit = 1
+        private var renderedFont = NSFont.systemFont(ofSize: 10)
+        private var preferredMaxLayoutWidth: CGFloat = 0
+
+        override var isOpaque: Bool {
+            false
+        }
+
+        func configure(text: String, fontSize: CGFloat, textOpacity: Double, lineLimit: Int) {
+            let normalizedOpacity = min(max(textOpacity, 0), 1)
+            let normalizedLineLimit = max(lineLimit, 1)
+
+            let changed = renderedText != text
+                || abs(renderedFontSize - fontSize) > 0.001
+                || abs(renderedTextOpacity - normalizedOpacity) > 0.001
+                || renderedLineLimit != normalizedLineLimit
+
+            guard changed else {
+                return
+            }
+
+            renderedText = text
+            renderedFontSize = fontSize
+            renderedTextOpacity = normalizedOpacity
+            renderedLineLimit = normalizedLineLimit
+            renderedFont = NSFont.systemFont(ofSize: fontSize)
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+
+        func measuredSize(width: CGFloat) -> CGSize {
+            preferredMaxLayoutWidth = width
+            let result = layoutLines(width: width)
+            let lineCount = max(result.lines.count, renderedText.isEmpty ? 0 : 1)
+            return CGSize(width: width, height: lineHeight * CGFloat(lineCount))
+        }
+
         override func layout() {
             super.layout()
 
@@ -4520,22 +4625,249 @@ private struct PopupJustifiedResponseText: NSViewRepresentable {
 
             preferredMaxLayoutWidth = roundedWidth
             invalidateIntrinsicContentSize()
+            needsDisplay = true
         }
 
         override var intrinsicContentSize: NSSize {
             guard preferredMaxLayoutWidth.isFinite, preferredMaxLayoutWidth > 0 else {
-                let size = super.intrinsicContentSize
-                return NSSize(width: NSView.noIntrinsicMetric, height: size.height)
+                return NSSize(width: NSView.noIntrinsicMetric, height: lineHeight)
             }
 
-            let bounds = NSRect(
-                x: 0,
-                y: 0,
-                width: preferredMaxLayoutWidth,
-                height: CGFloat.greatestFiniteMagnitude
+            return NSSize(width: NSView.noIntrinsicMetric, height: measuredSize(width: preferredMaxLayoutWidth).height)
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            super.draw(dirtyRect)
+
+            guard bounds.width.isFinite,
+                  bounds.width > 0,
+                  let context = NSGraphicsContext.current?.cgContext else {
+                return
+            }
+
+            let result = layoutLines(width: bounds.width)
+            var baselineY = bounds.height - renderedFont.ascender
+
+            context.saveGState()
+            context.textMatrix = .identity
+
+            for (index, layoutLine) in result.lines.enumerated() {
+                defer {
+                    baselineY -= lineHeight
+                }
+
+                guard let line = layoutLine.line else {
+                    continue
+                }
+
+                let isLastRenderedLine = index == result.lines.count - 1
+                let drawLine = lineForDrawing(
+                    line,
+                    layoutLine: layoutLine,
+                    result: result,
+                    isLastRenderedLine: isLastRenderedLine,
+                    width: bounds.width
+                )
+
+                context.textPosition = CGPoint(x: 0, y: baselineY)
+                CTLineDraw(drawLine, context)
+            }
+
+            context.restoreGState()
+        }
+
+        private func lineForDrawing(
+            _ line: CTLine,
+            layoutLine: LayoutLine,
+            result: LayoutResult,
+            isLastRenderedLine: Bool,
+            width: CGFloat
+        ) -> CTLine {
+            guard !layoutLine.endsParagraph,
+                  !(isLastRenderedLine && result.isTruncated),
+                  width > 0,
+                  layoutLine.naturalWidth > 0 else {
+                return line
+            }
+
+            let fillRatio = min(layoutLine.naturalWidth / width, 1)
+            guard fillRatio >= Self.minimumFillRatioForFullJustification else {
+                return line
+            }
+
+            return CTLineCreateJustifiedLine(line, 1.0, Double(width)) ?? line
+        }
+
+        private func layoutLines(width: CGFloat) -> LayoutResult {
+            let attributedText = attributedText()
+            let rawString = attributedText.string as NSString
+            let totalLength = rawString.length
+            guard totalLength > 0, width > 0 else {
+                return LayoutResult(lines: [], consumedLength: 0, totalLength: totalLength)
+            }
+
+            let typesetter = CTTypesetterCreateWithAttributedString(attributedText)
+            var lines: [LayoutLine] = []
+            var index = 0
+
+            while index < totalLength && lines.count < renderedLineLimit {
+                let paragraph = paragraphRange(in: rawString, from: index)
+                if paragraph.remainingLength == 0 {
+                    lines.append(LayoutLine(line: nil, naturalWidth: 0, endsParagraph: true))
+                    index = paragraph.upperBound
+                    continue
+                }
+
+                let suggestedLineLength = suggestedLineLength(
+                    typesetter: typesetter,
+                    startIndex: index,
+                    width: width
+                )
+                let lineLength = min(max(suggestedLineLength, 1), paragraph.remainingLength)
+                let range = CFRange(location: index, length: lineLength)
+                let line = CTTypesetterCreateLine(typesetter, range)
+                let naturalWidth = max(
+                    0,
+                    CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+                        - CGFloat(CTLineGetTrailingWhitespaceWidth(line))
+                )
+                let endsParagraph = lineLength >= paragraph.remainingLength
+
+                lines.append(LayoutLine(line: line, naturalWidth: naturalWidth, endsParagraph: endsParagraph))
+                index += lineLength
+
+                if endsParagraph {
+                    index = paragraph.upperBound
+                } else {
+                    index = skippingSoftWrapWhitespace(in: rawString, from: index, upperBound: paragraph.contentUpperBound)
+                }
+            }
+
+            return LayoutResult(lines: lines, consumedLength: index, totalLength: totalLength)
+        }
+
+        private func suggestedLineLength(typesetter: CTTypesetter, startIndex: Int, width: CGFloat) -> Int {
+            let lineBreak = CTTypesetterSuggestLineBreak(typesetter, startIndex, Double(width))
+            if lineBreak > 0 {
+                return lineBreak
+            }
+
+            return max(CTTypesetterSuggestClusterBreak(typesetter, startIndex, Double(width)), 1)
+        }
+
+        private func paragraphRange(in string: NSString, from index: Int) -> ParagraphRange {
+            let searchRange = NSRange(location: index, length: string.length - index)
+            let newlineRange = string.rangeOfCharacter(from: .newlines, options: [], range: searchRange)
+
+            guard newlineRange.location != NSNotFound else {
+                return ParagraphRange(
+                    remainingLength: string.length - index,
+                    contentUpperBound: string.length,
+                    upperBound: string.length
+                )
+            }
+
+            return ParagraphRange(
+                remainingLength: newlineRange.location - index,
+                contentUpperBound: newlineRange.location,
+                upperBound: newlineRange.location + newlineRange.length
             )
-            let size = cell?.cellSize(forBounds: bounds) ?? super.intrinsicContentSize
-            return NSSize(width: NSView.noIntrinsicMetric, height: size.height)
+        }
+
+        private func skippingSoftWrapWhitespace(in string: NSString, from index: Int, upperBound: Int) -> Int {
+            var currentIndex = index
+
+            while currentIndex < upperBound {
+                let character = string.character(at: currentIndex)
+                guard character == 0x200B || isWrappingWhitespace(character) else {
+                    break
+                }
+                currentIndex += 1
+            }
+
+            return currentIndex
+        }
+
+        private func isWrappingWhitespace(_ character: unichar) -> Bool {
+            guard let scalar = UnicodeScalar(Int(character)) else {
+                return false
+            }
+            return CharacterSet.whitespaces.contains(scalar)
+        }
+
+        private func attributedText() -> NSAttributedString {
+            let font = CTFontCreateWithName(renderedFont.fontName as CFString, renderedFont.pointSize, nil)
+            let color = NSColor.white.withAlphaComponent(renderedTextOpacity).cgColor
+
+            return NSAttributedString(
+                string: Self.textWithSoftBreaks(renderedText),
+                attributes: [
+                    kCTFontAttributeName as NSAttributedString.Key: font,
+                    kCTForegroundColorAttributeName as NSAttributedString.Key: color
+                ]
+            )
+        }
+
+        private static func textWithSoftBreaks(_ text: String) -> String {
+            var result = ""
+            var token = ""
+
+            func flushToken() {
+                guard !token.isEmpty else {
+                    return
+                }
+
+                if token.count >= 24 {
+                    for character in token {
+                        result.append(character)
+                        if softBreakCharacters.contains(character) {
+                            result.append(softBreak)
+                        }
+                    }
+                } else {
+                    result.append(token)
+                }
+
+                token.removeAll(keepingCapacity: true)
+            }
+
+            for character in text {
+                if character.isWhitespace {
+                    flushToken()
+                    result.append(character)
+                } else {
+                    token.append(character)
+                }
+            }
+
+            flushToken()
+            return result
+        }
+
+        private var lineHeight: CGFloat {
+            max(ceil(renderedFont.ascender - renderedFont.descender + renderedFont.leading), 1)
+        }
+
+        private struct LayoutResult {
+            let lines: [LayoutLine]
+            let consumedLength: Int
+            let totalLength: Int
+
+            var isTruncated: Bool {
+                consumedLength < totalLength
+            }
+        }
+
+        private struct LayoutLine {
+            let line: CTLine?
+            let naturalWidth: CGFloat
+            let endsParagraph: Bool
+        }
+
+        private struct ParagraphRange {
+            let remainingLength: Int
+            let contentUpperBound: Int
+            let upperBound: Int
         }
     }
 }
