@@ -10,6 +10,8 @@ final class CodexSessionWatcher {
             watchRoot: Self.watchRoot,
             latestFiles: Self.latestRolloutFiles,
             isRelevantPath: Self.isRelevantRolloutPath,
+            fallbackPollInterval: 1,
+            fallbackPollLeeway: .milliseconds(200),
             loadFull: Self.loadFull(file:modifiedAt:),
             applyDelta: Self.applyDelta(file:modifiedAt:text:base:)
         )

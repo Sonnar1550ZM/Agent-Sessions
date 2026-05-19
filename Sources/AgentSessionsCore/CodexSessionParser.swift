@@ -13,6 +13,8 @@ public struct CodexParsedSession: Equatable, Sendable {
     public var subagentDepth: Int?
     public var latestResponseText: String?
     public var latestResponsePhase: String?
+    public var turnInterrupted: Bool
+    public var interruptedTurnId: String?
 
     public init(
         sessionId: String,
@@ -26,7 +28,9 @@ public struct CodexParsedSession: Equatable, Sendable {
         subagentRole: String? = nil,
         subagentDepth: Int? = nil,
         latestResponseText: String? = nil,
-        latestResponsePhase: String? = nil
+        latestResponsePhase: String? = nil,
+        turnInterrupted: Bool = false,
+        interruptedTurnId: String? = nil
     ) {
         self.sessionId = sessionId
         self.state = state
@@ -40,6 +44,8 @@ public struct CodexParsedSession: Equatable, Sendable {
         self.subagentDepth = subagentDepth
         self.latestResponseText = latestResponseText
         self.latestResponsePhase = latestResponsePhase
+        self.turnInterrupted = turnInterrupted
+        self.interruptedTurnId = interruptedTurnId
     }
 }
 
@@ -73,6 +79,8 @@ public enum CodexSessionParser {
         var subagentDepth: Int?
         var latestResponseText: String?
         var latestResponsePhase: String?
+        var turnInterrupted = false
+        var interruptedTurnId: String?
 
         init(fallbackSessionId: String) {
             self.sessionId = fallbackSessionId
@@ -91,6 +99,8 @@ public enum CodexSessionParser {
             self.subagentDepth = base.subagentDepth
             self.latestResponseText = base.latestResponseText
             self.latestResponsePhase = base.latestResponsePhase
+            self.turnInterrupted = base.turnInterrupted
+            self.interruptedTurnId = base.interruptedTurnId
         }
 
         func toSession() -> CodexParsedSession {
@@ -106,7 +116,9 @@ public enum CodexSessionParser {
                 subagentRole: subagentRole,
                 subagentDepth: subagentDepth,
                 latestResponseText: latestResponseText,
-                latestResponsePhase: latestResponsePhase
+                latestResponsePhase: latestResponsePhase,
+                turnInterrupted: turnInterrupted,
+                interruptedTurnId: interruptedTurnId
             )
         }
     }
@@ -172,18 +184,19 @@ public enum CodexSessionParser {
 
             if type == "response_item" {
                 let itemType = payload["type"] as? String ?? ""
-                if !itemType.isEmpty {
-                    parserState.event = itemType
-                }
-                if itemType == "function_call" || itemType == "function_call_output" || itemType == "custom_tool_call_output" {
-                    parserState.state = .working
-                }
                 if itemType == "message", let role = payload["role"] as? String, role == "user" {
-                    if isSyntheticUserNotification(payload) {
-                        // Synthetic system notifications (e.g. <turn_aborted>,
-                        // <subagent_notification>) are not real user input and
-                        // must not flip the session back to working.
-                    } else {
+                    switch syntheticUserNotification(payload) {
+                    case .turnAborted:
+                        parserState.state = .idle
+                        parserState.event = "turn_aborted"
+                        parserState.turnInterrupted = true
+                        parserState.interruptedTurnId = nil
+                        continue
+                    case .subagentNotification:
+                        continue
+                    case nil:
+                        parserState.turnInterrupted = false
+                        parserState.interruptedTurnId = nil
                         parserState.state = .working
                         parserState.event = "user_message"
                         if parserState.promptTitle.isEmpty,
@@ -192,7 +205,17 @@ public enum CodexSessionParser {
                         }
                         parserState.latestResponseText = nil
                         parserState.latestResponsePhase = nil
+                        continue
                     }
+                }
+                if parserState.turnInterrupted && isWorkingResponseItem(itemType) {
+                    continue
+                }
+                if !itemType.isEmpty {
+                    parserState.event = itemType
+                }
+                if isWorkingResponseItem(itemType) {
+                    parserState.state = .working
                 }
                 if itemType == "message", let role = payload["role"] as? String, role == "assistant",
                    let responseText = responseText(from: payload) {
@@ -206,10 +229,17 @@ public enum CodexSessionParser {
 
             if type == "event_msg" {
                 let eventType = payload["type"] as? String ?? ""
+                if eventType == "task_started" {
+                    let turnId = payload["turn_id"] as? String
+                    if parserState.interruptedTurnId == nil || turnId != parserState.interruptedTurnId {
+                        parserState.turnInterrupted = false
+                        parserState.interruptedTurnId = nil
+                    }
+                }
                 if !eventType.isEmpty {
                     parserState.event = eventType
                 }
-                if ["exec_command_begin", "mcp_tool_call_begin", "patch_apply_begin", "web_search_begin", "agent_message"].contains(eventType) {
+                if !parserState.turnInterrupted && isWorkingEvent(eventType) {
                     parserState.state = .working
                 }
                 if eventType == "agent_message",
@@ -220,10 +250,16 @@ public enum CodexSessionParser {
                 if ["task_complete", "turn_complete", "shutdown_complete", "turn_aborted"].contains(eventType) {
                     parserState.state = .idle
                 }
+                if eventType == "turn_aborted" {
+                    parserState.turnInterrupted = true
+                    parserState.interruptedTurnId = payload["turn_id"] as? String
+                }
                 if let eventCwd = payload["cwd"] as? String, !eventCwd.isEmpty {
                     parserState.cwd = eventCwd
                 }
                 if eventType == "user_message" {
+                    parserState.turnInterrupted = false
+                    parserState.interruptedTurnId = nil
                     parserState.state = .working
                     if parserState.promptTitle.isEmpty,
                        let userTitle = sanitizedUserPromptTitle(payload["message"] as? String) {
@@ -236,22 +272,42 @@ public enum CodexSessionParser {
         }
     }
 
-    private static func isSyntheticUserNotification(_ payload: [String: Any]) -> Bool {
+    private enum SyntheticUserNotification {
+        case turnAborted
+        case subagentNotification
+    }
+
+    private static func isWorkingResponseItem(_ itemType: String) -> Bool {
+        itemType == "function_call"
+            || itemType == "function_call_output"
+            || itemType == "custom_tool_call_output"
+    }
+
+    private static func isWorkingEvent(_ eventType: String) -> Bool {
+        ["exec_command_begin", "mcp_tool_call_begin", "patch_apply_begin", "web_search_begin", "agent_message"].contains(eventType)
+    }
+
+    private static func syntheticUserNotification(_ payload: [String: Any]) -> SyntheticUserNotification? {
         let texts: [String]
         if let stringContent = payload["content"] as? String {
             texts = [stringContent]
         } else if let parts = payload["content"] as? [[String: Any]] {
             texts = parts.compactMap { $0["text"] as? String }
         } else {
-            return false
+            return nil
         }
 
         guard let first = texts.first(where: { !$0.isEmpty }) else {
-            return false
+            return nil
         }
         let trimmed = first.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.hasPrefix("<turn_aborted>")
-            || trimmed.hasPrefix("<subagent_notification>")
+        if trimmed.hasPrefix("<turn_aborted>") {
+            return .turnAborted
+        }
+        if trimmed.hasPrefix("<subagent_notification>") {
+            return .subagentNotification
+        }
+        return nil
     }
 
     private static func responseText(from payload: [String: Any]) -> String? {

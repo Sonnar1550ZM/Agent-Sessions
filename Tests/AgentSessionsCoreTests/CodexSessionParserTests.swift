@@ -70,6 +70,59 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.state, .idle)
     }
 
+    func testSyntheticTurnAbortedMessageEndsWorkingSessionWithoutEventMsg() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"mcp_tool_call_begin"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<turn_aborted>\\nThe user interrupted the previous turn on purpose.\\n</turn_aborted>"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .idle)
+        XCTAssertEqual(parsed.event, "turn_aborted")
+        XCTAssertTrue(parsed.turnInterrupted)
+    }
+
+    func testDelayedToolOutputAfterTurnAbortedDoesNotResumeWorking() {
+        let baseText = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"mcp_tool_call_begin"}}
+        {"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","reason":"interrupted"}}
+        """
+        let base = CodexSessionParser.parse(baseText, fallbackSessionId: "fallback")
+
+        let parsed = CodexSessionParser.parseDelta(
+            """
+            {"type":"response_item","payload":{"type":"function_call_output","call_id":"late","output":"late output from an interrupted tool"}}
+            """,
+            base: base
+        )
+
+        XCTAssertEqual(parsed.state, .idle)
+        XCTAssertTrue(parsed.turnInterrupted)
+    }
+
+    func testNewUserMessageAfterTurnAbortedResumesWorking() {
+        let baseText = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"mcp_tool_call_begin"}}
+        {"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","reason":"interrupted"}}
+        """
+        let base = CodexSessionParser.parse(baseText, fallbackSessionId: "fallback")
+
+        let parsed = CodexSessionParser.parseDelta(
+            """
+            {"type":"event_msg","payload":{"type":"user_message","message":"次の作業をお願いします"}}
+            """,
+            base: base
+        )
+
+        XCTAssertEqual(parsed.state, .working)
+        XCTAssertFalse(parsed.turnInterrupted)
+        XCTAssertEqual(parsed.event, "user_message")
+    }
+
     func testRealUserMessageStillFlipsToWorking() {
         let text = """
         {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}

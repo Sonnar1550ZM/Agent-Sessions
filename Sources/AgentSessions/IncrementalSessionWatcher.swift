@@ -16,6 +16,8 @@ final class IncrementalSessionWatcher<Parsed> {
         let watchRoot: () -> URL
         let latestFiles: (_ limit: Int) -> [URL]
         let isRelevantPath: (String) -> Bool
+        let fallbackPollInterval: TimeInterval
+        let fallbackPollLeeway: DispatchTimeInterval
         let loadFull: (_ file: URL, _ modifiedAt: Date) -> (snapshot: Snapshot, parsed: Parsed)?
         let applyDelta: (_ file: URL, _ modifiedAt: Date, _ text: String, _ base: Parsed) -> (snapshot: Snapshot, parsed: Parsed)?
     }
@@ -42,7 +44,6 @@ final class IncrementalSessionWatcher<Parsed> {
     private var fileTrackers: [String: FileTracker] = [:]
     private static var changePollDelay: TimeInterval { 0.02 }
     private static var minimumChangePollInterval: TimeInterval { 0.05 }
-    private static var fallbackPollInterval: TimeInterval { 300 }
 
     init(adapter: Adapter, handler: @escaping (AgentEvent) -> Void) {
         self.adapter = adapter
@@ -52,7 +53,11 @@ final class IncrementalSessionWatcher<Parsed> {
 
     func start() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: Self.fallbackPollInterval, leeway: .seconds(5))
+        timer.schedule(
+            deadline: .now(),
+            repeating: adapter.fallbackPollInterval,
+            leeway: adapter.fallbackPollLeeway
+        )
         timer.setEventHandler { [weak self] in
             self?.poll()
         }

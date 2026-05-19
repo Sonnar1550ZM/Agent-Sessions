@@ -10,6 +10,8 @@ final class ClaudeSubagentWatcher {
             watchRoot: Self.watchRoot,
             latestFiles: Self.latestSubagentFiles,
             isRelevantPath: Self.isRelevantSubagentPath,
+            fallbackPollInterval: 300,
+            fallbackPollLeeway: .seconds(5),
             loadFull: Self.loadFull(file:modifiedAt:),
             applyDelta: Self.applyDelta(file:modifiedAt:text:base:)
         )

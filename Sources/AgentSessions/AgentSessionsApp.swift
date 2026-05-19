@@ -1,6 +1,7 @@
 import AgentSessionsCore
 import AppKit
 import Combine
+import QuartzCore
 import ServiceManagement
 import SwiftUI
 
@@ -2985,11 +2986,24 @@ final class AppController: ObservableObject {
 
 @MainActor
 final class SessionPopupController {
+    private static let appearanceAnimationDuration: TimeInterval = 0.32
+    private static let disappearanceAnimationDuration: TimeInterval = 0.24
+    private static let appearanceAnimationOffset: CGFloat = 14
+
+    private enum PopupVisibilityState {
+        case hidden
+        case appearing
+        case visible
+        case disappearing
+    }
+
     private let controller: AppController
     private let providerVisibility = ProviderVisibilityStore.shared
     private var panel: NSPanel?
     private var hostingController: NSHostingController<LatestParentSessionsPopupView>?
     private var refreshTimer: Timer?
+    private var popupAnimationGeneration = 0
+    private var popupVisibilityState: PopupVisibilityState = .hidden
     private var cancellables: Set<AnyCancellable> = []
 
     init(controller: AppController) {
@@ -3205,15 +3219,70 @@ final class SessionPopupController {
 
         let fittingSize = hostingController.view.fittingSize
         let panel = ensurePanel(hostingController: hostingController)
-        panel.alphaValue = 1
         let frame = positionedFrame(for: fittingSize, position: providerVisibility.popupWindowPosition)
         hostingController.view.frame.size = frame.size
+
+        let shouldAnimateAppearance = !panel.isVisible || popupVisibilityState == .hidden || popupVisibilityState == .disappearing
+        panel.alphaValue = 1
         panel.setFrame(frame, display: true)
-        panel.orderFrontRegardless()
+
+        if shouldAnimateAppearance {
+            popupAnimationGeneration += 1
+            let animationGeneration = popupAnimationGeneration
+            popupVisibilityState = .appearing
+            preparePopupContentForAppearance(hostingController.view)
+            panel.orderFrontRegardless()
+            animatePopupContentIn(
+                hostingController.view,
+                position: providerVisibility.popupWindowPosition,
+                animationGeneration: animationGeneration
+            )
+        } else {
+            panel.orderFrontRegardless()
+            if popupVisibilityState == .visible {
+                resetPopupContentAnimation(hostingController.view)
+            }
+        }
     }
 
     private func closePopup() {
-        panel?.orderOut(nil)
+        guard let panel, panel.isVisible else {
+            panel?.alphaValue = 1
+            popupVisibilityState = .hidden
+            return
+        }
+        guard popupVisibilityState != .disappearing else {
+            return
+        }
+
+        popupAnimationGeneration += 1
+        let animationGeneration = popupAnimationGeneration
+        popupVisibilityState = .disappearing
+
+        guard let view = hostingController?.view else {
+            panel.orderOut(nil)
+            popupVisibilityState = .hidden
+            return
+        }
+
+        animatePopupContentOut(
+            view,
+            position: providerVisibility.popupWindowPosition,
+            animationGeneration: animationGeneration
+        ) { [weak self, weak panel] in
+            Task { @MainActor in
+                guard let self, self.popupAnimationGeneration == animationGeneration else {
+                    return
+                }
+
+                panel?.orderOut(nil)
+                panel?.alphaValue = 1
+                if let view = self.hostingController?.view {
+                    self.resetPopupContentAnimation(view)
+                }
+                self.popupVisibilityState = .hidden
+            }
+        }
     }
 
     private func ensureHostingController(
@@ -3293,6 +3362,135 @@ final class SessionPopupController {
             y: y,
             width: width,
             height: height
+        )
+    }
+
+    private func preparePopupContentForAppearance(_ view: NSView) {
+        guard let layer = view.layer else {
+            view.alphaValue = 0
+            return
+        }
+
+        layer.removeAnimation(forKey: "popupAppearance")
+        layer.removeAnimation(forKey: "popupDisappearance")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.opacity = 0
+        layer.transform = popupContentStartTransform(for: providerVisibility.popupWindowPosition)
+        CATransaction.commit()
+    }
+
+    private func resetPopupContentAnimation(_ view: NSView) {
+        view.alphaValue = 1
+        guard let layer = view.layer else {
+            return
+        }
+
+        layer.removeAnimation(forKey: "popupAppearance")
+        layer.removeAnimation(forKey: "popupDisappearance")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.opacity = 1
+        layer.transform = CATransform3DIdentity
+        CATransaction.commit()
+    }
+
+    private func animatePopupContentIn(
+        _ view: NSView,
+        position: PopupWindowPosition,
+        animationGeneration: Int
+    ) {
+        guard let layer = view.layer else {
+            view.alphaValue = 1
+            popupVisibilityState = .visible
+            return
+        }
+
+        let opacityAnimation = CABasicAnimation(keyPath: "opacity")
+        opacityAnimation.fromValue = 0
+        opacityAnimation.toValue = 1
+
+        let transformAnimation = CABasicAnimation(keyPath: "transform")
+        transformAnimation.fromValue = popupContentStartTransform(for: position)
+        transformAnimation.toValue = CATransform3DIdentity
+
+        let group = CAAnimationGroup()
+        group.animations = [opacityAnimation, transformAnimation]
+        group.duration = Self.appearanceAnimationDuration
+        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self] in
+            Task { @MainActor in
+                guard let self, self.popupAnimationGeneration == animationGeneration else {
+                    return
+                }
+
+                self.popupVisibilityState = .visible
+            }
+        }
+        layer.opacity = 1
+        layer.transform = CATransform3DIdentity
+        layer.add(group, forKey: "popupAppearance")
+        CATransaction.commit()
+    }
+
+    private func animatePopupContentOut(
+        _ view: NSView,
+        position: PopupWindowPosition,
+        animationGeneration: Int,
+        completion: @escaping @Sendable () -> Void
+    ) {
+        guard let layer = view.layer else {
+            view.alphaValue = 0
+            completion()
+            return
+        }
+
+        let targetTransform = popupContentStartTransform(for: position)
+        let presentationLayer = layer.presentation()
+
+        let opacityAnimation = CABasicAnimation(keyPath: "opacity")
+        opacityAnimation.fromValue = presentationLayer?.opacity ?? layer.opacity
+        opacityAnimation.toValue = 0
+
+        let transformAnimation = CABasicAnimation(keyPath: "transform")
+        transformAnimation.fromValue = presentationLayer?.transform ?? layer.transform
+        transformAnimation.toValue = targetTransform
+
+        let group = CAAnimationGroup()
+        group.animations = [opacityAnimation, transformAnimation]
+        group.duration = Self.disappearanceAnimationDuration
+        group.timingFunction = CAMediaTimingFunction(name: .easeIn)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock {
+            completion()
+        }
+        layer.opacity = 0
+        layer.transform = targetTransform
+        layer.add(group, forKey: "popupDisappearance")
+        CATransaction.commit()
+    }
+
+    private func popupContentStartTransform(for position: PopupWindowPosition) -> CATransform3D {
+        let offset = Self.appearanceAnimationOffset * CGFloat(providerVisibility.popupScale)
+        let yOffset: CGFloat
+
+        switch position {
+        case .topRight, .topLeft, .topCenter:
+            yOffset = offset
+        case .bottomRight, .bottomLeft, .bottomCenter:
+            yOffset = -offset
+        }
+
+        return CATransform3DTranslate(
+            CATransform3DMakeScale(0.985, 0.985, 1),
+            0,
+            yOffset,
+            0
         )
     }
 
@@ -3382,8 +3580,11 @@ private struct PopupSessionRow: View {
                     .font(.system(size: metrics.titleFontSize, weight: .semibold))
                     .foregroundStyle(.white.opacity(metrics.textOpacity))
                     .popupTextShadow(metrics)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .multilineTextAlignment(alignsHeaderTrailing ? .trailing : .leading)
                     .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
                     .padding(.horizontal, metrics.titleHorizontalPadding)
                     .padding(.vertical, metrics.titleVerticalPadding)
                     .frame(
