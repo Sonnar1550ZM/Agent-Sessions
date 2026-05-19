@@ -53,6 +53,35 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.event, "turn_aborted")
     }
 
+    func testTurnAbortedReminderDoesNotResumeWorking() {
+        // After a user interrupt Codex appends a synthetic <turn_aborted>
+        // user message and may follow it with <subagent_notification>
+        // entries. Neither should flip the session back to working.
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"mcp_tool_call_begin"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<turn_aborted>\\nThe user interrupted the previous turn on purpose."}]}}
+        {"type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<subagent_notification>\\n{\\"agent_path\\":\\"abc\\",\\"status\\":\\"completed\\"}"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .idle)
+    }
+
+    func testRealUserMessageStillFlipsToWorking() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"task_complete"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"次の作業をお願いします"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .working)
+    }
+
     func testParsesGuardianAsInternalSubagent() {
         let text = """
         {"type":"session_meta","payload":{"id":"guardian","cwd":"/tmp/project","thread_source":"subagent","source":{"subagent":{"other":"guardian"}}}}

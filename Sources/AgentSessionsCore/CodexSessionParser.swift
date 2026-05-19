@@ -179,14 +179,20 @@ public enum CodexSessionParser {
                     parserState.state = .working
                 }
                 if itemType == "message", let role = payload["role"] as? String, role == "user" {
-                    parserState.state = .working
-                    parserState.event = "user_message"
-                    if parserState.promptTitle.isEmpty,
-                       let userTitle = extractPromptTitle(fromUserMessagePayload: payload) {
-                        parserState.promptTitle = userTitle
+                    if isSyntheticUserNotification(payload) {
+                        // Synthetic system notifications (e.g. <turn_aborted>,
+                        // <subagent_notification>) are not real user input and
+                        // must not flip the session back to working.
+                    } else {
+                        parserState.state = .working
+                        parserState.event = "user_message"
+                        if parserState.promptTitle.isEmpty,
+                           let userTitle = extractPromptTitle(fromUserMessagePayload: payload) {
+                            parserState.promptTitle = userTitle
+                        }
+                        parserState.latestResponseText = nil
+                        parserState.latestResponsePhase = nil
                     }
-                    parserState.latestResponseText = nil
-                    parserState.latestResponsePhase = nil
                 }
                 if itemType == "message", let role = payload["role"] as? String, role == "assistant",
                    let responseText = responseText(from: payload) {
@@ -228,6 +234,24 @@ public enum CodexSessionParser {
                 }
             }
         }
+    }
+
+    private static func isSyntheticUserNotification(_ payload: [String: Any]) -> Bool {
+        let texts: [String]
+        if let stringContent = payload["content"] as? String {
+            texts = [stringContent]
+        } else if let parts = payload["content"] as? [[String: Any]] {
+            texts = parts.compactMap { $0["text"] as? String }
+        } else {
+            return false
+        }
+
+        guard let first = texts.first(where: { !$0.isEmpty }) else {
+            return false
+        }
+        let trimmed = first.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("<turn_aborted>")
+            || trimmed.hasPrefix("<subagent_notification>")
     }
 
     private static func responseText(from payload: [String: Any]) -> String? {

@@ -2485,6 +2485,7 @@ final class AppController: ObservableObject {
     private var server: EventServer?
     private var codexWatcher: CodexSessionWatcher?
     private var claudeSubagentWatcher: ClaudeSubagentWatcher?
+    private var claudeMainInterruptWatcher: ClaudeMainSessionInterruptWatcher?
     private var maintenanceTimer: Timer?
     private let eventEnrichmentQueue = DispatchQueue(label: "app.agentsessions.event-enrichment", qos: .utility)
     private var claudeResponseRefreshWorkItems: [String: [DispatchWorkItem]] = [:]
@@ -2497,6 +2498,7 @@ final class AppController: ObservableObject {
         startServer()
         startCodexWatcher()
         startClaudeSubagentWatcher()
+        startClaudeMainInterruptWatcher()
         startMaintenanceTimer()
     }
 
@@ -2585,6 +2587,16 @@ final class AppController: ObservableObject {
         watcher.start()
         claudeSubagentWatcher = watcher
         refreshSessionTitles()
+    }
+
+    private func startClaudeMainInterruptWatcher() {
+        let watcher = ClaudeMainSessionInterruptWatcher { [weak self] event in
+            Task { @MainActor in
+                self?.applyEvent(event)
+            }
+        }
+        watcher.start()
+        claudeMainInterruptWatcher = watcher
     }
 
     private func applyEvent(_ event: AgentEvent) {

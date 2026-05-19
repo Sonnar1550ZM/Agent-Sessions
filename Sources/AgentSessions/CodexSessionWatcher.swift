@@ -2,67 +2,22 @@ import AgentSessionsCore
 import Foundation
 
 final class CodexSessionWatcher {
-    private struct Snapshot {
-        let event: AgentEvent
-        let fingerprint: String
-    }
-
-    private struct FileTracker {
-        var inode: UInt64
-        var bytesRead: UInt64
-        var modifiedAt: Date
-        var partialTail: Data
-        var baseSession: CodexParsedSession?
-        var lastSnapshot: Snapshot?
-    }
-
-    private let queue = DispatchQueue(
-        label: "app.agentsessions.codex-session-watcher",
-        qos: .userInitiated
-    )
-    private let handler: (AgentEvent) -> Void
-    private var timer: DispatchSourceTimer?
-    private var activityMonitor: FileSystemActivityMonitor?
-    private var pendingChangePoll: DispatchWorkItem?
-    private var pendingChangedPaths: Set<String> = []
-    private var lastPollDate = Date.distantPast
-    private var lastFingerprints: [String: String] = [:]
-    private var fileTrackers: [String: FileTracker] = [:]
-    private static let changePollDelay: TimeInterval = 0.02
-    private static let minimumChangePollInterval: TimeInterval = 0.05
-    private static let fallbackPollInterval: TimeInterval = 300
+    private let inner: IncrementalSessionWatcher<CodexParsedSession>
 
     init(handler: @escaping (AgentEvent) -> Void) {
-        self.handler = handler
+        let adapter = IncrementalSessionWatcher<CodexParsedSession>.Adapter(
+            queueLabel: "app.agentsessions.codex-session-watcher",
+            watchRoot: Self.watchRoot,
+            latestFiles: Self.latestRolloutFiles,
+            isRelevantPath: Self.isRelevantRolloutPath,
+            loadFull: Self.loadFull(file:modifiedAt:),
+            applyDelta: Self.applyDelta(file:modifiedAt:text:base:)
+        )
+        self.inner = IncrementalSessionWatcher(adapter: adapter, handler: handler)
     }
 
-    func start() {
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: Self.fallbackPollInterval, leeway: .seconds(5))
-        timer.setEventHandler { [weak self] in
-            self?.poll()
-        }
-        self.timer = timer
-        activityMonitor = FileSystemActivityMonitor(
-            paths: [Self.watchRoot()],
-            latency: Self.changePollDelay,
-            queue: queue
-        ) { [weak self] paths in
-            self?.scheduleChangedPathPoll(paths)
-        }
-        activityMonitor?.start()
-        timer.resume()
-    }
-
-    func stop() {
-        timer?.cancel()
-        timer = nil
-        activityMonitor?.stop()
-        activityMonitor = nil
-        pendingChangePoll?.cancel()
-        pendingChangePoll = nil
-        pendingChangedPaths.removeAll()
-    }
+    func start() { inner.start() }
+    func stop() { inner.stop() }
 
     static func title(for sessionId: String) -> String? {
         threadTitle(for: sessionId)
@@ -73,7 +28,6 @@ final class CodexSessionWatcher {
               let text = contextText(from: file) else {
             return false
         }
-
         return CodexSessionParser.parse(text, fallbackSessionId: sessionId).isInternalSubagent
     }
 
@@ -81,222 +35,32 @@ final class CodexSessionWatcher {
         CodexSessionFileIndex().status(for: sessionId)
     }
 
-    private func poll() {
-        lastPollDate = Date()
-        var activePaths: Set<String> = []
-        for file in Self.latestRolloutFiles(limit: 50) {
-            let path = file.path
-            activePaths.insert(path)
-            ingest(file)
-        }
-
-        fileTrackers = fileTrackers.filter { activePaths.contains($0.key) }
-    }
-
-    private func scheduleChangedPathPoll(_ paths: [String]) {
-        let relevantPaths = paths.filter(Self.isRelevantRolloutPath)
-        guard !relevantPaths.isEmpty else {
-            return
-        }
-
-        pendingChangedPaths.formUnion(relevantPaths)
-        guard pendingChangePoll == nil else {
-            return
-        }
-
-        let elapsed = Date().timeIntervalSince(lastPollDate)
-        let delay = max(Self.changePollDelay, Self.minimumChangePollInterval - elapsed)
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
-            }
-
-            let paths = self.pendingChangedPaths
-            self.pendingChangedPaths.removeAll()
-            self.pendingChangePoll = nil
-            self.pollChangedPaths(paths)
-        }
-        pendingChangePoll = workItem
-        queue.asyncAfter(deadline: .now() + delay, execute: workItem)
-    }
-
-    private func pollChangedPaths(_ paths: Set<String>) {
-        lastPollDate = Date()
-        for path in paths {
-            ingest(URL(fileURLWithPath: path))
-        }
-    }
-
-    private func ingest(_ file: URL) {
-        let path = file.path
-        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
-        guard let modifiedAt = attrs?[.modificationDate] as? Date,
-              let inode = (attrs?[.systemFileNumber] as? NSNumber)?.uint64Value,
-              let sizeNumber = attrs?[.size] as? NSNumber else {
-            return
-        }
-        let size = sizeNumber.uint64Value
-
-        var tracker = fileTrackers[path]
-        let needsFullLoad = tracker == nil
-            || tracker!.inode != inode
-            || size < tracker!.bytesRead
-
-        let snapshot: Snapshot?
-        if needsFullLoad {
-            let result = Self.makeSnapshotAndParsed(file: file, modifiedAt: modifiedAt)
-            snapshot = result.snapshot
-            fileTrackers[path] = FileTracker(
-                inode: inode,
-                bytesRead: size,
-                modifiedAt: modifiedAt,
-                partialTail: Data(),
-                baseSession: result.parsed,
-                lastSnapshot: snapshot
-            )
-        } else if size == tracker!.bytesRead {
-            snapshot = tracker!.lastSnapshot.flatMap {
-                Self.refreshedSnapshot($0, modifiedAt: modifiedAt)
-            }
-            tracker!.modifiedAt = modifiedAt
-            fileTrackers[path] = tracker
-        } else if let base = tracker!.baseSession {
-            snapshot = Self.makeDeltaSnapshot(
-                file: file,
-                modifiedAt: modifiedAt,
-                tracker: &tracker!,
-                base: base,
-                totalSize: size
-            )
-            fileTrackers[path] = tracker
-        } else {
-            let result = Self.makeSnapshotAndParsed(file: file, modifiedAt: modifiedAt)
-            snapshot = result.snapshot
-            tracker!.bytesRead = size
-            tracker!.modifiedAt = modifiedAt
-            tracker!.partialTail = Data()
-            tracker!.baseSession = result.parsed
-            tracker!.lastSnapshot = snapshot
-            fileTrackers[path] = tracker
-        }
-
-        guard let snapshot else { return }
-
-        let key = snapshot.event.sessionId
-        guard snapshot.fingerprint != lastFingerprints[key] else {
-            return
-        }
-
-        lastFingerprints[key] = snapshot.fingerprint
-        handler(snapshot.event)
-    }
-
-    private static func makeSnapshotAndParsed(
+    private static func loadFull(
         file: URL,
         modifiedAt: Date
-    ) -> (snapshot: Snapshot?, parsed: CodexParsedSession?) {
-        guard let text = contextText(from: file) else {
-            return (nil, nil)
-        }
+    ) -> (snapshot: IncrementalSessionWatcher<CodexParsedSession>.Snapshot, parsed: CodexParsedSession)? {
+        guard let text = contextText(from: file) else { return nil }
         let parsed = CodexSessionParser.parse(text, fallbackSessionId: fallbackSessionId(from: file))
-        guard !parsed.cwd.isEmpty, !parsed.isInternalSubagent else {
-            return (nil, nil)
-        }
+        guard !parsed.cwd.isEmpty, !parsed.isInternalSubagent else { return nil }
         return (snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed), parsed)
     }
 
-    private static func makeDeltaSnapshot(
+    private static func applyDelta(
         file: URL,
         modifiedAt: Date,
-        tracker: inout FileTracker,
-        base: CodexParsedSession,
-        totalSize: UInt64
-    ) -> Snapshot? {
-        guard let handle = try? FileHandle(forReadingFrom: file) else {
-            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
-        }
-        defer { try? handle.close() }
-
-        do {
-            try handle.seek(toOffset: tracker.bytesRead)
-        } catch {
-            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
-        }
-        let deltaData = (try? handle.readToEnd()) ?? Data()
-        var combined = tracker.partialTail + deltaData
-
-        let newline = UInt8(ascii: "\n")
-        if let lastNewlineIndex = combined.lastIndex(of: newline) {
-            let after = combined.index(after: lastNewlineIndex)
-            let partial = combined.suffix(from: after)
-            tracker.partialTail = Data(partial)
-            combined = Data(combined.prefix(upTo: after))
-        } else {
-            tracker.partialTail = combined
-            tracker.bytesRead = totalSize
-            tracker.modifiedAt = modifiedAt
-            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
-        }
-
-        tracker.bytesRead = totalSize - UInt64(tracker.partialTail.count)
-        tracker.modifiedAt = modifiedAt
-
-        guard let text = String(data: combined, encoding: .utf8) else {
-            tracker.baseSession = nil
-            tracker.partialTail = Data()
-            return tracker.lastSnapshot.flatMap { refreshedSnapshot($0, modifiedAt: modifiedAt) }
-        }
-
+        text: String,
+        base: CodexParsedSession
+    ) -> (snapshot: IncrementalSessionWatcher<CodexParsedSession>.Snapshot, parsed: CodexParsedSession)? {
         let parsed = CodexSessionParser.parseDelta(text, base: base)
-        guard !parsed.cwd.isEmpty, !parsed.isInternalSubagent else {
-            return nil
-        }
-
-        let snapshot = snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed)
-        tracker.baseSession = parsed
-        tracker.lastSnapshot = snapshot
-        return snapshot
-    }
-
-    private static func refreshedSnapshot(_ snapshot: Snapshot?, modifiedAt: Date) -> Snapshot? {
-        guard let snapshot else {
-            return nil
-        }
-
-        let age = Date().timeIntervalSince(modifiedAt)
-        guard age > 120, snapshot.event.state != .idle else {
-            return snapshot
-        }
-
-        let event = AgentEvent(
-            agent: snapshot.event.agent,
-            sessionId: snapshot.event.sessionId,
-            state: .idle,
-            title: snapshot.event.title,
-            cwd: snapshot.event.cwd,
-            event: snapshot.event.event,
-            terminal: snapshot.event.terminal,
-            pid: snapshot.event.pid,
-            updatedAt: snapshot.event.updatedAt,
-            parentSessionId: snapshot.event.parentSessionId,
-            subagentNickname: snapshot.event.subagentNickname,
-            subagentRole: snapshot.event.subagentRole,
-            subagentDepth: snapshot.event.subagentDepth,
-            transcriptPath: snapshot.event.transcriptPath,
-            latestResponseText: snapshot.event.latestResponseText,
-            latestResponsePhase: snapshot.event.latestResponsePhase
-        )
-        return Snapshot(
-            event: event,
-            fingerprint: snapshot.fingerprint + "|aged-idle"
-        )
+        guard !parsed.cwd.isEmpty, !parsed.isInternalSubagent else { return nil }
+        return (snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed), parsed)
     }
 
     private static func snapshot(
         file: URL,
         modifiedAt: Date,
         parsed: CodexParsedSession
-    ) -> Snapshot {
+    ) -> IncrementalSessionWatcher<CodexParsedSession>.Snapshot {
         let age = Date().timeIntervalSince(modifiedAt)
         let state: AgentState = age > 120 ? .idle : parsed.state
         let title = threadTitle(for: parsed.sessionId)
@@ -320,7 +84,7 @@ final class CodexSessionWatcher {
             latestResponsePhase: parsed.latestResponsePhase
         )
 
-        return Snapshot(
+        return .init(
             event: event,
             fingerprint: [
                 file.path,

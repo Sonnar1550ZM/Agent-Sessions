@@ -120,6 +120,58 @@ final class ClaudeSessionParserTests: XCTestCase {
         XCTAssertNil(response)
     }
 
+    func testInterruptedSubagentTransitionsToIdle() {
+        // Claude Code writes a synthetic "[Request interrupted by user]" user
+        // message when the user presses Esc. The session must transition to
+        // idle and keep the assistant's last response visible.
+        let text = """
+        {"agentId":"a2d0709031a162f40","attributionAgent":"general-purpose","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"作業中の補足です。"}],"stop_reason":"tool_use"},"cwd":"/tmp/project","sessionId":"parent-session"}
+        {"agentId":"a2d0709031a162f40","attributionAgent":"general-purpose","type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_x","name":"Bash"}],"stop_reason":"tool_use"},"cwd":"/tmp/project","sessionId":"parent-session"}
+        {"agentId":"a2d0709031a162f40","type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"cwd":"/tmp/project","sessionId":"parent-session"}
+        """
+
+        let parsed = ClaudeSessionParser.parseSubagentTranscript(
+            transcriptPath: "/Users/me/.claude/projects/project/parent-session/subagents/agent-a2d0709031a162f40.jsonl",
+            text: text
+        )
+
+        XCTAssertEqual(parsed?.state, .idle)
+        XCTAssertEqual(parsed?.latestResponseText, "作業中の補足です。")
+    }
+
+    func testInterruptedDuringToolUseTransitionsToIdle() {
+        let text = """
+        {"agentId":"a2d0709031a162f40","attributionAgent":"general-purpose","type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_x","name":"Bash"}],"stop_reason":"tool_use"},"cwd":"/tmp/project","sessionId":"parent-session"}
+        {"agentId":"a2d0709031a162f40","type":"user","message":{"role":"user","content":"[Request interrupted by user for tool use]"},"cwd":"/tmp/project","sessionId":"parent-session"}
+        """
+
+        let parsed = ClaudeSessionParser.parseSubagentTranscript(
+            transcriptPath: "/Users/me/.claude/projects/project/parent-session/subagents/agent-a2d0709031a162f40.jsonl",
+            text: text
+        )
+
+        XCTAssertEqual(parsed?.state, .idle)
+    }
+
+    func testIsInterruptedUserMessageRecognisesBothContentShapes() {
+        let stringContent: [String: Any] = [
+            "type": "user",
+            "message": ["role": "user", "content": "[Request interrupted by user]"]
+        ]
+        let arrayContent: [String: Any] = [
+            "type": "user",
+            "message": ["role": "user", "content": [["type": "text", "text": "[Request interrupted by user]"]]]
+        ]
+        let realPrompt: [String: Any] = [
+            "type": "user",
+            "message": ["role": "user", "content": "Please continue."]
+        ]
+
+        XCTAssertTrue(ClaudeSessionParser.isInterruptedUserMessage(stringContent))
+        XCTAssertTrue(ClaudeSessionParser.isInterruptedUserMessage(arrayContent))
+        XCTAssertFalse(ClaudeSessionParser.isInterruptedUserMessage(realPrompt))
+    }
+
     func testLatestAssistantResponseSurvivesToolResultUserMessage() {
         let text = """
         {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"カレントディレクトリの中身を見てみます。"}],"stop_reason":"tool_use"},"sessionId":"parent-session"}

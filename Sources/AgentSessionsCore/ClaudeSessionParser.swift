@@ -181,9 +181,13 @@ public enum ClaudeSessionParser {
                     parserState.state = .idle
                 }
             } else if type == "user" {
-                parserState.state = .working
-                if isHumanUserMessage(object) {
-                    parserState.latestResponseText = nil
+                if isInterruptedUserMessage(object) {
+                    parserState.state = .idle
+                } else {
+                    parserState.state = .working
+                    if isHumanUserMessage(object) {
+                        parserState.latestResponseText = nil
+                    }
                 }
             } else if type == "attachment" {
                 parserState.state = .working
@@ -234,6 +238,27 @@ public enum ClaudeSessionParser {
 
         return parts.contains { part in
             part["type"] as? String == "tool_use"
+        }
+    }
+
+    public static func isInterruptedUserMessage(_ object: [String: Any]) -> Bool {
+        guard object["type"] as? String == "user",
+              let message = object["message"] as? [String: Any] else {
+            return false
+        }
+
+        let texts: [String]
+        if let content = message["content"] as? String {
+            texts = [content]
+        } else if let parts = message["content"] as? [[String: Any]] {
+            texts = parts.compactMap { $0["text"] as? String }
+        } else {
+            return false
+        }
+
+        return texts.contains { text in
+            text.trimmingCharacters(in: .whitespacesAndNewlines)
+                .hasPrefix("[Request interrupted by user")
         }
     }
 
