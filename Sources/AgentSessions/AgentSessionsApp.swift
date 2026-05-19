@@ -2721,7 +2721,9 @@ private enum AgentEventEnricher {
         switch CodexSessionWatcher.fileStatus(for: sessionId) {
         case .active:
             break
-        case .archived, .missing:
+        case .archived:
+            return true
+        case .missing:
             return !(allowsUnresolvedLiveSession && shouldKeepUnresolvedCodexSession(
                 sessionId: sessionId,
                 state: state,
@@ -3245,7 +3247,7 @@ final class AppController: ObservableObject {
                 title: session.title,
                 cwd: session.cwd,
                 event: session.event,
-                allowsUnresolvedLiveSession: false
+                allowsUnresolvedLiveSession: true
             )
         case .claudeCode:
             shouldHideClaudeSession(
@@ -3271,7 +3273,9 @@ final class AppController: ObservableObject {
         switch CodexSessionWatcher.fileStatus(for: sessionId) {
         case .active:
             break
-        case .archived, .missing:
+        case .archived:
+            return true
+        case .missing:
             return !(allowsUnresolvedLiveSession && shouldKeepUnresolvedCodexSession(
                 sessionId: sessionId,
                 state: state,

@@ -570,6 +570,18 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(2)), .idle)
     }
 
+    func testEndedEventRemovesPreviouslyWorkingSession() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "removed", state: .working, updatedAt: base))
+        store.apply(AgentEvent(agent: .codex, sessionId: "removed", state: .ended, updatedAt: base.addingTimeInterval(1)))
+
+        XCTAssertEqual(store.sessions, [])
+        XCTAssertEqual(store.visibleSessions(for: .codex, now: base.addingTimeInterval(2)), [])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(2)), .idle)
+    }
+
     func testCodexMemoryWorkspaceSessionsAreNotVisible() {
         let store = AgentStateStore(persistence: nil)
         let base = Date(timeIntervalSince1970: 1_000)
