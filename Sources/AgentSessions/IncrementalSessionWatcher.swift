@@ -36,6 +36,7 @@ final class IncrementalSessionWatcher<Parsed> {
     private var activityMonitor: FileSystemActivityMonitor?
     private var pendingChangePoll: DispatchWorkItem?
     private var pendingChangedPaths: Set<String> = []
+    private var pendingFullPoll = false
     private var lastPollDate = Date.distantPast
     private var lastFingerprints: [String: String] = [:]
     private var fileTrackers: [String: FileTracker] = [:]
@@ -75,6 +76,7 @@ final class IncrementalSessionWatcher<Parsed> {
         pendingChangePoll?.cancel()
         pendingChangePoll = nil
         pendingChangedPaths.removeAll()
+        pendingFullPoll = false
     }
 
     private func poll() {
@@ -89,9 +91,18 @@ final class IncrementalSessionWatcher<Parsed> {
 
     private func scheduleChangedPathPoll(_ paths: [String]) {
         let relevantPaths = paths.filter(adapter.isRelevantPath)
-        guard !relevantPaths.isEmpty else { return }
+        let watchRoot = adapter.watchRoot()
+        let needsFullPoll = paths.contains { path in
+            Self.isDirectoryEventPath(path, under: watchRoot)
+        }
+        guard !relevantPaths.isEmpty || needsFullPoll else { return }
 
-        pendingChangedPaths.formUnion(relevantPaths)
+        if needsFullPoll {
+            pendingChangedPaths.removeAll()
+            pendingFullPoll = true
+        } else if !pendingFullPoll {
+            pendingChangedPaths.formUnion(relevantPaths)
+        }
         guard pendingChangePoll == nil else { return }
 
         let elapsed = Date().timeIntervalSince(lastPollDate)
@@ -99,12 +110,29 @@ final class IncrementalSessionWatcher<Parsed> {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             let paths = self.pendingChangedPaths
+            let shouldPollAll = self.pendingFullPoll
             self.pendingChangedPaths.removeAll()
+            self.pendingFullPoll = false
             self.pendingChangePoll = nil
-            self.pollChangedPaths(paths)
+            if shouldPollAll {
+                self.poll()
+            } else {
+                self.pollChangedPaths(paths)
+            }
         }
         pendingChangePoll = workItem
         queue.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private static func isDirectoryEventPath(_ path: String, under root: URL) -> Bool {
+        let rootPath = root.standardizedFileURL.path
+        guard path == rootPath || path.hasPrefix(rootPath + "/") else {
+            return false
+        }
+
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
     }
 
     private func pollChangedPaths(_ paths: Set<String>) {
@@ -209,7 +237,9 @@ final class IncrementalSessionWatcher<Parsed> {
             return tracker.lastSnapshot.flatMap { Self.refreshedSnapshot($0, modifiedAt: modifiedAt) }
         }
 
-        tracker.bytesRead = totalSize - UInt64(tracker.partialTail.count)
+        // `partialTail` is already kept in memory, so advance to the real EOF.
+        // Re-reading those bytes on the next delta corrupts the first JSONL line.
+        tracker.bytesRead = totalSize
         tracker.modifiedAt = modifiedAt
 
         guard let text = String(data: combined, encoding: .utf8) else {

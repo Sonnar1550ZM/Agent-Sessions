@@ -24,11 +24,25 @@ final class CodexSessionWatcher {
     }
 
     static func shouldHideSession(_ sessionId: String) -> Bool {
+        parsedSession(for: sessionId)?.isInternalSubagent ?? false
+    }
+
+    static func latestResponse(for sessionId: String) -> (text: String, phase: String?)? {
+        guard let parsed = parsedSession(for: sessionId),
+              !parsed.isInternalSubagent,
+              let latestResponseText = parsed.latestResponseText else {
+            return nil
+        }
+        return (latestResponseText, parsed.latestResponsePhase)
+    }
+
+    private static func parsedSession(for sessionId: String) -> CodexParsedSession? {
         guard let file = rolloutFile(for: sessionId),
               let text = contextText(from: file) else {
-            return false
+            return nil
         }
-        return CodexSessionParser.parse(text, fallbackSessionId: sessionId).isInternalSubagent
+
+        return CodexSessionParser.parse(text, fallbackSessionId: sessionId)
     }
 
     static func fileStatus(for sessionId: String) -> CodexSessionFileStatus {
@@ -41,7 +55,10 @@ final class CodexSessionWatcher {
     ) -> (snapshot: IncrementalSessionWatcher<CodexParsedSession>.Snapshot, parsed: CodexParsedSession)? {
         guard let text = contextText(from: file) else { return nil }
         let parsed = CodexSessionParser.parse(text, fallbackSessionId: fallbackSessionId(from: file))
-        guard !parsed.cwd.isEmpty, !parsed.isInternalSubagent else { return nil }
+        guard !parsed.isInternalSubagent,
+              !parsed.cwd.isEmpty else {
+            return nil
+        }
         return (snapshot(file: file, modifiedAt: modifiedAt, parsed: parsed), parsed)
     }
 

@@ -2127,30 +2127,71 @@ private extension AgentEvent {
             return self
         }
 
-        return AgentEvent(
-            agent: agent,
-            sessionId: sessionId,
-            state: state,
-            title: title,
-            cwd: cwd,
-            event: event,
-            terminal: terminal,
-            pid: pid,
-            updatedAt: date,
-            parentSessionId: parentSessionId,
-            subagentNickname: subagentNickname,
-            subagentRole: subagentRole,
-            subagentDepth: subagentDepth,
-            transcriptPath: transcriptPath,
-            latestResponseText: latestResponseText,
-            latestResponsePhase: latestResponsePhase
-        )
+        var event = self
+        event.updatedAt = date
+        return event
+    }
+
+    func replacingLatestResponse(
+        text: String,
+        phase: String?,
+        transcriptPath: String? = nil
+    ) -> AgentEvent {
+        var event = self
+        event.transcriptPath = transcriptPath ?? self.transcriptPath
+        event.latestResponseText = text
+        event.latestResponsePhase = phase
+        return event
+    }
+}
+
+private enum ClaudeLatestResponseResolver {
+    static func latestResponse(
+        for sessionId: String,
+        transcriptPath: String?
+    ) -> (text: String, transcriptPath: String)? {
+        guard let transcriptPath = resolvedTranscriptPath(sessionId: sessionId, transcriptPath: transcriptPath),
+              let text = tailText(from: URL(fileURLWithPath: transcriptPath)),
+              let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text) else {
+            return nil
+        }
+
+        return (latestResponseText, transcriptPath)
+    }
+
+    private static func resolvedTranscriptPath(sessionId: String, transcriptPath: String?) -> String? {
+        if let path = transcriptPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !path.isEmpty {
+            return path
+        }
+
+        return ClaudeSessionTitleResolver.transcriptPath(for: sessionId)
+    }
+
+    private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return nil
+        }
+        defer { try? handle.close() }
+
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > limit ? size - limit : 0
+        try? handle.seek(toOffset: start)
+        let data = (try? handle.readToEnd()) ?? Data()
+        guard var text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        if start > 0, let newline = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: newline)...])
+        }
+        return text
     }
 }
 
 private enum AgentEventEnricher {
     static func enrichedEvent(for event: AgentEvent) -> AgentEvent {
-        let responseEvent = eventWithClaudeLatestResponse(event)
+        let responseEvent = eventWithLatestResponse(event)
         let enrichedEvent = eventWithClaudeSubagentMetadata(responseEvent)
         return eventWithResolvedTitle(enrichedEvent)
     }
@@ -2192,35 +2233,38 @@ private enum AgentEventEnricher {
         }
     }
 
-    private static func eventWithClaudeLatestResponse(_ event: AgentEvent) -> AgentEvent {
-        guard event.agent == .claudeCode,
+    private static func eventWithLatestResponse(_ event: AgentEvent) -> AgentEvent {
+        switch event.agent {
+        case .codex:
+            return eventWithCodexLatestResponse(event)
+        case .claudeCode:
+            return eventWithClaudeLatestResponse(event)
+        }
+    }
+
+    private static func eventWithCodexLatestResponse(_ event: AgentEvent) -> AgentEvent {
+        guard event.event != "UserPromptSubmit",
               event.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
-              let transcriptPath = claudeTranscriptPath(
-                  sessionId: event.sessionId,
-                  transcriptPath: event.transcriptPath
-              ),
-              let text = tailText(from: URL(fileURLWithPath: transcriptPath)),
-              let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text) else {
+              let latestResponse = CodexSessionWatcher.latestResponse(for: event.sessionId) else {
             return event
         }
 
-        return AgentEvent(
-            agent: event.agent,
-            sessionId: event.sessionId,
-            state: event.state,
-            title: event.title,
-            cwd: event.cwd,
-            event: event.event,
-            terminal: event.terminal,
-            pid: event.pid,
-            updatedAt: event.updatedAt,
-            parentSessionId: event.parentSessionId,
-            subagentNickname: event.subagentNickname,
-            subagentRole: event.subagentRole,
-            subagentDepth: event.subagentDepth,
-            transcriptPath: transcriptPath,
-            latestResponseText: latestResponseText,
-            latestResponsePhase: "assistant"
+        return event.replacingLatestResponse(text: latestResponse.text, phase: latestResponse.phase)
+    }
+
+    private static func eventWithClaudeLatestResponse(_ event: AgentEvent) -> AgentEvent {
+        guard event.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+              let latestResponse = ClaudeLatestResponseResolver.latestResponse(
+                  for: event.sessionId,
+                  transcriptPath: event.transcriptPath
+              ) else {
+            return event
+        }
+
+        return event.replacingLatestResponse(
+            text: latestResponse.text,
+            phase: "assistant",
+            transcriptPath: latestResponse.transcriptPath
         )
     }
 
@@ -2292,35 +2336,6 @@ private enum AgentEventEnricher {
         case .claudeCode:
             ClaudeSessionTitleResolver.title(for: sessionId)
         }
-    }
-
-    private static func claudeTranscriptPath(sessionId: String, transcriptPath: String?) -> String? {
-        if let path = transcriptPath?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !path.isEmpty {
-            return path
-        }
-
-        return ClaudeSessionTitleResolver.transcriptPath(for: sessionId)
-    }
-
-    private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return nil
-        }
-        defer { try? handle.close() }
-
-        let size = (try? handle.seekToEnd()) ?? 0
-        let start = size > limit ? size - limit : 0
-        try? handle.seek(toOffset: start)
-        let data = (try? handle.readToEnd()) ?? Data()
-        guard var text = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-
-        if start > 0, let newline = text.firstIndex(of: "\n") {
-            text = String(text[text.index(after: newline)...])
-        }
-        return text
     }
 
     private static func shouldHideCodexSession(
@@ -2651,48 +2666,6 @@ final class AppController: ObservableObject {
         return updatedAt >= existingStateReferenceDate
     }
 
-    private static func claudeTranscriptPath(sessionId: String, transcriptPath: String?) -> String? {
-        if let path = transcriptPath?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !path.isEmpty {
-            return path
-        }
-
-        return ClaudeSessionTitleResolver.transcriptPath(for: sessionId)
-    }
-
-    private static func latestClaudeResponse(
-        for sessionId: String,
-        transcriptPath: String?
-    ) -> (text: String, transcriptPath: String)? {
-        guard let transcriptPath = claudeTranscriptPath(sessionId: sessionId, transcriptPath: transcriptPath),
-              let text = tailText(from: URL(fileURLWithPath: transcriptPath)),
-              let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text) else {
-            return nil
-        }
-
-        return (latestResponseText, transcriptPath)
-    }
-
-    private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return nil
-        }
-        defer { try? handle.close() }
-
-        let size = (try? handle.seekToEnd()) ?? 0
-        let start = size > limit ? size - limit : 0
-        try? handle.seek(toOffset: start)
-        let data = (try? handle.readToEnd()) ?? Data()
-        guard var text = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-
-        if start > 0, let newline = text.firstIndex(of: "\n") {
-            text = String(text[text.index(after: newline)...])
-        }
-        return text
-    }
-
     private func scheduleClaudeResponseRefreshes(for session: AgentSession) {
         guard session.agent == .claudeCode else {
             return
@@ -2725,7 +2698,7 @@ final class AppController: ObservableObject {
         }
 
         let title = resolvedTitle(for: session) ?? fallbackTitle(for: session)
-        guard let latestClaudeResponse = Self.latestClaudeResponse(
+        guard let latestClaudeResponse = ClaudeLatestResponseResolver.latestResponse(
             for: session.sessionId,
             transcriptPath: transcriptPath ?? session.transcriptPath
         ) else {
@@ -2767,7 +2740,10 @@ final class AppController: ObservableObject {
         for session in store.sessions {
             let title = resolvedTitle(for: session) ?? fallbackTitle(for: session)
             let latestClaudeResponse = session.agent == .claudeCode
-                ? Self.latestClaudeResponse(for: session.sessionId, transcriptPath: session.transcriptPath)
+                ? ClaudeLatestResponseResolver.latestResponse(
+                    for: session.sessionId,
+                    transcriptPath: session.transcriptPath
+                )
                 : nil
             let latestResponseText = latestClaudeResponse?.text ?? session.latestResponseText
             let latestResponsePhase = latestClaudeResponse == nil ? session.latestResponsePhase : "assistant"
