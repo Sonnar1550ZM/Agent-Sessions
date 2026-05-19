@@ -225,37 +225,45 @@ public final class AgentStateStore: ObservableObject {
         allSessions: [AgentSession]
     ) -> [AgentSessionDisplayRow] {
         var rows: [AgentSessionDisplayRow] = []
-        var renderedSessionIds: Set<String> = []
-
         let allBySessionId = Dictionary(uniqueKeysWithValues: allSessions.map { ($0.sessionId, $0) })
-        let topLevelSessions = visibleSessions.filter { !$0.isSubagent }
         let subagents = visibleSessions.filter(\.isSubagent)
         let subagentsByParent = Dictionary(grouping: subagents) { $0.parentSessionId ?? "" }
+        var groupOrder: [String] = []
+        var seenGroupIds: Set<String> = []
+
+        func appendGroupId(_ groupId: String) {
+            guard !groupId.isEmpty, !seenGroupIds.contains(groupId) else {
+                return
+            }
+
+            groupOrder.append(groupId)
+            seenGroupIds.insert(groupId)
+        }
 
         func append(_ session: AgentSession, indentLevel: Int) {
             rows.append(.session(session, indentLevel: indentLevel))
-            renderedSessionIds.insert(session.sessionId)
         }
 
-        func appendSubagents(parentSessionId: String) {
-            for subagent in subagentsByParent[parentSessionId, default: []] {
-                append(subagent, indentLevel: 1)
+        for session in visibleSessions {
+            if session.isSubagent {
+                guard let parentSessionId = session.parentSessionId, !parentSessionId.isEmpty,
+                      allBySessionId[parentSessionId] != nil else {
+                    continue
+                }
+                appendGroupId(parentSessionId)
+            } else {
+                appendGroupId(session.sessionId)
             }
         }
 
-        for session in topLevelSessions {
-            append(session, indentLevel: 0)
-            appendSubagents(parentSessionId: session.sessionId)
-        }
-
-        for subagent in subagents where !renderedSessionIds.contains(subagent.sessionId) {
-            guard let parentSessionId = subagent.parentSessionId, !parentSessionId.isEmpty else {
+        for parentSessionId in groupOrder {
+            guard let parent = allBySessionId[parentSessionId] else {
                 continue
             }
 
-            if let parent = allBySessionId[parentSessionId], !renderedSessionIds.contains(parent.sessionId) {
-                append(parent, indentLevel: 0)
-                appendSubagents(parentSessionId: parent.sessionId)
+            append(parent, indentLevel: 0)
+            for subagent in subagentsByParent[parentSessionId, default: []] {
+                append(subagent, indentLevel: 1)
             }
         }
 

@@ -765,6 +765,27 @@ final class AgentStateStoreTests: XCTestCase {
         ])
     }
 
+    func testDisplayRowsOrdersParentSubagentSetByVisibleSubagentActivity() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, maxHistoryPerAgent: 1)
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "old-parent", state: .idle, updatedAt: base))
+        store.apply(AgentEvent(agent: .codex, sessionId: "recent-parent", state: .idle, updatedAt: base.addingTimeInterval(2)))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "working-child",
+            state: .working,
+            updatedAt: base.addingTimeInterval(3),
+            parentSessionId: "old-parent"
+        ))
+
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(4)).map(\.id), [
+            "codex:old-parent:0",
+            "codex:working-child:1",
+            "codex:recent-parent:0"
+        ])
+    }
+
     func testDisplayRowsHidesOrphanSubagentsWhenParentIsMissing() {
         let base = Date(timeIntervalSince1970: 1_000)
         let child = AgentSession(

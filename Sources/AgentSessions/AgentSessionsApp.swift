@@ -3891,6 +3891,7 @@ final class SessionPopupController {
             parts.append(session.id)
             parts.append(session.state.rawValue)
             parts.append(session.displayTitle)
+            parts.append("\(session.updatedAt.timeIntervalSinceReferenceDate)")
             parts.append(session.latestResponseText ?? "")
             parts.append(session.latestResponsePhase ?? "")
         }
@@ -4315,7 +4316,7 @@ private struct PopupSessionRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
-            HStack(alignment: .center, spacing: metrics.titleSpacing) {
+            HStack(alignment: .top, spacing: metrics.titleSpacing) {
                 if alignsHeaderTrailing {
                     Spacer(minLength: 0)
                 }
@@ -4337,11 +4338,14 @@ private struct PopupSessionRow: View {
                         maxWidth: alignsHeaderTrailing ? nil : .infinity,
                         alignment: alignsHeaderTrailing ? .trailing : .leading
                     )
+
+                PopupSessionStateTimeText(
+                    session: session,
+                    metrics: metrics
+                )
+                .layoutPriority(2)
             }
-            .padding(
-                alignsHeaderTrailing ? .trailing : .leading,
-                metrics.responseHorizontalPadding
-            )
+            .padding(.horizontal, metrics.responseHorizontalPadding)
             .frame(
                 maxWidth: .infinity,
                 alignment: alignsHeaderTrailing ? .trailing : .leading
@@ -4405,6 +4409,53 @@ private struct PopupSessionRow: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return truncatedText + "..."
     }
+}
+
+private struct PopupSessionStateTimeText: View {
+    let session: AgentSession
+    let metrics: PopupScaleMetrics
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { timeline in
+            VStack(alignment: .trailing, spacing: metrics.metadataLineSpacing) {
+                Text(session.state.displayName)
+                    .lineLimit(1)
+
+                Text(relativeTimeText(relativeTo: timeline.date))
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+            .font(.system(size: metrics.metadataFontSize, weight: .semibold))
+            .foregroundStyle(metadataColor.opacity(metrics.textOpacity))
+            .multilineTextAlignment(.trailing)
+            .fixedSize(horizontal: true, vertical: true)
+            .padding(.vertical, metrics.titleVerticalPadding)
+            .popupTextShadow(metrics)
+        }
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var metadataColor: Color {
+        agentStateDetailTextColor(for: session.state)
+    }
+
+    private var accessibilityText: String {
+        "\(session.state.displayName) \(Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: Date()))"
+    }
+
+    private func relativeTimeText(relativeTo now: Date) -> String {
+        let elapsed = now.timeIntervalSince(session.updatedAt)
+        if elapsed < 1 {
+            return "0s ago"
+        }
+        return Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: now)
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
 }
 
 private struct PopupAgentIconView: NSViewRepresentable {
@@ -4900,6 +4951,7 @@ private struct PopupScaleMetrics {
     var verticalPadding: CGFloat { 3 * scale }
     var titleHorizontalPadding: CGFloat { 5 * scale }
     var titleVerticalPadding: CGFloat { 2 * scale }
+    var metadataLineSpacing: CGFloat { 0 }
     var responseHorizontalPadding: CGFloat { 6 * scale }
     var responseVerticalPadding: CGFloat { 3 * scale }
     var shadowBleedPadding: CGFloat { textShadowRadius + textShadowDistance + 2 * scale }
@@ -4909,6 +4961,7 @@ private struct PopupScaleMetrics {
     var glassShadowYOffset: CGFloat { 5 * scale }
     var iconSize: CGFloat { 16 * scale }
     var titleFontSize: CGFloat { 12 * scale }
+    var metadataFontSize: CGFloat { 8 * scale }
     var responseFontSize: CGFloat { 11 * scale }
 
     func textShadowLayerOpacity(_ layer: Int) -> Double {
@@ -5593,6 +5646,8 @@ private struct AgentSectionView: View {
     var body: some View {
         let now = refreshClock.now
         let rows = store.displayRows(for: agent, now: now)
+        let rowGroups = Self.rowGroups(for: rows)
+        let rowGroupAnimationIDs = rowGroups.map(\.animationID)
         let layoutSignature = layoutSignature(for: rows, now: now)
         let state = AgentDisplayState.displayState(
             for: agent,
@@ -5613,21 +5668,26 @@ private struct AgentSectionView: View {
             if rows.isEmpty {
                 EmptyAgentRow()
             } else {
-                ForEach(rows) { row in
-                    switch row {
-                    case .session(let session, let indentLevel):
-                        SessionMenuRow(
-                            session: session,
-                            indentLevel: indentLevel,
-                            now: now,
-                            latestResponseLineLimit: latestResponseLineLimit,
-                            subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
-                            latestResponseHideAfterInterval: latestResponseHideAfterInterval
-                        )
+                ForEach(rowGroups) { group in
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(group.rows) { row in
+                            switch row {
+                            case .session(let session, let indentLevel):
+                                SessionMenuRow(
+                                    session: session,
+                                    indentLevel: indentLevel,
+                                    now: now,
+                                    latestResponseLineLimit: latestResponseLineLimit,
+                                    subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
+                                    latestResponseHideAfterInterval: latestResponseHideAfterInterval
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
+        .animation(Self.reorderAnimation, value: rowGroupAnimationIDs)
         .onChange(of: layoutSignature) { _, _ in
             onLayoutMayChange()
         }
@@ -5669,6 +5729,47 @@ private struct AgentSectionView: View {
         session.isSubagent ? subagentLatestResponseLineLimit : latestResponseLineLimit
     }
 
+    private static func rowGroups(for rows: [AgentSessionDisplayRow]) -> [SessionMenuRowGroup] {
+        var groups: [SessionMenuRowGroup] = []
+
+        for row in rows {
+            switch row {
+            case .session(_, let indentLevel):
+                let groupId = groupId(for: row)
+                let shouldStartGroup = indentLevel == 0
+                    || groups.last?.id != groupId
+
+                if shouldStartGroup {
+                    groups.append(SessionMenuRowGroup(id: groupId, rows: [row]))
+                } else {
+                    groups[groups.count - 1].rows.append(row)
+                }
+            }
+        }
+
+        return groups
+    }
+
+    private static func groupId(for row: AgentSessionDisplayRow) -> String {
+        switch row {
+        case .session(let session, let indentLevel):
+            if indentLevel > 0,
+               let parentSessionId = session.parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !parentSessionId.isEmpty {
+                return "\(session.agent.rawValue):\(parentSessionId)"
+            }
+
+            return session.id
+        }
+    }
+
+    private static let reorderAnimation = Animation.interpolatingSpring(
+        mass: 0.85,
+        stiffness: 260,
+        damping: 30,
+        initialVelocity: 0.15
+    )
+
     private struct LayoutSignature: Equatable {
         var rows: [RowLayoutSignature]
     }
@@ -5678,6 +5779,15 @@ private struct AgentSectionView: View {
         var indentLevel: Int
         var latestResponseLineLimit: Int
         var latestResponseText: String?
+    }
+
+    private struct SessionMenuRowGroup: Identifiable, Equatable {
+        var id: String
+        var rows: [AgentSessionDisplayRow]
+
+        var animationID: String {
+            "\(id)[\(rows.map(\.id).joined(separator: ","))]"
+        }
     }
 }
 
@@ -5883,7 +5993,7 @@ private struct SessionMenuRow: View {
     }
 
     private var detailColor: Color {
-        session.state == .idle ? .primary.opacity(0.56) : .secondary
+        agentStateDetailTextColor(for: session.state)
     }
 
     private var stateText: String {
@@ -6024,6 +6134,10 @@ private func agentStateSymbolColor(for state: AgentState, agent: AgentKind) -> C
     case .idle, .ended:
         return .secondary
     }
+}
+
+private func agentStateDetailTextColor(for state: AgentState) -> Color {
+    state == .idle ? .primary.opacity(0.56) : .secondary
 }
 
 private struct IOSActivitySpinner: View {
