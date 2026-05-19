@@ -30,4 +30,22 @@ final class AgentTextSanitizerTests: XCTestCase {
             "結果: ![preview](/tmp/preview.png)"
         )
     }
+
+    func testLatestResponseTextPreservesBlankLinesByDefault() {
+        let text = "1行目\n\n  \n2行目"
+
+        XCTAssertEqual(
+            AgentTextSanitizer.latestResponseText(text),
+            "1行目\n\n  \n2行目"
+        )
+    }
+
+    func testLatestResponseTextCanCompactBlankOnlyLines() {
+        let text = "1行目\n\n  \n2行目\n  3行目"
+
+        XCTAssertEqual(
+            AgentTextSanitizer.latestResponseText(text, compactsBlankLines: true),
+            "1行目\n2行目\n  3行目"
+        )
+    }
 }

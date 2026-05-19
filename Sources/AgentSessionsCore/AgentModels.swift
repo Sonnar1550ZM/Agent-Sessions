@@ -156,7 +156,11 @@ private enum AgentSubagentDetector {
 }
 
 public enum AgentTextSanitizer {
-    public static func latestResponseText(_ value: String?, limit: Int = 1_000) -> String? {
+    public static func latestResponseText(
+        _ value: String?,
+        limit: Int = 1_000,
+        compactsBlankLines: Bool = false
+    ) -> String? {
         guard let value else {
             return nil
         }
@@ -165,8 +169,12 @@ public enum AgentTextSanitizer {
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
 
-        let text = displayTextByCollapsingMarkdownLinks(normalizedText)
+        var text = displayTextByCollapsingMarkdownLinks(normalizedText)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if compactsBlankLines {
+            text = textByRemovingBlankLines(text)
+        }
 
         guard !text.isEmpty else {
             return nil
@@ -177,6 +185,13 @@ public enum AgentTextSanitizer {
         }
 
         return String(text.prefix(limit))
+    }
+
+    private static func textByRemovingBlankLines(_ text: String) -> String {
+        text
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .joined(separator: "\n")
     }
 
     private static func displayTextByCollapsingMarkdownLinks(_ text: String) -> String {

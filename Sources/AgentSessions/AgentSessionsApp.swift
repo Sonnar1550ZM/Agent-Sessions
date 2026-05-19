@@ -154,6 +154,7 @@ private enum ProviderPreferenceDefaults {
     static let latestResponseLineLimit = 3
     static let subagentLatestResponseLineLimit = 1
     static let latestResponseHideAfterInterval: TimeInterval = 24 * 60 * 60
+    static let latestResponseCompactsBlankLines = false
     static let showsSubagents = true
     static let subagentHideAfterInterval: TimeInterval = 3 * 60
     static let menuBarEnabled = true
@@ -181,6 +182,8 @@ private enum ProviderPreferenceDefaults {
     static let popupShowsResponseBody = true
     static let popupResponseCharacterLimit = 500
     static let popupResponseLineLimit = 5
+    static let popupResponseCompactsBlankLines = false
+    static let popupResponseElidesShortFinalLine = false
     static let latestResponseHideAfterOptions: [TimeInterval] = [
         60,
         3 * 60,
@@ -461,6 +464,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var latestResponseLineLimit: Int
     var subagentLatestResponseLineLimit: Int
     var latestResponseHideAfterInterval: TimeInterval
+    var latestResponseCompactsBlankLines: Bool
     var showsSubagents: Bool
     var subagentHideAfterInterval: TimeInterval
     var hideAfterInterval: TimeInterval
@@ -489,6 +493,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var popupShowsResponseBody: Bool
     var popupResponseCharacterLimit: Int
     var popupResponseLineLimit: Int
+    var popupResponseCompactsBlankLines: Bool
+    var popupResponseElidesShortFinalLine: Bool
 
     init(
         values: [String: ProviderVisibility],
@@ -499,6 +505,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         latestResponseLineLimit: Int = ProviderPreferenceDefaults.latestResponseLineLimit,
         subagentLatestResponseLineLimit: Int = ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
         latestResponseHideAfterInterval: TimeInterval = ProviderPreferenceDefaults.latestResponseHideAfterInterval,
+        latestResponseCompactsBlankLines: Bool = ProviderPreferenceDefaults.latestResponseCompactsBlankLines,
         showsSubagents: Bool = ProviderPreferenceDefaults.showsSubagents,
         subagentHideAfterInterval: TimeInterval = ProviderPreferenceDefaults.subagentHideAfterInterval,
         hideAfterInterval: TimeInterval = ProviderPreferenceDefaults.hideAfterInterval,
@@ -526,7 +533,9 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupParentSessionCount: Int = ProviderPreferenceDefaults.popupParentSessionCount,
         popupShowsResponseBody: Bool = ProviderPreferenceDefaults.popupShowsResponseBody,
         popupResponseCharacterLimit: Int = ProviderPreferenceDefaults.popupResponseCharacterLimit,
-        popupResponseLineLimit: Int = ProviderPreferenceDefaults.popupResponseLineLimit
+        popupResponseLineLimit: Int = ProviderPreferenceDefaults.popupResponseLineLimit,
+        popupResponseCompactsBlankLines: Bool = ProviderPreferenceDefaults.popupResponseCompactsBlankLines,
+        popupResponseElidesShortFinalLine: Bool = ProviderPreferenceDefaults.popupResponseElidesShortFinalLine
     ) {
         self.values = values
         self.menuBarOrder = menuBarOrder
@@ -536,6 +545,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.latestResponseLineLimit = latestResponseLineLimit
         self.subagentLatestResponseLineLimit = subagentLatestResponseLineLimit
         self.latestResponseHideAfterInterval = latestResponseHideAfterInterval
+        self.latestResponseCompactsBlankLines = latestResponseCompactsBlankLines
         self.showsSubagents = showsSubagents
         self.subagentHideAfterInterval = subagentHideAfterInterval
         self.hideAfterInterval = hideAfterInterval
@@ -568,6 +578,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.popupShowsResponseBody = popupShowsResponseBody
         self.popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(popupResponseCharacterLimit)
         self.popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(popupResponseLineLimit)
+        self.popupResponseCompactsBlankLines = popupResponseCompactsBlankLines
+        self.popupResponseElidesShortFinalLine = popupResponseElidesShortFinalLine
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -579,6 +591,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case latestResponseLineLimit
         case subagentLatestResponseLineLimit
         case latestResponseHideAfterInterval
+        case latestResponseCompactsBlankLines
         case subagentDisplayCount
         case showsSubagents
         case subagentHideAfterInterval
@@ -609,6 +622,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case popupShowsResponseBody
         case popupResponseCharacterLimit
         case popupResponseLineLimit
+        case popupResponseCompactsBlankLines
+        case popupResponseElidesShortFinalLine
     }
 
     init(from decoder: Decoder) throws {
@@ -630,6 +645,10 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         latestResponseHideAfterInterval = ProviderPreferenceDefaults.sanitizedLatestResponseHideAfterInterval(
             try container.decodeIfPresent(TimeInterval.self, forKey: .latestResponseHideAfterInterval)
         )
+        latestResponseCompactsBlankLines = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .latestResponseCompactsBlankLines
+        ) ?? ProviderPreferenceDefaults.latestResponseCompactsBlankLines
         if let showsSubagents = try container.decodeIfPresent(Bool.self, forKey: .showsSubagents) {
             self.showsSubagents = showsSubagents
         } else if let legacyCount = try container.decodeIfPresent(Int.self, forKey: .subagentDisplayCount) {
@@ -723,6 +742,14 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
                 ?? ProviderPreferenceDefaults.popupResponseCharacterLimit(fromLegacyLineLimit: decodedResponseLineLimit)
         )
         popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(decodedResponseLineLimit)
+        popupResponseCompactsBlankLines = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .popupResponseCompactsBlankLines
+        ) ?? ProviderPreferenceDefaults.popupResponseCompactsBlankLines
+        popupResponseElidesShortFinalLine = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .popupResponseElidesShortFinalLine
+        ) ?? ProviderPreferenceDefaults.popupResponseElidesShortFinalLine
     }
 
     func encode(to encoder: Encoder) throws {
@@ -735,6 +762,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(latestResponseLineLimit, forKey: .latestResponseLineLimit)
         try container.encode(subagentLatestResponseLineLimit, forKey: .subagentLatestResponseLineLimit)
         try container.encode(latestResponseHideAfterInterval, forKey: .latestResponseHideAfterInterval)
+        try container.encode(latestResponseCompactsBlankLines, forKey: .latestResponseCompactsBlankLines)
         try container.encode(showsSubagents, forKey: .showsSubagents)
         try container.encode(subagentHideAfterInterval, forKey: .subagentHideAfterInterval)
         try container.encode(hideAfterInterval, forKey: .hideAfterInterval)
@@ -763,6 +791,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(popupShowsResponseBody, forKey: .popupShowsResponseBody)
         try container.encode(popupResponseCharacterLimit, forKey: .popupResponseCharacterLimit)
         try container.encode(popupResponseLineLimit, forKey: .popupResponseLineLimit)
+        try container.encode(popupResponseCompactsBlankLines, forKey: .popupResponseCompactsBlankLines)
+        try container.encode(popupResponseElidesShortFinalLine, forKey: .popupResponseElidesShortFinalLine)
     }
 
     static var defaultPopupProviderVisibility: [String: Bool] {
@@ -793,6 +823,7 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var latestResponseLineLimit: Int
     @Published private(set) var subagentLatestResponseLineLimit: Int
     @Published private(set) var latestResponseHideAfterInterval: TimeInterval
+    @Published private(set) var latestResponseCompactsBlankLines: Bool
     @Published private(set) var showsSubagents: Bool
     @Published private(set) var subagentHideAfterInterval: TimeInterval
     @Published private(set) var hideAfterInterval: TimeInterval
@@ -821,6 +852,8 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var popupShowsResponseBody: Bool
     @Published private(set) var popupResponseCharacterLimit: Int
     @Published private(set) var popupResponseLineLimit: Int
+    @Published private(set) var popupResponseCompactsBlankLines: Bool
+    @Published private(set) var popupResponseElidesShortFinalLine: Bool
 
     private let defaults: UserDefaults
     private let storageKey = "ProviderPreferences"
@@ -847,6 +880,7 @@ final class ProviderVisibilityStore: ObservableObject {
         latestResponseHideAfterInterval = ProviderPreferenceDefaults.sanitizedLatestResponseHideAfterInterval(
             document.latestResponseHideAfterInterval
         )
+        latestResponseCompactsBlankLines = document.latestResponseCompactsBlankLines
         showsSubagents = document.showsSubagents
         subagentHideAfterInterval = ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval)
         hideAfterInterval = ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval)
@@ -877,6 +911,8 @@ final class ProviderVisibilityStore: ObservableObject {
         popupShowsResponseBody = document.popupShowsResponseBody
         popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(document.popupResponseCharacterLimit)
         popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(document.popupResponseLineLimit)
+        popupResponseCompactsBlankLines = document.popupResponseCompactsBlankLines
+        popupResponseElidesShortFinalLine = document.popupResponseElidesShortFinalLine
         saveImmediately()
     }
 
@@ -926,6 +962,11 @@ final class ProviderVisibilityStore: ObservableObject {
 
     func setLatestResponseHideAfterInterval(_ interval: TimeInterval) {
         latestResponseHideAfterInterval = ProviderPreferenceDefaults.sanitizedLatestResponseHideAfterInterval(interval)
+        save()
+    }
+
+    func setLatestResponseCompactsBlankLines(_ compacts: Bool) {
+        latestResponseCompactsBlankLines = compacts
         save()
     }
 
@@ -1097,6 +1138,16 @@ final class ProviderVisibilityStore: ObservableObject {
         save()
     }
 
+    func setPopupResponseCompactsBlankLines(_ compacts: Bool) {
+        popupResponseCompactsBlankLines = compacts
+        save()
+    }
+
+    func setPopupResponseElidesShortFinalLine(_ elides: Bool) {
+        popupResponseElidesShortFinalLine = elides
+        save()
+    }
+
     func resetPopupPreferences() {
         popupEnabled = ProviderPreferenceDefaults.popupEnabled
         popupDisplayInterval = ProviderPreferenceDefaults.sanitizedPopupDisplayInterval(
@@ -1152,6 +1203,8 @@ final class ProviderVisibilityStore: ObservableObject {
         popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(
             ProviderPreferenceDefaults.popupResponseLineLimit
         )
+        popupResponseCompactsBlankLines = ProviderPreferenceDefaults.popupResponseCompactsBlankLines
+        popupResponseElidesShortFinalLine = ProviderPreferenceDefaults.popupResponseElidesShortFinalLine
         save()
     }
 
@@ -1262,6 +1315,7 @@ final class ProviderVisibilityStore: ObservableObject {
             latestResponseLineLimit: latestResponseLineLimit,
             subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
             latestResponseHideAfterInterval: latestResponseHideAfterInterval,
+            latestResponseCompactsBlankLines: latestResponseCompactsBlankLines,
             showsSubagents: showsSubagents,
             subagentHideAfterInterval: subagentHideAfterInterval,
             hideAfterInterval: hideAfterInterval,
@@ -1289,7 +1343,9 @@ final class ProviderVisibilityStore: ObservableObject {
             popupParentSessionCount: popupParentSessionCount,
             popupShowsResponseBody: popupShowsResponseBody,
             popupResponseCharacterLimit: popupResponseCharacterLimit,
-            popupResponseLineLimit: popupResponseLineLimit
+            popupResponseLineLimit: popupResponseLineLimit,
+            popupResponseCompactsBlankLines: popupResponseCompactsBlankLines,
+            popupResponseElidesShortFinalLine: popupResponseElidesShortFinalLine
         )
 
         guard let data = try? JSONEncoder().encode(document) else {
@@ -1315,6 +1371,7 @@ final class ProviderVisibilityStore: ObservableObject {
                 latestResponseLineLimit: ProviderPreferenceDefaults.latestResponseLineLimit,
                 subagentLatestResponseLineLimit: ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
                 latestResponseHideAfterInterval: ProviderPreferenceDefaults.latestResponseHideAfterInterval,
+                latestResponseCompactsBlankLines: ProviderPreferenceDefaults.latestResponseCompactsBlankLines,
                 showsSubagents: ProviderPreferenceDefaults.showsSubagents,
                 subagentHideAfterInterval: ProviderPreferenceDefaults.subagentHideAfterInterval,
                 hideAfterInterval: ProviderPreferenceDefaults.hideAfterInterval,
@@ -1342,7 +1399,9 @@ final class ProviderVisibilityStore: ObservableObject {
                 popupParentSessionCount: ProviderPreferenceDefaults.popupParentSessionCount,
                 popupShowsResponseBody: ProviderPreferenceDefaults.popupShowsResponseBody,
                 popupResponseCharacterLimit: ProviderPreferenceDefaults.popupResponseCharacterLimit,
-                popupResponseLineLimit: ProviderPreferenceDefaults.popupResponseLineLimit
+                popupResponseLineLimit: ProviderPreferenceDefaults.popupResponseLineLimit,
+                popupResponseCompactsBlankLines: ProviderPreferenceDefaults.popupResponseCompactsBlankLines,
+                popupResponseElidesShortFinalLine: ProviderPreferenceDefaults.popupResponseElidesShortFinalLine
             )
         }
 
@@ -1359,6 +1418,7 @@ final class ProviderVisibilityStore: ObservableObject {
             latestResponseHideAfterInterval: ProviderPreferenceDefaults.sanitizedLatestResponseHideAfterInterval(
                 document.latestResponseHideAfterInterval
             ),
+            latestResponseCompactsBlankLines: document.latestResponseCompactsBlankLines,
             showsSubagents: document.showsSubagents,
             subagentHideAfterInterval: ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval),
             hideAfterInterval: ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval),
@@ -1392,7 +1452,9 @@ final class ProviderVisibilityStore: ObservableObject {
             ),
             popupResponseLineLimit: ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(
                 document.popupResponseLineLimit
-            )
+            ),
+            popupResponseCompactsBlankLines: document.popupResponseCompactsBlankLines,
+            popupResponseElidesShortFinalLine: document.popupResponseElidesShortFinalLine
         )
     }
 
@@ -1725,6 +1787,21 @@ private struct DropdownMenuSettingsView: View {
 
                 SettingsDivider()
 
+                SettingsToggleRow(
+                    title: "Compact Blank Lines",
+                    subtitle: "Remove response body lines that contain only whitespace.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.latestResponseCompactsBlankLines
+                        },
+                        set: { compactsBlankLines in
+                            providerVisibility.setLatestResponseCompactsBlankLines(compactsBlankLines)
+                        }
+                    )
+                )
+
+                SettingsDivider()
+
                 SettingsPickerRow(
                     title: "Hide After",
                     subtitle: "Hide response text after this interval.",
@@ -1864,6 +1941,40 @@ private struct PopupSettingsView: View {
                 )
                 .disabled(!providerVisibility.popupEnabled)
                 .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+                SettingsDivider()
+
+                SettingsToggleRow(
+                    title: "Compact Blank Lines",
+                    subtitle: "Remove response body lines that contain only whitespace.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.popupResponseCompactsBlankLines
+                        },
+                        set: { compactsBlankLines in
+                            providerVisibility.setPopupResponseCompactsBlankLines(compactsBlankLines)
+                        }
+                    )
+                )
+                .disabled(!responseBodyControlsEnabled)
+                .opacity(responseBodyControlsEnabled ? 1 : 0.55)
+
+                SettingsDivider()
+
+                SettingsToggleRow(
+                    title: "Short Last Line",
+                    subtitle: "If the final wrapped response line has 5 or fewer characters, omit it and end the previous line with ...",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.popupResponseElidesShortFinalLine
+                        },
+                        set: { elidesShortFinalLine in
+                            providerVisibility.setPopupResponseElidesShortFinalLine(elidesShortFinalLine)
+                        }
+                    )
+                )
+                .disabled(!responseBodyControlsEnabled)
+                .opacity(responseBodyControlsEnabled ? 1 : 0.55)
 
                 SettingsDivider()
 
@@ -3773,6 +3884,20 @@ final class SessionPopupController {
                 self?.updatePopup()
             }
             .store(in: &cancellables)
+
+        providerVisibility.$popupResponseCompactsBlankLines
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupResponseElidesShortFinalLine
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
     }
 
     private func startRefreshTimer() {
@@ -3913,7 +4038,9 @@ final class SessionPopupController {
             placesNewestSessionAtBottom: providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom,
             showsResponseBody: providerVisibility.popupShowsResponseBody,
             responseCharacterLimit: providerVisibility.popupResponseCharacterLimit,
-            responseLineLimit: providerVisibility.popupResponseLineLimit
+            responseLineLimit: providerVisibility.popupResponseLineLimit,
+            responseCompactsBlankLines: providerVisibility.popupResponseCompactsBlankLines,
+            responseElidesShortFinalLine: providerVisibility.popupResponseElidesShortFinalLine
         )
         let hostingController = ensureHostingController(rootView: rootView)
         hostingController.rootView = rootView
@@ -4033,7 +4160,9 @@ final class SessionPopupController {
             "\(providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom)",
             "\(providerVisibility.popupShowsResponseBody)",
             "\(providerVisibility.popupResponseCharacterLimit)",
-            "\(providerVisibility.popupResponseLineLimit)"
+            "\(providerVisibility.popupResponseLineLimit)",
+            "\(providerVisibility.popupResponseCompactsBlankLines)",
+            "\(providerVisibility.popupResponseElidesShortFinalLine)"
         ]
 
         for session in sessions {
@@ -4365,6 +4494,8 @@ private struct LatestParentSessionsPopupView: View {
     let showsResponseBody: Bool
     let responseCharacterLimit: Int
     let responseLineLimit: Int
+    let responseCompactsBlankLines: Bool
+    let responseElidesShortFinalLine: Bool
 
     var body: some View {
         let metrics = PopupScaleMetrics(
@@ -4384,7 +4515,9 @@ private struct LatestParentSessionsPopupView: View {
                     alignsTextTrailing: alignsTextTrailing,
                     showsResponseBody: showsResponseBody,
                     responseCharacterLimit: responseCharacterLimit,
-                    responseLineLimit: responseLineLimit
+                    responseLineLimit: responseLineLimit,
+                    responseCompactsBlankLines: responseCompactsBlankLines,
+                    responseElidesShortFinalLine: responseElidesShortFinalLine
                 )
                 .padding(.horizontal, metrics.horizontalPadding + metrics.shadowBleedPadding)
                 .padding(.vertical, metrics.verticalPadding + metrics.shadowBleedPadding)
@@ -4486,6 +4619,8 @@ private struct PopupSessionRow: View {
     let showsResponseBody: Bool
     let responseCharacterLimit: Int
     let responseLineLimit: Int
+    let responseCompactsBlankLines: Bool
+    let responseElidesShortFinalLine: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
@@ -4499,7 +4634,8 @@ private struct PopupSessionRow: View {
                     fontSize: metrics.responseFontSize,
                     textOpacity: metrics.textOpacity,
                     lineLimit: responseLineLimit,
-                    alignsTrailing: alignsTextTrailing
+                    alignsTrailing: alignsTextTrailing,
+                    elidesShortFinalLine: responseElidesShortFinalLine
                 )
                     .popupTextShadow(metrics)
                     .padding(.horizontal, metrics.responseHorizontalPadding)
@@ -4509,6 +4645,7 @@ private struct PopupSessionRow: View {
 
             stateTimeRow
                 .padding(.horizontal, metrics.responseHorizontalPadding)
+                .padding(.top, -metrics.rowSpacing)
                 .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
         }
         .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
@@ -4596,7 +4733,10 @@ private struct PopupSessionRow: View {
             return nil
         }
 
-        guard let text = AgentTextSanitizer.latestResponseText(session.latestResponseText) else {
+        guard let text = AgentTextSanitizer.latestResponseText(
+            session.latestResponseText,
+            compactsBlankLines: responseCompactsBlankLines
+        ) else {
             return nil
         }
 
@@ -4630,7 +4770,8 @@ private struct PopupSessionStateTimeText: View {
                 .multilineTextAlignment(textAlignment)
                 .frame(maxWidth: .infinity, alignment: frameAlignment)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.vertical, metrics.titleVerticalPadding)
+                .padding(.top, metrics.metadataTopPadding)
+                .padding(.bottom, metrics.metadataBottomPadding)
                 .popupTextShadow(metrics)
         }
         .accessibilityLabel(accessibilityText)
@@ -4801,6 +4942,7 @@ private struct PopupAlignedText: NSViewRepresentable {
     let textOpacity: Double
     let lineLimit: Int
     var alignsTrailing = false
+    var elidesShortFinalLine = false
 
     func makeNSView(context: Context) -> AlignedTextView {
         let textView = AlignedTextView()
@@ -4829,13 +4971,15 @@ private struct PopupAlignedText: NSViewRepresentable {
             fontWeight: fontWeight,
             textOpacity: textOpacity,
             lineLimit: lineLimit,
-            alignsTrailing: alignsTrailing
+            alignsTrailing: alignsTrailing,
+            elidesShortFinalLine: elidesShortFinalLine
         )
     }
 
     final class AlignedTextView: NSView {
         private static let softBreak = "\u{200B}"
         private static let softBreakCharacters = Set<Character>(".:/_-()[]{}")
+        private static let shortFinalLineThreshold = 5
 
         private var renderedText = ""
         private var renderedFontSize: CGFloat = 0
@@ -4843,6 +4987,7 @@ private struct PopupAlignedText: NSViewRepresentable {
         private var renderedTextOpacity: Double = 1
         private var renderedLineLimit = 1
         private var renderedAlignsTrailing = false
+        private var renderedElidesShortFinalLine = false
         private var renderedFont = NSFont.systemFont(ofSize: 10)
         private var preferredMaxLayoutWidth: CGFloat = 0
 
@@ -4856,7 +5001,8 @@ private struct PopupAlignedText: NSViewRepresentable {
             fontWeight: NSFont.Weight,
             textOpacity: Double,
             lineLimit: Int,
-            alignsTrailing: Bool
+            alignsTrailing: Bool,
+            elidesShortFinalLine: Bool
         ) {
             let normalizedOpacity = min(max(textOpacity, 0), 1)
             let normalizedLineLimit = max(lineLimit, 1)
@@ -4867,6 +5013,7 @@ private struct PopupAlignedText: NSViewRepresentable {
                 || abs(renderedTextOpacity - normalizedOpacity) > 0.001
                 || renderedLineLimit != normalizedLineLimit
                 || renderedAlignsTrailing != alignsTrailing
+                || renderedElidesShortFinalLine != elidesShortFinalLine
 
             guard changed else {
                 return
@@ -4878,6 +5025,7 @@ private struct PopupAlignedText: NSViewRepresentable {
             renderedTextOpacity = normalizedOpacity
             renderedLineLimit = normalizedLineLimit
             renderedAlignsTrailing = alignsTrailing
+            renderedElidesShortFinalLine = elidesShortFinalLine
             renderedFont = NSFont.systemFont(ofSize: fontSize, weight: fontWeight)
             invalidateIntrinsicContentSize()
             needsDisplay = true
@@ -4969,7 +5117,12 @@ private struct PopupAlignedText: NSViewRepresentable {
             while index < totalLength && lines.count < renderedLineLimit {
                 let paragraph = paragraphRange(in: rawString, from: index)
                 if paragraph.remainingLength == 0 {
-                    lines.append(LayoutLine(line: nil, naturalWidth: 0, endsParagraph: true))
+                    lines.append(LayoutLine(
+                        line: nil,
+                        naturalWidth: 0,
+                        visibleCharacterCount: 0,
+                        endsParagraph: true
+                    ))
                     index = paragraph.upperBound
                     continue
                 }
@@ -4982,14 +5135,14 @@ private struct PopupAlignedText: NSViewRepresentable {
                 let lineLength = min(max(suggestedLineLength, 1), paragraph.remainingLength)
                 let range = CFRange(location: index, length: lineLength)
                 let line = CTTypesetterCreateLine(typesetter, range)
-                let naturalWidth = max(
-                    0,
-                    CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
-                        - CGFloat(CTLineGetTrailingWhitespaceWidth(line))
-                )
                 let endsParagraph = lineLength >= paragraph.remainingLength
 
-                lines.append(LayoutLine(line: line, naturalWidth: naturalWidth, endsParagraph: endsParagraph))
+                lines.append(LayoutLine(
+                    line: line,
+                    naturalWidth: naturalWidth(for: line),
+                    visibleCharacterCount: visibleCharacterCount(in: rawString, range: range),
+                    endsParagraph: endsParagraph
+                ))
                 index += lineLength
 
                 if endsParagraph {
@@ -4999,7 +5152,67 @@ private struct PopupAlignedText: NSViewRepresentable {
                 }
             }
 
+            if renderedElidesShortFinalLine {
+                lines = linesByElidingShortFinalLine(lines, width: width)
+            }
+
             return LayoutResult(lines: lines, consumedLength: index, totalLength: totalLength)
+        }
+
+        private func linesByElidingShortFinalLine(_ lines: [LayoutLine], width: CGFloat) -> [LayoutLine] {
+            guard lines.count >= 2,
+                  let lastLine = lines.last,
+                  lastLine.line != nil,
+                  lastLine.visibleCharacterCount > 0,
+                  lastLine.visibleCharacterCount <= Self.shortFinalLineThreshold else {
+                return lines
+            }
+
+            let previousIndex = lines.index(before: lines.endIndex - 1)
+            guard lines[previousIndex].line != nil else {
+                return lines
+            }
+
+            var adjustedLines = lines
+            adjustedLines[previousIndex] = ellipsizedLine(adjustedLines[previousIndex], width: width)
+            adjustedLines.removeLast()
+            return adjustedLines
+        }
+
+        private func ellipsizedLine(_ layoutLine: LayoutLine, width: CGFloat) -> LayoutLine {
+            guard let line = layoutLine.line else {
+                return layoutLine
+            }
+
+            let token = CTLineCreateWithAttributedString(attributedEllipsis())
+            let truncatedLine = CTLineCreateTruncatedLine(line, Double(width), .end, token) ?? token
+
+            return LayoutLine(
+                line: truncatedLine,
+                naturalWidth: naturalWidth(for: truncatedLine),
+                visibleCharacterCount: layoutLine.visibleCharacterCount,
+                endsParagraph: false
+            )
+        }
+
+        private func naturalWidth(for line: CTLine) -> CGFloat {
+            max(
+                0,
+                CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+                    - CGFloat(CTLineGetTrailingWhitespaceWidth(line))
+            )
+        }
+
+        private func visibleCharacterCount(in string: NSString, range: CFRange) -> Int {
+            guard range.location >= 0, range.length > 0 else {
+                return 0
+            }
+
+            let substring = string.substring(with: NSRange(location: range.location, length: range.length))
+                .replacingOccurrences(of: Self.softBreak, with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            return substring.count
         }
 
         private func suggestedLineLength(typesetter: CTTypesetter, startIndex: Int, width: CGFloat) -> Int {
@@ -5064,6 +5277,19 @@ private struct PopupAlignedText: NSViewRepresentable {
             )
         }
 
+        private func attributedEllipsis() -> NSAttributedString {
+            let font = CTFontCreateWithName(renderedFont.fontName as CFString, renderedFont.pointSize, nil)
+            let color = NSColor.white.withAlphaComponent(renderedTextOpacity).cgColor
+
+            return NSAttributedString(
+                string: "...",
+                attributes: [
+                    kCTFontAttributeName as NSAttributedString.Key: font,
+                    kCTForegroundColorAttributeName as NSAttributedString.Key: color
+                ]
+            )
+        }
+
         private static func textWithSoftBreaks(_ text: String) -> String {
             var result = ""
             var token = ""
@@ -5117,6 +5343,7 @@ private struct PopupAlignedText: NSViewRepresentable {
         private struct LayoutLine {
             let line: CTLine?
             let naturalWidth: CGFloat
+            let visibleCharacterCount: Int
             let endsParagraph: Bool
         }
 
@@ -5154,8 +5381,10 @@ private struct PopupScaleMetrics {
     var titleSpacing: CGFloat { 3 * scale }
     var horizontalPadding: CGFloat { 4 * scale }
     var verticalPadding: CGFloat { 3 * scale }
-    var titleHorizontalPadding: CGFloat { 5 * scale }
+    var titleHorizontalPadding: CGFloat { responseHorizontalPadding }
     var titleVerticalPadding: CGFloat { 2 * scale }
+    var metadataTopPadding: CGFloat { 0.5 * scale }
+    var metadataBottomPadding: CGFloat { 1 * scale }
     var responseHorizontalPadding: CGFloat { 6 * scale }
     var responseVerticalPadding: CGFloat { 3 * scale }
     var shadowBleedPadding: CGFloat { textShadowRadius + textShadowDistance + 2 * scale }
@@ -5336,6 +5565,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .store(in: &cancellables)
 
         providerVisibility.$latestResponseHideAfterInterval
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.setNeedsMenuRebuild()
+                self?.resizeMenuIfOpen()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$latestResponseCompactsBlankLines
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.setNeedsMenuRebuild()
@@ -5710,6 +5947,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             latestResponseLineLimit: providerVisibility.latestResponseLineLimit,
             subagentLatestResponseLineLimit: providerVisibility.subagentLatestResponseLineLimit,
             latestResponseHideAfterInterval: providerVisibility.latestResponseHideAfterInterval,
+            latestResponseCompactsBlankLines: providerVisibility.latestResponseCompactsBlankLines,
             onLayoutMayChange: { [weak self] in
                 self?.resizeMenuIfOpen()
             }
@@ -5845,6 +6083,7 @@ private struct AgentSectionView: View {
     let latestResponseLineLimit: Int
     let subagentLatestResponseLineLimit: Int
     let latestResponseHideAfterInterval: TimeInterval
+    let latestResponseCompactsBlankLines: Bool
     let onLayoutMayChange: () -> Void
 
     var body: some View {
@@ -5883,7 +6122,8 @@ private struct AgentSectionView: View {
                                     now: now,
                                     latestResponseLineLimit: latestResponseLineLimit,
                                     subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
-                                    latestResponseHideAfterInterval: latestResponseHideAfterInterval
+                                    latestResponseHideAfterInterval: latestResponseHideAfterInterval,
+                                    latestResponseCompactsBlankLines: latestResponseCompactsBlankLines
                                 )
                             }
                         }
@@ -5917,7 +6157,10 @@ private struct AgentSectionView: View {
         }
 
         guard shouldShowLatestResponseText(for: session, now: now),
-              let text = AgentTextSanitizer.latestResponseText(session.latestResponseText),
+              let text = AgentTextSanitizer.latestResponseText(
+                session.latestResponseText,
+                compactsBlankLines: latestResponseCompactsBlankLines
+              ),
               !text.isEmpty else {
             return nil
         }
@@ -6057,6 +6300,7 @@ private struct SessionMenuRow: View {
     let latestResponseLineLimit: Int
     let subagentLatestResponseLineLimit: Int
     let latestResponseHideAfterInterval: TimeInterval
+    let latestResponseCompactsBlankLines: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -6256,7 +6500,10 @@ private struct SessionMenuRow: View {
         }
 
         guard shouldShowLatestResponseText,
-              let text = AgentTextSanitizer.latestResponseText(session.latestResponseText),
+              let text = AgentTextSanitizer.latestResponseText(
+                session.latestResponseText,
+                compactsBlankLines: latestResponseCompactsBlankLines
+              ),
               !text.isEmpty else {
             return nil
         }
