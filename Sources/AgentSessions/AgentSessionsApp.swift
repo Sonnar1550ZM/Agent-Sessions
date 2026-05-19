@@ -3741,6 +3741,9 @@ final class SessionPopupController {
         stopMouseProximityTracking()
         renderedPopupSignature = nil
         guard let panel, panel.isVisible else {
+            if let view = hostingController?.view {
+                stopPopupIconAnimations(in: view)
+            }
             panel?.alphaValue = 1
             popupVisibilityState = .hidden
             return
@@ -3773,6 +3776,7 @@ final class SessionPopupController {
                 panel?.alphaValue = 1
                 if let view = self.hostingController?.view {
                     self.resetPopupContentAnimation(view)
+                    self.stopPopupIconAnimations(in: view)
                 }
                 self.renderedPopupSignature = nil
                 self.popupVisibilityState = .hidden
@@ -3973,6 +3977,16 @@ final class SessionPopupController {
         layer.opacity = 1
         layer.transform = CATransform3DIdentity
         CATransaction.commit()
+    }
+
+    private func stopPopupIconAnimations(in view: NSView) {
+        if let iconView = view as? PopupAgentIconImageView {
+            iconView.stopAnimating()
+        }
+
+        for subview in view.subviews {
+            stopPopupIconAnimations(in: subview)
+        }
     }
 
     private func animatePopupContentIn(
@@ -4245,21 +4259,11 @@ private struct PopupSessionRow: View {
 
     @ViewBuilder
     private var providerIcon: some View {
-        // Keep popup rows static. A TimelineView here invalidates the entire
-        // hosting view repeatedly while the popup is visible.
-        providerIconImage(highlightPhase: nil)
-    }
-
-    private func providerIconImage(highlightPhase: CGFloat?) -> some View {
-        Image(nsImage: AgentImages.menuHeaderIcon(
-            for: session.agent,
-            color: true,
+        PopupAgentIconView(
+            agent: session.agent,
             state: session.state,
-            highlightPhase: highlightPhase
-        ))
-        .resizable()
-        .renderingMode(.original)
-        .aspectRatio(contentMode: .fit)
+            iconSize: metrics.iconSize
+        )
         .frame(width: metrics.iconSize, height: metrics.iconSize)
         .accessibilityHidden(true)
     }
@@ -4294,6 +4298,129 @@ private struct PopupSessionRow: View {
         let truncatedText = String(text.prefix(truncatedLimit))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return truncatedText + "..."
+    }
+}
+
+private struct PopupAgentIconView: NSViewRepresentable {
+    let agent: AgentKind
+    let state: AgentState
+    let iconSize: CGFloat
+
+    func makeNSView(context: Context) -> PopupAgentIconImageView {
+        let imageView = PopupAgentIconImageView()
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageAlignment = .alignCenter
+        imageView.wantsLayer = true
+        imageView.layer?.contentsGravity = .resizeAspect
+        imageView.setContentHuggingPriority(.required, for: .horizontal)
+        imageView.setContentHuggingPriority(.required, for: .vertical)
+        imageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        imageView.setContentCompressionResistancePriority(.required, for: .vertical)
+        imageView.configure(agent: agent, state: state, iconSize: iconSize)
+        return imageView
+    }
+
+    func updateNSView(_ imageView: PopupAgentIconImageView, context: Context) {
+        imageView.configure(agent: agent, state: state, iconSize: iconSize)
+    }
+
+    static func dismantleNSView(_ imageView: PopupAgentIconImageView, coordinator: ()) {
+        imageView.stopAnimating()
+    }
+}
+
+private final class PopupAgentIconImageView: NSImageView {
+    private var renderedAgent: AgentKind?
+    private var renderedState: AgentState?
+    private var renderedIconSize: CGFloat = 0
+    private var timer: Timer?
+    private var renderedFrame: Int?
+
+    override var intrinsicContentSize: NSSize {
+        guard renderedIconSize > 0 else {
+            return super.intrinsicContentSize
+        }
+        return NSSize(width: renderedIconSize, height: renderedIconSize)
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            stopAnimating()
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    func configure(agent: AgentKind, state: AgentState, iconSize: CGFloat) {
+        let sizeChanged = abs(renderedIconSize - iconSize) > 0.001
+        let identityChanged = renderedAgent != agent || renderedState != state
+
+        renderedAgent = agent
+        renderedState = state
+
+        if sizeChanged {
+            renderedIconSize = iconSize
+            setFrameSize(NSSize(width: iconSize, height: iconSize))
+            invalidateIntrinsicContentSize()
+        }
+
+        guard state == .working else {
+            stopAnimating()
+            renderStaticIcon(agent: agent, state: state, force: identityChanged)
+            return
+        }
+
+        startAnimating()
+        renderAnimatedIcon(agent: agent, at: Date(), force: identityChanged || image == nil)
+    }
+
+    func stopAnimating() {
+        timer?.invalidate()
+        timer = nil
+        renderedFrame = nil
+    }
+
+    private func startAnimating() {
+        guard timer == nil else {
+            return
+        }
+
+        let timer = Timer(timeInterval: AgentIconAnimation.animatedRefreshInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let agent = self.renderedAgent, self.renderedState == .working else {
+                    return
+                }
+                self.renderAnimatedIcon(agent: agent, at: Date(), force: false)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func renderStaticIcon(agent: AgentKind, state: AgentState, force: Bool) {
+        guard force || image == nil else {
+            return
+        }
+        image = AgentImages.menuHeaderIcon(
+            for: agent,
+            color: true,
+            state: state,
+            highlightPhase: nil
+        )
+    }
+
+    private func renderAnimatedIcon(agent: AgentKind, at date: Date, force: Bool) {
+        let frame = AgentIconAnimation.highlightFrameIndex(at: date)
+        guard force || frame != renderedFrame else {
+            return
+        }
+
+        renderedFrame = frame
+        image = AgentImages.menuHeaderIcon(
+            for: agent,
+            color: true,
+            state: .working,
+            highlightPhase: AgentIconAnimation.highlightPhase(forFrame: frame)
+        )
     }
 }
 
