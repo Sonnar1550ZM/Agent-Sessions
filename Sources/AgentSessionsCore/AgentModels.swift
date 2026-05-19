@@ -417,14 +417,28 @@ public struct AgentEvent: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let agentLabel = try container.decodeIfPresent(String.self, forKey: .agent) ?? "Codex"
+        let rawTranscriptPath = try Self.decodeTrimmedOptionalString(
+            from: container,
+            primaryKey: .transcriptPath,
+            fallbackKey: .transcript_path,
+            limit: 1024
+        )
         let rawSessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
             ?? container.decodeIfPresent(String.self, forKey: .sessionID)
             ?? container.decodeIfPresent(String.self, forKey: .session_id)
-            ?? "default"
+            ?? Self.sessionId(fromTranscriptPath: rawTranscriptPath)
         let rawState = try container.decodeIfPresent(String.self, forKey: .state)
 
         agent = AgentKind(label: agentLabel)
-        sessionId = rawSessionId.trimmedOrDefault("default")
+        let normalizedSessionId = rawSessionId?.trimmed(limit: 160) ?? ""
+        guard !normalizedSessionId.isEmpty, normalizedSessionId != "default" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .sessionId,
+                in: container,
+                debugDescription: "Agent event requires a unique sessionId."
+            )
+        }
+        sessionId = normalizedSessionId
         state = AgentState(label: rawState)
         title = (try container.decodeIfPresent(String.self, forKey: .title) ?? "").trimmed(limit: 160)
         cwd = (try container.decodeIfPresent(String.self, forKey: .cwd) ?? "").trimmed(limit: 512)
@@ -451,12 +465,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         )
         subagentDepth = try container.decodeIfPresent(Int.self, forKey: .subagentDepth)
             ?? container.decodeIfPresent(Int.self, forKey: .subagent_depth)
-        transcriptPath = try Self.decodeTrimmedOptionalString(
-            from: container,
-            primaryKey: .transcriptPath,
-            fallbackKey: .transcript_path,
-            limit: 1024
-        )
+        transcriptPath = rawTranscriptPath
         latestResponseText = try Self.decodeLatestResponseText(
             from: container,
             primaryKey: .latestResponseText,
@@ -526,6 +535,21 @@ public struct AgentEvent: Codable, Equatable, Sendable {
             ?? container.decodeIfPresent(String.self, forKey: fallbackKey)
         return AgentTextSanitizer.latestResponseText(value, limit: limit)
     }
+
+    private static func sessionId(fromTranscriptPath transcriptPath: String?) -> String? {
+        guard let transcriptPath,
+              !transcriptPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        let fileName = URL(fileURLWithPath: transcriptPath).lastPathComponent
+        guard fileName.hasSuffix(".jsonl") else {
+            return nil
+        }
+
+        let sessionId = String(fileName.dropLast(".jsonl".count)).trimmed(limit: 160)
+        return sessionId.isEmpty ? nil : sessionId
+    }
 }
 
 public enum AgentSessionsDates {
@@ -553,8 +577,4 @@ private extension String {
         return String(trimmed.prefix(limit))
     }
 
-    func trimmedOrDefault(_ fallback: String) -> String {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? fallback : trimmed
-    }
 }

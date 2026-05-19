@@ -202,7 +202,7 @@ final class IncrementalSessionWatcher<Parsed> {
 
         guard let snapshot else { return }
 
-        let key = snapshot.event.sessionId
+        let key = "\(file.path):\(snapshot.event.sessionId)"
         guard snapshot.fingerprint != lastFingerprints[key] else { return }
 
         lastFingerprints[key] = snapshot.fingerprint

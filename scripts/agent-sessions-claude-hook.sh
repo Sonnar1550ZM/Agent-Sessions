@@ -106,9 +106,12 @@ if not session_id and isinstance(transcript_path, str) and transcript_path:
     if name.endswith(".jsonl"):
         session_id = name[:-6]
 
+if not session_id or session_id == "default":
+    sys.exit(0)
+
 payload = {
     "agent": "Claude Code",
-    "sessionId": session_id or "default",
+    "sessionId": session_id,
     "state": state,
     "title": prompt_title(event),
     "cwd": event.get("cwd") or "",
@@ -122,7 +125,7 @@ PY
 )"
 
 if [ -z "${payload:-}" ]; then
-  payload="{\"agent\":\"Claude Code\",\"sessionId\":\"default\",\"state\":\"${STATE}\"}"
+  exit 0
 fi
 
 if [ "$STATE" = "Ended" ]; then

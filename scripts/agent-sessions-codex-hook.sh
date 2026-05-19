@@ -80,22 +80,33 @@ def prompt_title(event):
                 return title
     return ""
 
+transcript_path = event.get("transcript_path") or event.get("transcriptPath") or ""
+session_id = event.get("session_id") or event.get("sessionId") or ""
+if not session_id and isinstance(transcript_path, str) and transcript_path:
+    name = os.path.basename(transcript_path)
+    if name.endswith(".jsonl"):
+        session_id = name[:-6]
+
+if not session_id or session_id == "default":
+    sys.exit(0)
+
 payload = {
     "agent": "Codex",
-    "sessionId": event.get("session_id") or event.get("sessionId") or "default",
+    "sessionId": session_id,
     "state": state,
     "title": prompt_title(event),
     "cwd": event.get("cwd") or "",
     "event": hook_event,
     "terminal": term_map.get(os.environ.get("TERM_PROGRAM") or "", os.environ.get("TERM_PROGRAM") or ""),
     "pid": pid,
+    "transcriptPath": transcript_path,
 }
 sys.stdout.write(json.dumps(payload, separators=(",", ":")))
 PY
 )"
 
 if [ -z "${payload:-}" ]; then
-  payload='{"agent":"Codex","sessionId":"default","state":"Idle"}'
+  exit 0
 fi
 
 curl -fsS -m 1 -X POST "http://${HOST}:${PORT}/event" \

@@ -918,6 +918,32 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(event.pid, 123)
     }
 
+    func testAgentEventFallsBackToTranscriptFileNameForSessionId() throws {
+        let json = """
+        {
+          "agent": "Claude",
+          "state": "Working",
+          "transcript_path": "/tmp/project/session-from-file.jsonl"
+        }
+        """.data(using: .utf8)!
+
+        let event = try JSONDecoder().decode(AgentEvent.self, from: json)
+
+        XCTAssertEqual(event.sessionId, "session-from-file")
+        XCTAssertEqual(event.transcriptPath, "/tmp/project/session-from-file.jsonl")
+    }
+
+    func testAgentEventRejectsMissingSessionId() {
+        let json = """
+        {
+          "agent": "Codex",
+          "state": "Working"
+        }
+        """.data(using: .utf8)!
+
+        XCTAssertThrowsError(try JSONDecoder().decode(AgentEvent.self, from: json))
+    }
+
     func testCodexDisplayTitleDoesNotFallBackToProjectName() {
         let session = AgentSession(
             agent: .codex,
