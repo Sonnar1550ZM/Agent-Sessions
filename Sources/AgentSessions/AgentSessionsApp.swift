@@ -2718,6 +2718,7 @@ final class AppController: ObservableObject {
     private var claudeResponseRefreshWorkItems: [String: [DispatchWorkItem]] = [:]
     private var cancellables: Set<AnyCancellable> = []
     private static let claudeResponseRetryDelays: [TimeInterval] = [0.5, 2.0]
+    private static let claudeResponseRefreshFreshnessWindow: TimeInterval = 5 * 60
 
     init() {
         applyDisplayPreferences()
@@ -2925,6 +2926,7 @@ final class AppController: ObservableObject {
             return
         }
 
+        let refreshedAt = Date()
         store.apply(AgentEvent(
             agent: session.agent,
             sessionId: session.sessionId,
@@ -2934,7 +2936,11 @@ final class AppController: ObservableObject {
             event: session.event,
             terminal: session.terminal,
             pid: session.pid,
-            updatedAt: responseTextChanged ? Date() : session.updatedAt,
+            updatedAt: updatedAtForClaudeResponseRefresh(
+                session: session,
+                responseTextChanged: responseTextChanged,
+                now: refreshedAt
+            ),
             parentSessionId: session.parentSessionId,
             subagentNickname: session.subagentNickname,
             subagentRole: session.subagentRole,
@@ -2970,6 +2976,7 @@ final class AppController: ObservableObject {
                 continue
             }
 
+            let refreshedAt = Date()
             store.apply(AgentEvent(
                 agent: session.agent,
                 sessionId: session.sessionId,
@@ -2979,7 +2986,11 @@ final class AppController: ObservableObject {
                 event: session.event,
                 terminal: session.terminal,
                 pid: session.pid,
-                updatedAt: responseTextChanged ? Date() : session.updatedAt,
+                updatedAt: updatedAtForClaudeResponseRefresh(
+                    session: session,
+                    responseTextChanged: responseTextChanged,
+                    now: refreshedAt
+                ),
                 parentSessionId: session.parentSessionId,
                 subagentNickname: session.subagentNickname,
                 subagentRole: session.subagentRole,
@@ -2989,6 +3000,28 @@ final class AppController: ObservableObject {
                 latestResponsePhase: latestResponsePhase
             ))
         }
+    }
+
+    private func updatedAtForClaudeResponseRefresh(
+        session: AgentSession,
+        responseTextChanged: Bool,
+        now: Date
+    ) -> Date {
+        guard responseTextChanged else {
+            return session.updatedAt
+        }
+
+        if session.state.isActive {
+            return now
+        }
+
+        let elapsed = now.timeIntervalSince(session.updatedAt)
+        guard elapsed >= 0,
+              elapsed <= Self.claudeResponseRefreshFreshnessWindow else {
+            return session.updatedAt
+        }
+
+        return now
     }
 
     private func resolvedTitle(for session: AgentSession) -> String? {

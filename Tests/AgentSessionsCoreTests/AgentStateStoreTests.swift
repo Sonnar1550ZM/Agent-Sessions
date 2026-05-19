@@ -137,6 +137,35 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(session?.sessionId, "newer-session")
     }
 
+    func testBackfilledOldResponseDoesNotMakePopupSessionRecent() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let now = base.addingTimeInterval(7 * 60 * 60)
+        let store = AgentStateStore(persistence: nil)
+
+        store.apply(AgentEvent(
+            agent: .claudeCode,
+            sessionId: "old-claude",
+            state: .idle,
+            title: "Clean up redundant code",
+            updatedAt: base
+        ))
+        store.apply(AgentEvent(
+            agent: .claudeCode,
+            sessionId: "old-claude",
+            state: .idle,
+            title: "Clean up redundant code",
+            updatedAt: base,
+            latestResponseText: "Backfilled response"
+        ))
+
+        XCTAssertEqual(store.sessions.first?.updatedAt, base)
+        XCTAssertEqual(store.sessions.first?.latestResponseUpdatedAt, base)
+        XCTAssertEqual(
+            store.popupParentSessions(now: now, displayInterval: 10, limit: 5).map(\.sessionId),
+            []
+        )
+    }
+
     func testLatestPopupParentSessionExcludesSubagentsAndOldIdleSessions() {
         let base = Date(timeIntervalSince1970: 1_000)
         let store = AgentStateStore(persistence: nil)

@@ -69,9 +69,11 @@ public enum AgentTextSanitizer {
             return nil
         }
 
-        let text = value
+        let normalizedText = value
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
+
+        let text = displayTextByCollapsingMarkdownLinks(normalizedText)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !text.isEmpty else {
@@ -84,6 +86,77 @@ public enum AgentTextSanitizer {
 
         return String(text.prefix(limit))
     }
+
+    private static func displayTextByCollapsingMarkdownLinks(_ text: String) -> String {
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        let matches = markdownLinkPattern.matches(in: text, range: range)
+        guard !matches.isEmpty else {
+            return text
+        }
+
+        var result = ""
+        var currentIndex = text.startIndex
+        for match in matches {
+            guard let fullRange = Range(match.range, in: text),
+                  let labelRange = Range(match.range(at: 1), in: text),
+                  let targetRange = Range(match.range(at: 2), in: text) else {
+                continue
+            }
+
+            result += text[currentIndex..<fullRange.lowerBound]
+            result += markdownLinkDisplayText(
+                label: String(text[labelRange]),
+                target: String(text[targetRange])
+            ) ?? String(text[fullRange])
+            currentIndex = fullRange.upperBound
+        }
+        result += text[currentIndex...]
+
+        return result
+    }
+
+    private static func markdownLinkDisplayText(label: String, target: String) -> String? {
+        let displayLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedTarget = markdownLinkTarget(target)
+        guard isLocalFileLinkTarget(normalizedTarget),
+              let lineNumber = markdownLinkLineNumber(normalizedTarget) else {
+            return nil
+        }
+
+        return "\(displayLabel) (line \(lineNumber))"
+    }
+
+    private static func markdownLinkTarget(_ target: String) -> String {
+        let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("<"), trimmed.hasSuffix(">"), trimmed.count >= 2 else {
+            return trimmed
+        }
+
+        return String(trimmed.dropFirst().dropLast())
+    }
+
+    private static func isLocalFileLinkTarget(_ target: String) -> Bool {
+        target.hasPrefix("/")
+            || target.hasPrefix("~/")
+            || target.hasPrefix("file://")
+    }
+
+    private static func markdownLinkLineNumber(_ target: String) -> String? {
+        let range = NSRange(target.startIndex..<target.endIndex, in: target)
+        guard let match = lineNumberSuffixPattern.firstMatch(in: target, range: range),
+              let lineRange = Range(match.range(at: 1), in: target) else {
+            return nil
+        }
+
+        return String(target[lineRange])
+    }
+
+    private static let markdownLinkPattern = try! NSRegularExpression(
+        pattern: #"(?<!!)\[([^\]\n]+)\]\((<[^>\n]+>|[^)\n]+)\)"#
+    )
+    private static let lineNumberSuffixPattern = try! NSRegularExpression(
+        pattern: #"(?::|#L)(\d+)$"#
+    )
 }
 
 public enum AgentState: String, Codable, CaseIterable, Sendable {
