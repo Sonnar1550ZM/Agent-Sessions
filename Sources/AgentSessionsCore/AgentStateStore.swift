@@ -195,7 +195,7 @@ public final class AgentStateStore: ObservableObject {
                 guard includedAgents.contains(session.agent),
                       !session.isSubagent,
                       session.state != .ended,
-                      !AgentSessionVisibility.isCodexMemoryWorkspace(agent: session.agent, cwd: session.cwd) else {
+                      !isHiddenSystemSession(session) else {
                     return false
                 }
 
@@ -345,6 +345,13 @@ public final class AgentStateStore: ObservableObject {
         persist()
     }
 
+    public func removeSession(agent: AgentKind, sessionId: String) {
+        let key = Self.key(agent: agent, sessionId: sessionId)
+        removeSessions {
+            Self.key(agent: $0.agent, sessionId: $0.sessionId) == key
+        }
+    }
+
     public func expireStaleActiveSessions(now: Date = Date()) {
         var changed = false
         sessions = sessions.map { session in
@@ -400,7 +407,10 @@ public final class AgentStateStore: ObservableObject {
             var agentSessions = retainedParents + retainedSubagents
             var retainedIds = Set(agentSessions.map(\.sessionId))
 
-            for activeSession in allAgentSessions where activeSession.state.isActive && !retainedIds.contains(activeSession.sessionId) {
+            for activeSession in allAgentSessions
+                where activeSession.state.isActive
+                    && !isHiddenSystemSession(activeSession)
+                    && !retainedIds.contains(activeSession.sessionId) {
                 agentSessions.append(activeSession)
                 retainedIds.insert(activeSession.sessionId)
             }
@@ -421,7 +431,7 @@ public final class AgentStateStore: ObservableObject {
     private func retentionEligibleSessions(from sessions: [AgentSession], now: Date) -> [AgentSession] {
         sessions.filter { session in
             session.state != .ended
-                && !AgentSessionVisibility.isCodexMemoryWorkspace(agent: session.agent, cwd: session.cwd)
+                && !isHiddenSystemSession(session)
                 && (session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyRetentionInterval)
         }
     }
@@ -429,9 +439,18 @@ public final class AgentStateStore: ObservableObject {
     private func displayEligibleSessions(from sessions: [AgentSession], now: Date) -> [AgentSession] {
         sessions.filter { session in
             session.state != .ended
-                && !AgentSessionVisibility.isCodexMemoryWorkspace(agent: session.agent, cwd: session.cwd)
+                && !isHiddenSystemSession(session)
                 && (session.state.isActive || now.timeIntervalSince(session.updatedAt) <= historyVisibilityInterval)
         }
+    }
+
+    private func isHiddenSystemSession(_ session: AgentSession) -> Bool {
+        AgentSessionVisibility.isCodexMemoryWorkspace(agent: session.agent, cwd: session.cwd)
+            || AgentSessionVisibility.isCodexInternalSuggestion(
+                agent: session.agent,
+                title: session.title,
+                latestResponseText: session.latestResponseText
+            )
     }
 
     private func displayEligibleSubagents(

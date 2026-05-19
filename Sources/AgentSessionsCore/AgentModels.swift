@@ -43,6 +43,38 @@ public enum AgentSessionVisibility {
         return sessionPath == memoriesPath || sessionPath.hasPrefix(memoriesPath + "/")
     }
 
+    public static func isCodexInternalSuggestion(
+        agent: AgentKind,
+        title: String,
+        latestResponseText: String?
+    ) -> Bool {
+        guard agent == .codex else {
+            return false
+        }
+
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedTitle.isEmpty else {
+            return false
+        }
+
+        return isCodexInternalSuggestionText(latestResponseText)
+    }
+
+    private static func isCodexInternalSuggestionText(_ value: String?) -> Bool {
+        guard let value else {
+            return false
+        }
+
+        let normalized = value
+            .lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        return normalized.contains("generate 0 to 3 hyperpersonalized suggestions")
+            && normalized.contains("for what this user can do with codex in this local project")
+    }
+
     private static func normalizedPath(_ path: String) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {

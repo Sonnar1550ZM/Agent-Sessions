@@ -155,12 +155,15 @@ private enum ProviderPreferenceDefaults {
     static let latestResponseHideAfterInterval: TimeInterval = 10 * 60
     static let showsSubagents = true
     static let subagentHideAfterInterval: TimeInterval = 3 * 60
+    static let menuBarEnabled = true
     static let popupEnabled = true
     static let popupDisplayInterval: TimeInterval = 10
     static let popupGlassEnabled = true
     static let popupOpacity = 0.7957142857142857
     static let popupWindowPosition = PopupWindowPosition.bottomRight
     static let popupWindowWidth = 400.4190051020408
+    static let popupOffsetX = 0.0
+    static let popupOffsetY = 0.0
     static let popupScale = 1.0075659049513415
     static let popupBackdropOpacity = 0.05
     static let popupTextOpacity = 1.0
@@ -252,8 +255,25 @@ private enum ProviderPreferenceDefaults {
         min(max(opacity ?? popupOpacity, 0), 1.0)
     }
 
+    static func sanitizedPopupStyle(
+        glassEnabled: Bool,
+        textShadowEnabled: Bool
+    ) -> (glassEnabled: Bool, textShadowEnabled: Bool) {
+        if glassEnabled {
+            return (true, false)
+        }
+        if textShadowEnabled {
+            return (false, true)
+        }
+        return (popupGlassEnabled, !popupGlassEnabled)
+    }
+
     static func sanitizedPopupWindowWidth(_ width: Double?) -> Double {
-        min(max(width ?? popupWindowWidth, 260), 1500)
+        min(max(width ?? popupWindowWidth, 260), 1000)
+    }
+
+    static func sanitizedPopupOffset(_ offset: Double?) -> Double {
+        min(max(offset ?? 0, -500), 500)
     }
 
     static func sanitizedPopupScale(_ scale: Double?) -> Double {
@@ -436,6 +456,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var showsSubagents: Bool
     var subagentHideAfterInterval: TimeInterval
     var hideAfterInterval: TimeInterval
+    var menuBarEnabled: Bool
     var popupEnabled: Bool
     var popupDisplayInterval: TimeInterval
     var popupProviderVisibility: [String: Bool]
@@ -443,6 +464,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var popupOpacity: Double
     var popupWindowPosition: PopupWindowPosition
     var popupWindowWidth: Double
+    var popupOffsetX: Double
+    var popupOffsetY: Double
     var popupScale: Double
     var popupBackdropOpacity: Double
     var popupTextOpacity: Double
@@ -468,6 +491,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         showsSubagents: Bool = ProviderPreferenceDefaults.showsSubagents,
         subagentHideAfterInterval: TimeInterval = ProviderPreferenceDefaults.subagentHideAfterInterval,
         hideAfterInterval: TimeInterval = ProviderPreferenceDefaults.hideAfterInterval,
+        menuBarEnabled: Bool = ProviderPreferenceDefaults.menuBarEnabled,
         popupEnabled: Bool = ProviderPreferenceDefaults.popupEnabled,
         popupDisplayInterval: TimeInterval = ProviderPreferenceDefaults.popupDisplayInterval,
         popupProviderVisibility: [String: Bool] = ProviderPreferencesDocument.defaultPopupProviderVisibility,
@@ -475,6 +499,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupOpacity: Double = ProviderPreferenceDefaults.popupOpacity,
         popupWindowPosition: PopupWindowPosition = ProviderPreferenceDefaults.popupWindowPosition,
         popupWindowWidth: Double = ProviderPreferenceDefaults.popupWindowWidth,
+        popupOffsetX: Double = ProviderPreferenceDefaults.popupOffsetX,
+        popupOffsetY: Double = ProviderPreferenceDefaults.popupOffsetY,
         popupScale: Double = ProviderPreferenceDefaults.popupScale,
         popupBackdropOpacity: Double = ProviderPreferenceDefaults.popupBackdropOpacity,
         popupTextOpacity: Double = ProviderPreferenceDefaults.popupTextOpacity,
@@ -499,18 +525,25 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.showsSubagents = showsSubagents
         self.subagentHideAfterInterval = subagentHideAfterInterval
         self.hideAfterInterval = hideAfterInterval
+        self.menuBarEnabled = menuBarEnabled
         self.popupEnabled = popupEnabled
         self.popupDisplayInterval = popupDisplayInterval
         self.popupProviderVisibility = Self.sanitizedPopupProviderVisibility(popupProviderVisibility)
-        self.popupGlassEnabled = popupGlassEnabled
+        let popupStyle = ProviderPreferenceDefaults.sanitizedPopupStyle(
+            glassEnabled: popupGlassEnabled,
+            textShadowEnabled: popupTextShadowEnabled
+        )
+        self.popupGlassEnabled = popupStyle.glassEnabled
         self.popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(popupOpacity)
         self.popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(popupWindowPosition)
         self.popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(popupWindowWidth)
+        self.popupOffsetX = ProviderPreferenceDefaults.sanitizedPopupOffset(popupOffsetX)
+        self.popupOffsetY = ProviderPreferenceDefaults.sanitizedPopupOffset(popupOffsetY)
         self.popupScale = ProviderPreferenceDefaults.sanitizedPopupScale(popupScale)
         self.popupBackdropOpacity = ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(popupBackdropOpacity)
         self.popupTextOpacity = ProviderPreferenceDefaults.sanitizedPopupTextOpacity(popupTextOpacity)
         self.popupMouseProximityOpacity = ProviderPreferenceDefaults.sanitizedPopupMouseProximityOpacity(popupMouseProximityOpacity)
-        self.popupTextShadowEnabled = popupTextShadowEnabled
+        self.popupTextShadowEnabled = popupStyle.textShadowEnabled
         self.popupTextShadowStrength = ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(popupTextShadowStrength)
         self.popupTextShadowDistance = ProviderPreferenceDefaults.sanitizedPopupTextShadowDistance(popupTextShadowDistance)
         self.popupTextShadowRadius = ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(popupTextShadowRadius)
@@ -533,6 +566,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case showsSubagents
         case subagentHideAfterInterval
         case hideAfterInterval
+        case menuBarEnabled
         case popupEnabled
         case popupDisplayInterval
         case popupProviderVisibility
@@ -540,6 +574,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case popupOpacity
         case popupWindowPosition
         case popupWindowWidth
+        case popupOffsetX
+        case popupOffsetY
         case popupScale
         case popupBackdropOpacity
         case popupTextOpacity
@@ -587,6 +623,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         hideAfterInterval = ProviderPreferenceDefaults.sanitizedHideAfterInterval(
             try container.decodeIfPresent(TimeInterval.self, forKey: .hideAfterInterval)
         )
+        menuBarEnabled = try container.decodeIfPresent(Bool.self, forKey: .menuBarEnabled)
+            ?? ProviderPreferenceDefaults.menuBarEnabled
         popupEnabled = try container.decodeIfPresent(Bool.self, forKey: .popupEnabled)
             ?? ProviderPreferenceDefaults.popupEnabled
         popupDisplayInterval = ProviderPreferenceDefaults.sanitizedPopupDisplayInterval(
@@ -605,6 +643,12 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         )
         popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(
             try container.decodeIfPresent(Double.self, forKey: .popupWindowWidth)
+        )
+        popupOffsetX = ProviderPreferenceDefaults.sanitizedPopupOffset(
+            try container.decodeIfPresent(Double.self, forKey: .popupOffsetX)
+        )
+        popupOffsetY = ProviderPreferenceDefaults.sanitizedPopupOffset(
+            try container.decodeIfPresent(Double.self, forKey: .popupOffsetY)
         )
         popupScale = ProviderPreferenceDefaults.sanitizedPopupScale(
             try container.decodeIfPresent(Double.self, forKey: .popupScale)
@@ -665,6 +709,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(showsSubagents, forKey: .showsSubagents)
         try container.encode(subagentHideAfterInterval, forKey: .subagentHideAfterInterval)
         try container.encode(hideAfterInterval, forKey: .hideAfterInterval)
+        try container.encode(menuBarEnabled, forKey: .menuBarEnabled)
         try container.encode(popupEnabled, forKey: .popupEnabled)
         try container.encode(popupDisplayInterval, forKey: .popupDisplayInterval)
         try container.encode(popupProviderVisibility, forKey: .popupProviderVisibility)
@@ -672,6 +717,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(popupOpacity, forKey: .popupOpacity)
         try container.encode(popupWindowPosition, forKey: .popupWindowPosition)
         try container.encode(popupWindowWidth, forKey: .popupWindowWidth)
+        try container.encode(popupOffsetX, forKey: .popupOffsetX)
+        try container.encode(popupOffsetY, forKey: .popupOffsetY)
         try container.encode(popupScale, forKey: .popupScale)
         try container.encode(popupBackdropOpacity, forKey: .popupBackdropOpacity)
         try container.encode(popupTextOpacity, forKey: .popupTextOpacity)
@@ -717,6 +764,7 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var showsSubagents: Bool
     @Published private(set) var subagentHideAfterInterval: TimeInterval
     @Published private(set) var hideAfterInterval: TimeInterval
+    @Published private(set) var menuBarEnabled: Bool
     @Published private(set) var popupEnabled: Bool
     @Published private(set) var popupDisplayInterval: TimeInterval
     @Published private(set) var popupProviderVisibility: [String: Bool]
@@ -724,6 +772,8 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var popupOpacity: Double
     @Published private(set) var popupWindowPosition: PopupWindowPosition
     @Published private(set) var popupWindowWidth: Double
+    @Published private(set) var popupOffsetX: Double
+    @Published private(set) var popupOffsetY: Double
     @Published private(set) var popupScale: Double
     @Published private(set) var popupBackdropOpacity: Double
     @Published private(set) var popupTextOpacity: Double
@@ -765,6 +815,7 @@ final class ProviderVisibilityStore: ObservableObject {
         showsSubagents = document.showsSubagents
         subagentHideAfterInterval = ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval)
         hideAfterInterval = ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval)
+        menuBarEnabled = document.menuBarEnabled
         popupEnabled = document.popupEnabled
         popupDisplayInterval = ProviderPreferenceDefaults.sanitizedPopupDisplayInterval(document.popupDisplayInterval)
         popupProviderVisibility = ProviderPreferencesDocument.sanitizedPopupProviderVisibility(document.popupProviderVisibility)
@@ -772,6 +823,8 @@ final class ProviderVisibilityStore: ObservableObject {
         popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(document.popupOpacity)
         popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(document.popupWindowPosition)
         popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(document.popupWindowWidth)
+        popupOffsetX = ProviderPreferenceDefaults.sanitizedPopupOffset(document.popupOffsetX)
+        popupOffsetY = ProviderPreferenceDefaults.sanitizedPopupOffset(document.popupOffsetY)
         popupScale = ProviderPreferenceDefaults.sanitizedPopupScale(document.popupScale)
         popupBackdropOpacity = ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(document.popupBackdropOpacity)
         popupTextOpacity = ProviderPreferenceDefaults.sanitizedPopupTextOpacity(document.popupTextOpacity)
@@ -853,6 +906,11 @@ final class ProviderVisibilityStore: ObservableObject {
         save()
     }
 
+    func setMenuBarEnabled(_ isEnabled: Bool) {
+        menuBarEnabled = isEnabled
+        save()
+    }
+
     func isPopupVisible(for agent: AgentKind) -> Bool {
         popupProviderVisibility[agent.rawValue] ?? true
     }
@@ -887,7 +945,12 @@ final class ProviderVisibilityStore: ObservableObject {
     }
 
     func setPopupGlassEnabled(_ isEnabled: Bool) {
-        popupGlassEnabled = isEnabled
+        let style = ProviderPreferenceDefaults.sanitizedPopupStyle(
+            glassEnabled: isEnabled,
+            textShadowEnabled: isEnabled ? false : popupTextShadowEnabled
+        )
+        popupGlassEnabled = style.glassEnabled
+        popupTextShadowEnabled = style.textShadowEnabled
         save()
     }
 
@@ -903,6 +966,16 @@ final class ProviderVisibilityStore: ObservableObject {
 
     func setPopupWindowWidth(_ width: Double) {
         popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(width)
+        save()
+    }
+
+    func setPopupOffsetX(_ offset: Double) {
+        popupOffsetX = ProviderPreferenceDefaults.sanitizedPopupOffset(offset)
+        save()
+    }
+
+    func setPopupOffsetY(_ offset: Double) {
+        popupOffsetY = ProviderPreferenceDefaults.sanitizedPopupOffset(offset)
         save()
     }
 
@@ -927,7 +1000,12 @@ final class ProviderVisibilityStore: ObservableObject {
     }
 
     func setPopupTextShadowEnabled(_ isEnabled: Bool) {
-        popupTextShadowEnabled = isEnabled
+        let style = ProviderPreferenceDefaults.sanitizedPopupStyle(
+            glassEnabled: isEnabled ? false : popupGlassEnabled,
+            textShadowEnabled: isEnabled
+        )
+        popupGlassEnabled = style.glassEnabled
+        popupTextShadowEnabled = style.textShadowEnabled
         save()
     }
 
@@ -972,7 +1050,11 @@ final class ProviderVisibilityStore: ObservableObject {
             ProviderPreferenceDefaults.popupDisplayInterval
         )
         popupProviderVisibility = ProviderPreferencesDocument.defaultPopupProviderVisibility
-        popupGlassEnabled = ProviderPreferenceDefaults.popupGlassEnabled
+        let popupStyle = ProviderPreferenceDefaults.sanitizedPopupStyle(
+            glassEnabled: ProviderPreferenceDefaults.popupGlassEnabled,
+            textShadowEnabled: ProviderPreferenceDefaults.popupTextShadowEnabled
+        )
+        popupGlassEnabled = popupStyle.glassEnabled
         popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(ProviderPreferenceDefaults.popupOpacity)
         popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(
             ProviderPreferenceDefaults.popupWindowPosition
@@ -980,6 +1062,8 @@ final class ProviderVisibilityStore: ObservableObject {
         popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(
             ProviderPreferenceDefaults.popupWindowWidth
         )
+        popupOffsetX = ProviderPreferenceDefaults.sanitizedPopupOffset(ProviderPreferenceDefaults.popupOffsetX)
+        popupOffsetY = ProviderPreferenceDefaults.sanitizedPopupOffset(ProviderPreferenceDefaults.popupOffsetY)
         popupScale = ProviderPreferenceDefaults.sanitizedPopupScale(ProviderPreferenceDefaults.popupScale)
         popupBackdropOpacity = ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(
             ProviderPreferenceDefaults.popupBackdropOpacity
@@ -990,7 +1074,7 @@ final class ProviderVisibilityStore: ObservableObject {
         popupMouseProximityOpacity = ProviderPreferenceDefaults.sanitizedPopupMouseProximityOpacity(
             ProviderPreferenceDefaults.popupMouseProximityOpacity
         )
-        popupTextShadowEnabled = ProviderPreferenceDefaults.popupTextShadowEnabled
+        popupTextShadowEnabled = popupStyle.textShadowEnabled
         popupTextShadowStrength = ProviderPreferenceDefaults.sanitizedPopupTextShadowStrength(
             ProviderPreferenceDefaults.popupTextShadowStrength
         )
@@ -1123,6 +1207,7 @@ final class ProviderVisibilityStore: ObservableObject {
             showsSubagents: showsSubagents,
             subagentHideAfterInterval: subagentHideAfterInterval,
             hideAfterInterval: hideAfterInterval,
+            menuBarEnabled: menuBarEnabled,
             popupEnabled: popupEnabled,
             popupDisplayInterval: popupDisplayInterval,
             popupProviderVisibility: popupProviderVisibility,
@@ -1130,6 +1215,8 @@ final class ProviderVisibilityStore: ObservableObject {
             popupOpacity: popupOpacity,
             popupWindowPosition: popupWindowPosition,
             popupWindowWidth: popupWindowWidth,
+            popupOffsetX: popupOffsetX,
+            popupOffsetY: popupOffsetY,
             popupScale: popupScale,
             popupBackdropOpacity: popupBackdropOpacity,
             popupTextOpacity: popupTextOpacity,
@@ -1170,6 +1257,7 @@ final class ProviderVisibilityStore: ObservableObject {
                 showsSubagents: ProviderPreferenceDefaults.showsSubagents,
                 subagentHideAfterInterval: ProviderPreferenceDefaults.subagentHideAfterInterval,
                 hideAfterInterval: ProviderPreferenceDefaults.hideAfterInterval,
+                menuBarEnabled: ProviderPreferenceDefaults.menuBarEnabled,
                 popupEnabled: ProviderPreferenceDefaults.popupEnabled,
                 popupDisplayInterval: ProviderPreferenceDefaults.popupDisplayInterval,
                 popupProviderVisibility: ProviderPreferencesDocument.defaultPopupProviderVisibility,
@@ -1177,6 +1265,8 @@ final class ProviderVisibilityStore: ObservableObject {
                 popupOpacity: ProviderPreferenceDefaults.popupOpacity,
                 popupWindowPosition: ProviderPreferenceDefaults.popupWindowPosition,
                 popupWindowWidth: ProviderPreferenceDefaults.popupWindowWidth,
+                popupOffsetX: ProviderPreferenceDefaults.popupOffsetX,
+                popupOffsetY: ProviderPreferenceDefaults.popupOffsetY,
                 popupScale: ProviderPreferenceDefaults.popupScale,
                 popupBackdropOpacity: ProviderPreferenceDefaults.popupBackdropOpacity,
                 popupTextOpacity: ProviderPreferenceDefaults.popupTextOpacity,
@@ -1208,6 +1298,7 @@ final class ProviderVisibilityStore: ObservableObject {
             showsSubagents: document.showsSubagents,
             subagentHideAfterInterval: ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval),
             hideAfterInterval: ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval),
+            menuBarEnabled: document.menuBarEnabled,
             popupEnabled: document.popupEnabled,
             popupDisplayInterval: ProviderPreferenceDefaults.sanitizedPopupDisplayInterval(document.popupDisplayInterval),
             popupProviderVisibility: ProviderPreferencesDocument.sanitizedPopupProviderVisibility(document.popupProviderVisibility),
@@ -1215,6 +1306,8 @@ final class ProviderVisibilityStore: ObservableObject {
             popupOpacity: ProviderPreferenceDefaults.sanitizedPopupOpacity(document.popupOpacity),
             popupWindowPosition: ProviderPreferenceDefaults.sanitizedPopupWindowPosition(document.popupWindowPosition),
             popupWindowWidth: ProviderPreferenceDefaults.sanitizedPopupWindowWidth(document.popupWindowWidth),
+            popupOffsetX: ProviderPreferenceDefaults.sanitizedPopupOffset(document.popupOffsetX),
+            popupOffsetY: ProviderPreferenceDefaults.sanitizedPopupOffset(document.popupOffsetY),
             popupScale: ProviderPreferenceDefaults.sanitizedPopupScale(document.popupScale),
             popupBackdropOpacity: ProviderPreferenceDefaults.sanitizedPopupBackdropOpacity(document.popupBackdropOpacity),
             popupTextOpacity: ProviderPreferenceDefaults.sanitizedPopupTextOpacity(document.popupTextOpacity),
@@ -1377,10 +1470,12 @@ private struct SettingsDetailView: View {
 
 private struct SettingsForm<Content: View>: View {
     let title: String
+    var showsTitle = true
     private let content: Content
 
-    init(title: String, @ViewBuilder content: () -> Content) {
+    init(title: String, showsTitle: Bool = true, @ViewBuilder content: () -> Content) {
         self.title = title
+        self.showsTitle = showsTitle
         self.content = content()
     }
 
@@ -1391,7 +1486,7 @@ private struct SettingsForm<Content: View>: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .background(Color(nsColor: .windowBackgroundColor))
-        .navigationTitle(title)
+        .navigationTitle(showsTitle ? title : "")
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
@@ -1609,12 +1704,10 @@ private struct PopupSettingsView: View {
     @ObservedObject var providerVisibility: ProviderVisibilityStore
 
     var body: some View {
-        SettingsForm(title: SettingsSection.popup.title) {
-            PopupProviderSettingsGroup(providerVisibility: providerVisibility)
-
+        SettingsForm(title: SettingsSection.popup.title, showsTitle: false) {
             SettingsGroupBox(
                 title: "Display",
-                subtitle: "Latest parent response popup."
+                subtitle: "Turn the popup window on or off."
             ) {
                 SettingsToggleRow(
                     title: "Enable",
@@ -1628,9 +1721,16 @@ private struct PopupSettingsView: View {
                         }
                     )
                 )
+            }
 
-                SettingsDivider()
+            PopupProviderSettingsGroup(providerVisibility: providerVisibility)
 
+            PopupStyleSettingsGroup(providerVisibility: providerVisibility)
+
+            SettingsGroupBox(
+                title: "Appearance",
+                subtitle: "Popup content, position, size, and opacity."
+            ) {
                 SettingsStepperRow(
                     title: "Hide After Idle",
                     subtitle: "Hide this many seconds after the parent session becomes idle.",
@@ -1703,12 +1803,9 @@ private struct PopupSettingsView: View {
                 }
                 .disabled(!responseBodyControlsEnabled)
                 .opacity(responseBodyControlsEnabled ? 1 : 0.55)
-            }
 
-            SettingsGroupBox(
-                title: "Position",
-                subtitle: "Screen position for the popup window."
-            ) {
+                SettingsDivider()
+
                 SettingsEnumPickerRow(
                     title: "Window",
                     subtitle: "Place the popup on the current main screen.",
@@ -1726,51 +1823,41 @@ private struct PopupSettingsView: View {
                 }
                 .disabled(!providerVisibility.popupEnabled)
                 .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
-            }
 
-            SettingsGroupBox(
-                title: "Liquid Glass",
-                subtitle: "Rounded translucent window surface behind popup content."
-            ) {
-                SettingsToggleRow(
-                    title: "Enable",
-                    subtitle: "Draw a glass window behind the popup.",
-                    isOn: Binding(
-                        get: {
-                            providerVisibility.popupGlassEnabled
-                        },
-                        set: { isEnabled in
-                            providerVisibility.setPopupGlassEnabled(isEnabled)
-                        }
-                    )
-                )
+                SettingsDivider()
+
+                SettingsStepperRow(
+                    title: "Offset X",
+                    subtitle: "Move the popup horizontally from its selected position.",
+                    value: Int(providerVisibility.popupOffsetX),
+                    range: -500...500,
+                    step: 5,
+                    labelSuffix: "px",
+                    labelWidth: 58
+                ) { offset in
+                    providerVisibility.setPopupOffsetX(Double(offset))
+                }
                 .disabled(!providerVisibility.popupEnabled)
                 .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
 
                 SettingsDivider()
 
-                SettingsSliderRow(
-                    title: "Opacity",
-                    subtitle: "Adjust the visible strength of the glass surface.",
-                    value: Binding(
-                        get: {
-                            providerVisibility.popupOpacity
-                        },
-                        set: { opacity in
-                            providerVisibility.setPopupOpacity(opacity)
-                        }
-                    ),
-                    range: 0...1,
-                    label: "\(Int(providerVisibility.popupOpacity * 100))%"
-                )
-                .disabled(!glassControlsEnabled)
-                .opacity(glassControlsEnabled ? 1 : 0.55)
-            }
+                SettingsStepperRow(
+                    title: "Offset Y",
+                    subtitle: "Move the popup vertically from its selected position.",
+                    value: Int(providerVisibility.popupOffsetY),
+                    range: -500...500,
+                    step: 5,
+                    labelSuffix: "px",
+                    labelWidth: 58
+                ) { offset in
+                    providerVisibility.setPopupOffsetY(Double(offset))
+                }
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
 
-            SettingsGroupBox(
-                title: "Appearance",
-                subtitle: "Popup window size, opacity, and cursor behavior."
-            ) {
+                SettingsDivider()
+
                 SettingsSliderRow(
                     title: "Width",
                     subtitle: "Adjust popup window width.",
@@ -1782,7 +1869,7 @@ private struct PopupSettingsView: View {
                             providerVisibility.setPopupWindowWidth(width)
                         }
                     ),
-                    range: 260...1500,
+                    range: 260...1000,
                     label: "\(Int(providerVisibility.popupWindowWidth))px"
                 )
                 .disabled(!providerVisibility.popupEnabled)
@@ -1810,18 +1897,18 @@ private struct PopupSettingsView: View {
                 SettingsDivider()
 
                 SettingsSliderRow(
-                    title: "Text Opacity",
-                    subtitle: "Adjust popup text transparency.",
+                    title: "Opacity",
+                    subtitle: "Adjust the entire popup window opacity.",
                     value: Binding(
                         get: {
-                            providerVisibility.popupTextOpacity
+                            providerVisibility.popupOpacity
                         },
                         set: { opacity in
-                            providerVisibility.setPopupTextOpacity(opacity)
+                            providerVisibility.setPopupOpacity(opacity)
                         }
                     ),
-                    range: 0.35...1.0,
-                    label: "\(Int(providerVisibility.popupTextOpacity * 100))%"
+                    range: 0...1,
+                    label: "\(Int(providerVisibility.popupOpacity * 100))%"
                 )
                 .disabled(!providerVisibility.popupEnabled)
                 .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
@@ -1841,23 +1928,6 @@ private struct PopupSettingsView: View {
                     ),
                     range: 0...1,
                     label: "\(Int(providerVisibility.popupMouseProximityOpacity * 100))%"
-                )
-                .disabled(!providerVisibility.popupEnabled)
-                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
-
-                SettingsDivider()
-
-                SettingsToggleRow(
-                    title: "Text Drop Shadow",
-                    subtitle: "Use the fixed popup text shadow preset.",
-                    isOn: Binding(
-                        get: {
-                            providerVisibility.popupTextShadowEnabled
-                        },
-                        set: { isEnabled in
-                            providerVisibility.setPopupTextShadowEnabled(isEnabled)
-                        }
-                    )
                 )
                 .disabled(!providerVisibility.popupEnabled)
                 .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
@@ -1882,9 +1952,56 @@ private struct PopupSettingsView: View {
     private var responseBodyControlsEnabled: Bool {
         providerVisibility.popupEnabled && providerVisibility.popupShowsResponseBody
     }
+}
 
-    private var glassControlsEnabled: Bool {
-        providerVisibility.popupEnabled && providerVisibility.popupGlassEnabled
+private struct PopupStyleSettingsGroup: View {
+    @ObservedObject var providerVisibility: ProviderVisibilityStore
+
+    var body: some View {
+        SettingsGroupBox(
+            title: "Style",
+            subtitle: "Choose one popup visual treatment."
+        ) {
+            HStack(spacing: 10) {
+                SettingsStyleChoiceButton(
+                    title: "Liquid Glass",
+                    systemImage: "sparkles",
+                    isSelected: providerVisibility.popupGlassEnabled
+                ) {
+                    providerVisibility.setPopupGlassEnabled(true)
+                }
+
+                SettingsStyleChoiceButton(
+                    title: "Text Drop Shadow",
+                    systemImage: "textformat",
+                    isSelected: providerVisibility.popupTextShadowEnabled
+                ) {
+                    providerVisibility.setPopupTextShadowEnabled(true)
+                }
+            }
+            .disabled(!providerVisibility.popupEnabled)
+            .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+        }
+    }
+}
+
+private struct SettingsStyleChoiceButton: View {
+    let title: String
+    let systemImage: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.body)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+        .tint(isSelected ? .accentColor : .secondary)
+        .foregroundStyle(isSelected ? .primary : .secondary)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -1947,9 +2064,6 @@ private struct ProviderSettingsRow: View {
                     .help("Move down")
                 }
                 .frame(width: 54, alignment: .trailing)
-            } else {
-                Color.clear
-                    .frame(width: 54)
             }
         }
         .padding(.vertical, 4)
@@ -1961,12 +2075,40 @@ private struct MenuBarSettingsView: View {
 
     var body: some View {
         SettingsForm(title: SettingsSection.menuBar.title) {
+            SettingsGroupBox(
+                title: "Display",
+                subtitle: "Control whether Agent Sessions appears in the menu bar."
+            ) {
+                SettingsToggleRow(
+                    title: "Enable",
+                    subtitle: "Show Agent Sessions in the menu bar.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.menuBarEnabled
+                        },
+                        set: { isEnabled in
+                            providerVisibility.setMenuBarEnabled(isEnabled)
+                        }
+                    )
+                )
+
+                if !providerVisibility.menuBarEnabled {
+                    SettingsDivider()
+
+                    SettingsWarningRow(
+                        text: "Menu bar access is hidden while this is off. Open Agent Sessions.app again while it is running to show Settings."
+                    )
+                }
+            }
+
             ProviderPlacementCard(
                 placement: .menuBar,
                 providerVisibility: providerVisibility,
                 title: "Providers",
                 subtitle: "Choose providers that appear as menu bar icons."
             )
+            .disabled(!providerVisibility.menuBarEnabled)
+            .opacity(providerVisibility.menuBarEnabled ? 1 : 0.55)
         }
     }
 }
@@ -2096,6 +2238,23 @@ private struct SettingsGroupBox<Content: View>: View {
 private struct SettingsDivider: View {
     var body: some View {
         EmptyView()
+    }
+}
+
+private struct SettingsWarningRow: View {
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -2321,6 +2480,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.controller = controller
         statusMenuController = StatusMenuController(controller: controller)
         popupController = SessionPopupController(controller: controller)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        SettingsWindowController.shared.open()
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -2831,7 +2995,7 @@ final class AppController: ObservableObject {
         let immediateEvent = event.settingUpdatedAtIfMissing(Date())
 
         guard !AgentEventEnricher.shouldHideImmediately(immediateEvent) else {
-            pruneHiddenSessions()
+            removeHiddenSession(immediateEvent)
             return
         }
 
@@ -2852,7 +3016,7 @@ final class AppController: ObservableObject {
                 }
 
                 guard !shouldHide else {
-                    self.pruneHiddenSessions()
+                    self.removeHiddenSession(resolvedEvent)
                     return
                 }
 
@@ -3068,6 +3232,10 @@ final class AppController: ObservableObject {
         }
     }
 
+    private func removeHiddenSession(_ event: AgentEvent) {
+        store.removeSession(agent: event.agent, sessionId: event.sessionId)
+    }
+
     private func shouldHideSession(_ session: AgentSession) -> Bool {
         switch session.agent {
         case .codex:
@@ -3255,6 +3423,7 @@ final class SessionPopupController {
     private var refreshTimer: Timer?
     private var mouseProximityTimer: Timer?
     private var mouseProximityIsDimmed: Bool?
+    private var renderedPopupSignature: String?
     private var popupAnimationGeneration = 0
     private var popupVisibilityState: PopupVisibilityState = .hidden
     private var cancellables: Set<AnyCancellable> = []
@@ -3269,6 +3438,7 @@ final class SessionPopupController {
     private func observeChanges() {
         controller.store.$sessions
             .receive(on: DispatchQueue.main)
+            .throttle(for: .milliseconds(500), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] _ in
                 self?.updatePopup()
             }
@@ -3305,7 +3475,7 @@ final class SessionPopupController {
         providerVisibility.$popupOpacity
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.updatePopup()
+                self?.updatePopupPanelAlpha(animated: true)
             }
             .store(in: &cancellables)
 
@@ -3317,6 +3487,20 @@ final class SessionPopupController {
             .store(in: &cancellables)
 
         providerVisibility.$popupWindowWidth
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupOffsetX
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupOffsetY
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updatePopup()
@@ -3485,17 +3669,26 @@ final class SessionPopupController {
     }
 
     private func showPopup(sessions: [AgentSession]) {
+        let renderSignature = popupRenderSignature(for: sessions)
+        if panel?.isVisible == true,
+           popupVisibilityState == .visible,
+           renderedPopupSignature == renderSignature {
+            updatePopupPanelAlpha(animated: false)
+            return
+        }
+
         let rootView = LatestParentSessionsPopupView(
             sessions: sessions,
             popupWidth: CGFloat(providerVisibility.popupWindowWidth),
             popupScale: CGFloat(providerVisibility.popupScale),
             glassEnabled: providerVisibility.popupGlassEnabled,
-            glassOpacity: providerVisibility.popupOpacity,
-            textOpacity: providerVisibility.popupTextOpacity,
+            glassOpacity: 1,
+            textOpacity: 1,
             textShadowStrength: providerVisibility.effectivePopupTextShadowStrength,
             textShadowDistance: CGFloat(providerVisibility.effectivePopupTextShadowDistance),
             textShadowRadius: CGFloat(providerVisibility.effectivePopupTextShadowRadius),
-            alignsHeaderTrailing: providerVisibility.popupWindowPosition.alignsPopupHeaderTrailing,
+            alignsHeaderTrailing: !providerVisibility.popupGlassEnabled
+                && providerVisibility.popupWindowPosition.alignsPopupHeaderTrailing,
             placesNewestSessionAtBottom: providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom,
             showsResponseBody: providerVisibility.popupShowsResponseBody,
             responseCharacterLimit: providerVisibility.popupResponseCharacterLimit,
@@ -3541,10 +3734,12 @@ final class SessionPopupController {
                 resetPopupContentAnimation(hostingController.view)
             }
         }
+        renderedPopupSignature = renderSignature
     }
 
     private func closePopup() {
         stopMouseProximityTracking()
+        renderedPopupSignature = nil
         guard let panel, panel.isVisible else {
             panel?.alphaValue = 1
             popupVisibilityState = .hidden
@@ -3579,9 +3774,38 @@ final class SessionPopupController {
                 if let view = self.hostingController?.view {
                     self.resetPopupContentAnimation(view)
                 }
+                self.renderedPopupSignature = nil
                 self.popupVisibilityState = .hidden
             }
         }
+    }
+
+    private func popupRenderSignature(for sessions: [AgentSession]) -> String {
+        var parts: [String] = [
+            providerVisibility.popupWindowPosition.rawValue,
+            "\(providerVisibility.popupWindowWidth)",
+            "\(providerVisibility.popupOffsetX)",
+            "\(providerVisibility.popupOffsetY)",
+            "\(providerVisibility.popupScale)",
+            "\(providerVisibility.popupGlassEnabled)",
+            "\(providerVisibility.effectivePopupTextShadowStrength)",
+            "\(providerVisibility.effectivePopupTextShadowDistance)",
+            "\(providerVisibility.effectivePopupTextShadowRadius)",
+            "\(providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom)",
+            "\(providerVisibility.popupShowsResponseBody)",
+            "\(providerVisibility.popupResponseCharacterLimit)",
+            "\(providerVisibility.popupResponseLineLimit)"
+        ]
+
+        for session in sessions {
+            parts.append(session.id)
+            parts.append(session.state.rawValue)
+            parts.append(session.displayTitle)
+            parts.append(session.latestResponseText ?? "")
+            parts.append(session.latestResponsePhase ?? "")
+        }
+
+        return parts.joined(separator: "\u{1f}")
     }
 
     private func ensureHostingController(
@@ -3653,7 +3877,7 @@ final class SessionPopupController {
         }
 
         let isDimmed = popupShouldDim(forMouseLocation: NSEvent.mouseLocation)
-        let targetAlpha = isDimmed ? CGFloat(providerVisibility.popupMouseProximityOpacity) : 1
+        let targetAlpha = CGFloat(isDimmed ? providerVisibility.popupMouseProximityOpacity : providerVisibility.popupOpacity)
         guard mouseProximityIsDimmed != isDimmed || abs(panel.alphaValue - targetAlpha) > 0.001 else {
             return
         }
@@ -3714,8 +3938,8 @@ final class SessionPopupController {
         }
 
         return NSRect(
-            x: x,
-            y: y,
+            x: x + CGFloat(providerVisibility.popupOffsetX),
+            y: y + CGFloat(providerVisibility.popupOffsetY),
             width: width,
             height: height
         )
@@ -4021,13 +4245,9 @@ private struct PopupSessionRow: View {
 
     @ViewBuilder
     private var providerIcon: some View {
-        if session.state == .working {
-            TimelineView(.periodic(from: Date(), by: AgentIconAnimation.animatedRefreshInterval)) { timeline in
-                providerIconImage(highlightPhase: AgentIconAnimation.highlightPhase(at: timeline.date))
-            }
-        } else {
-            providerIconImage(highlightPhase: nil)
-        }
+        // Keep popup rows static. A TimelineView here invalidates the entire
+        // hosting view repeatedly while the popup is visible.
+        providerIconImage(highlightPhase: nil)
     }
 
     private func providerIconImage(highlightPhase: CGFloat?) -> some View {
@@ -4341,6 +4561,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             }
             .store(in: &cancellables)
 
+        providerVisibility.$menuBarEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.syncStatusItems()
+                self?.setNeedsMenuRebuild()
+            }
+            .store(in: &cancellables)
+
         providerVisibility.$menuBarOrder
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -4467,6 +4695,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func syncStatusItems() {
+        guard providerVisibility.menuBarEnabled else {
+            removeAllStatusItems()
+            return
+        }
+
         let visibleAgents = providerVisibility.orderedAgents(for: .menuBar)
             .filter { providerVisibility.isMenuBarIconVisible(for: $0) }
         let visibleSet = Set(visibleAgents)
@@ -4495,6 +4728,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
 
         updateStatusIcons()
+    }
+
+    private func removeAllStatusItems() {
+        for statusItem in statusItems.values {
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
+        statusItems.removeAll()
+        removeFallbackStatusItem()
+        statusIconDisplayStates.removeAll()
+        statusIconRenderKeys.removeAll()
     }
 
     private func showFallbackStatusItem() {

@@ -10,8 +10,8 @@ final class CodexSessionWatcher {
             watchRoot: Self.watchRoot,
             latestFiles: Self.latestRolloutFiles,
             isRelevantPath: Self.isRelevantRolloutPath,
-            fallbackPollInterval: 1,
-            fallbackPollLeeway: .milliseconds(200),
+            fallbackPollInterval: 5,
+            fallbackPollLeeway: .seconds(1),
             loadFull: Self.loadFull(file:modifiedAt:),
             applyDelta: Self.applyDelta(file:modifiedAt:text:base:)
         )
@@ -39,16 +39,93 @@ final class CodexSessionWatcher {
     }
 
     private static func parsedSession(for sessionId: String) -> CodexParsedSession? {
-        guard let file = rolloutFile(for: sessionId),
-              let text = contextText(from: file) else {
+        guard let file = rolloutFile(for: sessionId) else {
             return nil
         }
 
-        return CodexSessionParser.parse(text, fallbackSessionId: sessionId)
+        let stats = fileStats(for: file)
+        if let stats,
+           let cached = cachedParsedSession(
+                sessionId: sessionId,
+                file: file,
+                stats: stats
+           ) {
+            return cached
+        }
+
+        return parsedSessionFromDisk(sessionId: sessionId, file: file, stats: stats)
+    }
+
+    private static func parsedSessionFromDisk(
+        sessionId: String,
+        file: URL,
+        stats: (size: UInt64, mtime: Date)?
+    ) -> CodexParsedSession? {
+        guard let text = contextText(from: file) else {
+            return nil
+        }
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: sessionId)
+        if let stats {
+            storeCachedParsedSession(parsed, sessionId: sessionId, file: file, stats: stats)
+        }
+        return parsed
+    }
+
+    private static func fileStats(for file: URL) -> (size: UInt64, mtime: Date)? {
+        guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+              let size = values.fileSize.map(UInt64.init),
+              let mtime = values.contentModificationDate else {
+            return nil
+        }
+        return (size, mtime)
+    }
+
+    private static func cachedParsedSession(
+        sessionId: String,
+        file: URL,
+        stats: (size: UInt64, mtime: Date)
+    ) -> CodexParsedSession? {
+        parsedSessionCacheLock.lock()
+        defer { parsedSessionCacheLock.unlock() }
+
+        guard let entry = parsedSessionCache[sessionId],
+              entry.path == file.path,
+              entry.size == stats.size,
+              entry.mtime == stats.mtime else {
+            return nil
+        }
+        return entry.parsed
+    }
+
+    private static func storeCachedParsedSession(
+        _ parsed: CodexParsedSession,
+        sessionId: String,
+        file: URL,
+        stats: (size: UInt64, mtime: Date)
+    ) {
+        parsedSessionCacheLock.lock()
+        parsedSessionCache[sessionId] = ParsedSessionCacheEntry(
+            path: file.path,
+            size: stats.size,
+            mtime: stats.mtime,
+            parsed: parsed
+        )
+        parsedSessionCacheLock.unlock()
+    }
+
+    private static let parsedSessionCacheLock = NSLock()
+    nonisolated(unsafe) private static var parsedSessionCache: [String: ParsedSessionCacheEntry] = [:]
+
+    private struct ParsedSessionCacheEntry {
+        let path: String
+        let size: UInt64
+        let mtime: Date
+        let parsed: CodexParsedSession
     }
 
     static func fileStatus(for sessionId: String) -> CodexSessionFileStatus {
-        CodexSessionFileIndex().status(for: sessionId)
+        sessionLookup(for: sessionId).status
     }
 
     private static func loadFull(
@@ -204,8 +281,59 @@ final class CodexSessionWatcher {
     }
 
     private static func rolloutFile(for sessionId: String) -> URL? {
-        CodexSessionFileIndex().activeRolloutFile(for: sessionId)
+        sessionLookup(for: sessionId).activeFile
     }
+
+    private static func sessionLookup(for sessionId: String) -> SessionLookup {
+        let normalizedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSessionId.isEmpty else {
+            return SessionLookup(status: .missing, activeFile: nil)
+        }
+
+        let now = Date()
+        sessionLookupCacheLock.lock()
+        if let entry = sessionLookupCache[normalizedSessionId],
+           now.timeIntervalSince(entry.checkedAt) <= sessionLookupCacheTTL {
+            sessionLookupCacheLock.unlock()
+            return entry.lookup
+        }
+        sessionLookupCacheLock.unlock()
+
+        let index = CodexSessionFileIndex()
+        let activeFile = index.activeRolloutFile(for: normalizedSessionId)
+        let status: CodexSessionFileStatus
+        if activeFile != nil {
+            status = .active
+        } else if index.hasArchivedSession(normalizedSessionId) {
+            status = .archived
+        } else {
+            status = .missing
+        }
+        let lookup = SessionLookup(status: status, activeFile: activeFile)
+
+        sessionLookupCacheLock.lock()
+        sessionLookupCache[normalizedSessionId] = SessionLookupCacheEntry(
+            checkedAt: now,
+            lookup: lookup
+        )
+        sessionLookupCacheLock.unlock()
+
+        return lookup
+    }
+
+    private struct SessionLookup {
+        let status: CodexSessionFileStatus
+        let activeFile: URL?
+    }
+
+    private struct SessionLookupCacheEntry {
+        let checkedAt: Date
+        let lookup: SessionLookup
+    }
+
+    private static let sessionLookupCacheTTL: TimeInterval = 2
+    private static let sessionLookupCacheLock = NSLock()
+    nonisolated(unsafe) private static var sessionLookupCache: [String: SessionLookupCacheEntry] = [:]
 
     private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: url) else {

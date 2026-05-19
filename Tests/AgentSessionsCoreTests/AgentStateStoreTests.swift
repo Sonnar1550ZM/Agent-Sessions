@@ -27,6 +27,26 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(Set(sessionIds), ["a", "b"])
     }
 
+    func testRemoveSessionRemovesOnlyMatchingAgentAndSessionId() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, clock: { now })
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "shared", state: .working, title: "Codex"))
+        store.apply(AgentEvent(agent: .claudeCode, sessionId: "shared", state: .working, title: "Claude"))
+        store.apply(AgentEvent(agent: .codex, sessionId: "other", state: .working, title: "Other"))
+
+        store.removeSession(agent: .codex, sessionId: "shared")
+
+        XCTAssertEqual(
+            store.visibleSessions(for: .codex, now: now).map(\.sessionId),
+            ["other"]
+        )
+        XCTAssertEqual(
+            store.visibleSessions(for: .claudeCode, now: now).map(\.sessionId),
+            ["shared"]
+        )
+    }
+
     func testLatestResponsePersistsAcrossMetadataOnlyUpdates() {
         let responseTime = Date(timeIntervalSince1970: 1_000)
         let metadataTime = responseTime.addingTimeInterval(60)
@@ -569,6 +589,55 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)), [])
         XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(1)), [])
         XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(1)), .idle)
+    }
+
+    func testCodexInternalSuggestionSessionsAreNotVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "suggestions",
+            state: .working,
+            cwd: "/tmp/project",
+            updatedAt: base,
+            latestResponseText: """
+            # Overview
+            Generate 0 to 3 hyperpersonalized suggestions
+            for what this user can do with Codex in this local project: /tmp/project
+            """,
+            latestResponsePhase: "commentary"
+        ))
+
+        XCTAssertEqual(store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(1)), .idle)
+        XCTAssertEqual(store.workingSessionCounts(for: .codex, now: base.addingTimeInterval(1)), AgentWorkingSessionCounts())
+        XCTAssertEqual(
+            store.popupParentSessions(now: base.addingTimeInterval(1), displayInterval: 10, limit: 1),
+            []
+        )
+        XCTAssertEqual(store.sessions, [])
+    }
+
+    func testTitledCodexSessionMentioningInternalSuggestionPromptStaysVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "debug",
+            state: .working,
+            title: "Debug suggestion display",
+            cwd: "/tmp/project",
+            updatedAt: base,
+            latestResponseText: "Generate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in this local project: /tmp/project"
+        ))
+
+        XCTAssertEqual(
+            store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)).map(\.sessionId),
+            ["debug"]
+        )
     }
 
     func testOrdinaryMemoriesProjectSessionIsVisible() {

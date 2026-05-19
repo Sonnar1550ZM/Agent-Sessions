@@ -217,6 +217,21 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.state, .idle)
     }
 
+    func testParsesInternalSuggestionOverviewAsLatestResponse() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"# Overview\\nGenerate 0 to 3 hyperpersonalized suggestions\\nfor what this user can do with Codex in this local project: /tmp/project"}],"phase":"commentary"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(
+            parsed.latestResponseText,
+            "# Overview\nGenerate 0 to 3 hyperpersonalized suggestions\nfor what this user can do with Codex in this local project: /tmp/project"
+        )
+        XCTAssertEqual(parsed.latestResponsePhase, "commentary")
+    }
+
     func testPreservesNewlinesInLatestAssistantResponse() {
         let text = """
         {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
