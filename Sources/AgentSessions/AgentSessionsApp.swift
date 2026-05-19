@@ -130,7 +130,7 @@ enum PopupWindowPosition: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    var alignsPopupHeaderTrailing: Bool {
+    var isRightSide: Bool {
         switch self {
         case .topRight, .bottomRight:
             true
@@ -151,25 +151,28 @@ enum PopupWindowPosition: String, Codable, CaseIterable, Identifiable {
 
 private enum ProviderPreferenceDefaults {
     static let sessionDisplayCount = 5
-    static let latestResponseLineLimit = 2
-    static let subagentLatestResponseLineLimit = 2
-    static let latestResponseHideAfterInterval: TimeInterval = 10 * 60
+    static let latestResponseLineLimit = 3
+    static let subagentLatestResponseLineLimit = 1
+    static let latestResponseHideAfterInterval: TimeInterval = 24 * 60 * 60
     static let showsSubagents = true
     static let subagentHideAfterInterval: TimeInterval = 3 * 60
     static let menuBarEnabled = true
     static let popupEnabled = true
-    static let popupDisplayInterval: TimeInterval = 10
+    static let popupDisplayInterval: TimeInterval = 15
     static let popupGlassEnabled = true
-    static let popupOpacity = 0.7957142857142857
+    static let popupUsesClearGlass = false
+    static let popupGlassOpacity = 0.905456164381205
+    static let popupOpacity = 1.0
     static let popupWindowPosition = PopupWindowPosition.bottomRight
-    static let popupWindowWidth = 400.4190051020408
+    static let popupRightAlignsTextOnRightSide = true
+    static let popupWindowWidth = 400.0
     static let popupOffsetX = 0.0
     static let popupOffsetY = 0.0
-    static let popupScale = 1.0075659049513415
-    static let popupBackdropOpacity = 0.05
+    static let popupScale = 1.0017411008233803
+    static let popupBackdropOpacity = 0.85
     static let popupTextOpacity = 1.0
-    static let popupMouseProximityOpacity = 0.2
-    static let popupTextShadowEnabled = true
+    static let popupMouseProximityOpacity = 0.20682624940060737
+    static let popupTextShadowEnabled = false
     static let legacyPopupTextShadowStrength = 0.65
     static let popupTextShadowStrength = 2.0074120724332674
     static let popupTextShadowDistance = 0.0
@@ -256,6 +259,10 @@ private enum ProviderPreferenceDefaults {
         min(max(opacity ?? popupOpacity, 0), 1.0)
     }
 
+    static func sanitizedPopupGlassOpacity(_ opacity: Double?) -> Double {
+        min(max(opacity ?? popupGlassOpacity, 0), 1.0)
+    }
+
     static func sanitizedPopupStyle(
         glassEnabled: Bool,
         textShadowEnabled: Bool
@@ -270,7 +277,7 @@ private enum ProviderPreferenceDefaults {
     }
 
     static func sanitizedPopupWindowWidth(_ width: Double?) -> Double {
-        min(max(width ?? popupWindowWidth, 260), 1000)
+        min(max(width ?? popupWindowWidth, 200), 800)
     }
 
     static func sanitizedPopupOffset(_ offset: Double?) -> Double {
@@ -462,8 +469,11 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var popupDisplayInterval: TimeInterval
     var popupProviderVisibility: [String: Bool]
     var popupGlassEnabled: Bool
+    var popupUsesClearGlass: Bool
+    var popupGlassOpacity: Double
     var popupOpacity: Double
     var popupWindowPosition: PopupWindowPosition
+    var popupRightAlignsTextOnRightSide: Bool
     var popupWindowWidth: Double
     var popupOffsetX: Double
     var popupOffsetY: Double
@@ -497,8 +507,11 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupDisplayInterval: TimeInterval = ProviderPreferenceDefaults.popupDisplayInterval,
         popupProviderVisibility: [String: Bool] = ProviderPreferencesDocument.defaultPopupProviderVisibility,
         popupGlassEnabled: Bool = ProviderPreferenceDefaults.popupGlassEnabled,
+        popupUsesClearGlass: Bool = ProviderPreferenceDefaults.popupUsesClearGlass,
+        popupGlassOpacity: Double = ProviderPreferenceDefaults.popupGlassOpacity,
         popupOpacity: Double = ProviderPreferenceDefaults.popupOpacity,
         popupWindowPosition: PopupWindowPosition = ProviderPreferenceDefaults.popupWindowPosition,
+        popupRightAlignsTextOnRightSide: Bool = ProviderPreferenceDefaults.popupRightAlignsTextOnRightSide,
         popupWindowWidth: Double = ProviderPreferenceDefaults.popupWindowWidth,
         popupOffsetX: Double = ProviderPreferenceDefaults.popupOffsetX,
         popupOffsetY: Double = ProviderPreferenceDefaults.popupOffsetY,
@@ -535,8 +548,11 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
             textShadowEnabled: popupTextShadowEnabled
         )
         self.popupGlassEnabled = popupStyle.glassEnabled
+        self.popupUsesClearGlass = popupUsesClearGlass
+        self.popupGlassOpacity = ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(popupGlassOpacity)
         self.popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(popupOpacity)
         self.popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(popupWindowPosition)
+        self.popupRightAlignsTextOnRightSide = popupRightAlignsTextOnRightSide
         self.popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(popupWindowWidth)
         self.popupOffsetX = ProviderPreferenceDefaults.sanitizedPopupOffset(popupOffsetX)
         self.popupOffsetY = ProviderPreferenceDefaults.sanitizedPopupOffset(popupOffsetY)
@@ -572,8 +588,11 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case popupDisplayInterval
         case popupProviderVisibility
         case popupGlassEnabled
+        case popupUsesClearGlass
+        case popupGlassOpacity
         case popupOpacity
         case popupWindowPosition
+        case popupRightAlignsTextOnRightSide
         case popupWindowWidth
         case popupOffsetX
         case popupOffsetY
@@ -636,12 +655,21 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         )
         popupGlassEnabled = try container.decodeIfPresent(Bool.self, forKey: .popupGlassEnabled)
             ?? ProviderPreferenceDefaults.popupGlassEnabled
+        popupUsesClearGlass = try container.decodeIfPresent(Bool.self, forKey: .popupUsesClearGlass)
+            ?? ProviderPreferenceDefaults.popupUsesClearGlass
+        popupGlassOpacity = ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(
+            try container.decodeIfPresent(Double.self, forKey: .popupGlassOpacity)
+        )
         popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(
             try container.decodeIfPresent(Double.self, forKey: .popupOpacity)
         )
         popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(
             try container.decodeIfPresent(PopupWindowPosition.self, forKey: .popupWindowPosition)
         )
+        popupRightAlignsTextOnRightSide = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .popupRightAlignsTextOnRightSide
+        ) ?? ProviderPreferenceDefaults.popupRightAlignsTextOnRightSide
         popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(
             try container.decodeIfPresent(Double.self, forKey: .popupWindowWidth)
         )
@@ -715,8 +743,11 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(popupDisplayInterval, forKey: .popupDisplayInterval)
         try container.encode(popupProviderVisibility, forKey: .popupProviderVisibility)
         try container.encode(popupGlassEnabled, forKey: .popupGlassEnabled)
+        try container.encode(popupUsesClearGlass, forKey: .popupUsesClearGlass)
+        try container.encode(popupGlassOpacity, forKey: .popupGlassOpacity)
         try container.encode(popupOpacity, forKey: .popupOpacity)
         try container.encode(popupWindowPosition, forKey: .popupWindowPosition)
+        try container.encode(popupRightAlignsTextOnRightSide, forKey: .popupRightAlignsTextOnRightSide)
         try container.encode(popupWindowWidth, forKey: .popupWindowWidth)
         try container.encode(popupOffsetX, forKey: .popupOffsetX)
         try container.encode(popupOffsetY, forKey: .popupOffsetY)
@@ -770,8 +801,11 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var popupDisplayInterval: TimeInterval
     @Published private(set) var popupProviderVisibility: [String: Bool]
     @Published private(set) var popupGlassEnabled: Bool
+    @Published private(set) var popupUsesClearGlass: Bool
+    @Published private(set) var popupGlassOpacity: Double
     @Published private(set) var popupOpacity: Double
     @Published private(set) var popupWindowPosition: PopupWindowPosition
+    @Published private(set) var popupRightAlignsTextOnRightSide: Bool
     @Published private(set) var popupWindowWidth: Double
     @Published private(set) var popupOffsetX: Double
     @Published private(set) var popupOffsetY: Double
@@ -821,8 +855,11 @@ final class ProviderVisibilityStore: ObservableObject {
         popupDisplayInterval = ProviderPreferenceDefaults.sanitizedPopupDisplayInterval(document.popupDisplayInterval)
         popupProviderVisibility = ProviderPreferencesDocument.sanitizedPopupProviderVisibility(document.popupProviderVisibility)
         popupGlassEnabled = document.popupGlassEnabled
+        popupUsesClearGlass = document.popupUsesClearGlass
+        popupGlassOpacity = ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(document.popupGlassOpacity)
         popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(document.popupOpacity)
         popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(document.popupWindowPosition)
+        popupRightAlignsTextOnRightSide = document.popupRightAlignsTextOnRightSide
         popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(document.popupWindowWidth)
         popupOffsetX = ProviderPreferenceDefaults.sanitizedPopupOffset(document.popupOffsetX)
         popupOffsetY = ProviderPreferenceDefaults.sanitizedPopupOffset(document.popupOffsetY)
@@ -955,6 +992,16 @@ final class ProviderVisibilityStore: ObservableObject {
         save()
     }
 
+    func setPopupUsesClearGlass(_ usesClearGlass: Bool) {
+        popupUsesClearGlass = usesClearGlass
+        save()
+    }
+
+    func setPopupGlassOpacity(_ opacity: Double) {
+        popupGlassOpacity = ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(opacity)
+        save()
+    }
+
     func setPopupOpacity(_ opacity: Double) {
         popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(opacity)
         save()
@@ -962,6 +1009,11 @@ final class ProviderVisibilityStore: ObservableObject {
 
     func setPopupWindowPosition(_ position: PopupWindowPosition) {
         popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(position)
+        save()
+    }
+
+    func setPopupRightAlignsTextOnRightSide(_ alignsText: Bool) {
+        popupRightAlignsTextOnRightSide = alignsText
         save()
     }
 
@@ -1056,10 +1108,15 @@ final class ProviderVisibilityStore: ObservableObject {
             textShadowEnabled: ProviderPreferenceDefaults.popupTextShadowEnabled
         )
         popupGlassEnabled = popupStyle.glassEnabled
+        popupUsesClearGlass = ProviderPreferenceDefaults.popupUsesClearGlass
+        popupGlassOpacity = ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(
+            ProviderPreferenceDefaults.popupGlassOpacity
+        )
         popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(ProviderPreferenceDefaults.popupOpacity)
         popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(
             ProviderPreferenceDefaults.popupWindowPosition
         )
+        popupRightAlignsTextOnRightSide = ProviderPreferenceDefaults.popupRightAlignsTextOnRightSide
         popupWindowWidth = ProviderPreferenceDefaults.sanitizedPopupWindowWidth(
             ProviderPreferenceDefaults.popupWindowWidth
         )
@@ -1213,8 +1270,11 @@ final class ProviderVisibilityStore: ObservableObject {
             popupDisplayInterval: popupDisplayInterval,
             popupProviderVisibility: popupProviderVisibility,
             popupGlassEnabled: popupGlassEnabled,
+            popupUsesClearGlass: popupUsesClearGlass,
+            popupGlassOpacity: popupGlassOpacity,
             popupOpacity: popupOpacity,
             popupWindowPosition: popupWindowPosition,
+            popupRightAlignsTextOnRightSide: popupRightAlignsTextOnRightSide,
             popupWindowWidth: popupWindowWidth,
             popupOffsetX: popupOffsetX,
             popupOffsetY: popupOffsetY,
@@ -1263,8 +1323,11 @@ final class ProviderVisibilityStore: ObservableObject {
                 popupDisplayInterval: ProviderPreferenceDefaults.popupDisplayInterval,
                 popupProviderVisibility: ProviderPreferencesDocument.defaultPopupProviderVisibility,
                 popupGlassEnabled: ProviderPreferenceDefaults.popupGlassEnabled,
+                popupUsesClearGlass: ProviderPreferenceDefaults.popupUsesClearGlass,
+                popupGlassOpacity: ProviderPreferenceDefaults.popupGlassOpacity,
                 popupOpacity: ProviderPreferenceDefaults.popupOpacity,
                 popupWindowPosition: ProviderPreferenceDefaults.popupWindowPosition,
+                popupRightAlignsTextOnRightSide: ProviderPreferenceDefaults.popupRightAlignsTextOnRightSide,
                 popupWindowWidth: ProviderPreferenceDefaults.popupWindowWidth,
                 popupOffsetX: ProviderPreferenceDefaults.popupOffsetX,
                 popupOffsetY: ProviderPreferenceDefaults.popupOffsetY,
@@ -1304,8 +1367,11 @@ final class ProviderVisibilityStore: ObservableObject {
             popupDisplayInterval: ProviderPreferenceDefaults.sanitizedPopupDisplayInterval(document.popupDisplayInterval),
             popupProviderVisibility: ProviderPreferencesDocument.sanitizedPopupProviderVisibility(document.popupProviderVisibility),
             popupGlassEnabled: document.popupGlassEnabled,
+            popupUsesClearGlass: document.popupUsesClearGlass,
+            popupGlassOpacity: ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(document.popupGlassOpacity),
             popupOpacity: ProviderPreferenceDefaults.sanitizedPopupOpacity(document.popupOpacity),
             popupWindowPosition: ProviderPreferenceDefaults.sanitizedPopupWindowPosition(document.popupWindowPosition),
+            popupRightAlignsTextOnRightSide: document.popupRightAlignsTextOnRightSide,
             popupWindowWidth: ProviderPreferenceDefaults.sanitizedPopupWindowWidth(document.popupWindowWidth),
             popupOffsetX: ProviderPreferenceDefaults.sanitizedPopupOffset(document.popupOffsetX),
             popupOffsetY: ProviderPreferenceDefaults.sanitizedPopupOffset(document.popupOffsetY),
@@ -1884,6 +1950,23 @@ private struct PopupSettingsView: View {
 
                 SettingsDivider()
 
+                SettingsToggleRow(
+                    title: "Right Align Text",
+                    subtitle: "Only applies when Window is Top Right or Bottom Right.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.popupRightAlignsTextOnRightSide
+                        },
+                        set: { alignsText in
+                            providerVisibility.setPopupRightAlignsTextOnRightSide(alignsText)
+                        }
+                    )
+                )
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+                SettingsDivider()
+
                 SettingsSliderRow(
                     title: "Width",
                     subtitle: "Adjust popup window width.",
@@ -1895,7 +1978,7 @@ private struct PopupSettingsView: View {
                             providerVisibility.setPopupWindowWidth(width)
                         }
                     ),
-                    range: 260...1000,
+                    range: 200...800,
                     label: "\(Int(providerVisibility.popupWindowWidth))px"
                 )
                 .disabled(!providerVisibility.popupEnabled)
@@ -1978,6 +2061,7 @@ private struct PopupSettingsView: View {
     private var responseBodyControlsEnabled: Bool {
         providerVisibility.popupEnabled && providerVisibility.popupShowsResponseBody
     }
+
 }
 
 private struct PopupStyleSettingsGroup: View {
@@ -2007,6 +2091,44 @@ private struct PopupStyleSettingsGroup: View {
             }
             .disabled(!providerVisibility.popupEnabled)
             .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+            if providerVisibility.popupGlassEnabled {
+                SettingsDivider()
+
+                SettingsToggleRow(
+                    title: "Clear Glass",
+                    subtitle: "Use the clear Liquid Glass material instead of regular.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.popupUsesClearGlass
+                        },
+                        set: { usesClearGlass in
+                            providerVisibility.setPopupUsesClearGlass(usesClearGlass)
+                        }
+                    )
+                )
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+                SettingsDivider()
+
+                SettingsSliderRow(
+                    title: "Liquid Glass Opacity",
+                    subtitle: "Adjust the Liquid Glass background opacity.",
+                    value: Binding(
+                        get: {
+                            providerVisibility.popupGlassOpacity
+                        },
+                        set: { opacity in
+                            providerVisibility.setPopupGlassOpacity(opacity)
+                        }
+                    ),
+                    range: 0...1,
+                    label: "\(Int(providerVisibility.popupGlassOpacity * 100))%"
+                )
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+            }
         }
     }
 }
@@ -2469,7 +2591,6 @@ final class SettingsWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.toolbarStyle = .unifiedCompact
         let toolbar = NSToolbar(identifier: NSToolbar.Identifier("AgentSessionsSettingsToolbar"))
-        toolbar.showsBaselineSeparator = false
         window.toolbar = toolbar
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 760, height: 440)
@@ -3505,6 +3626,22 @@ final class SessionPopupController {
             }
             .store(in: &cancellables)
 
+        providerVisibility.$popupUsesClearGlass
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupGlassOpacity
+            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
+            .throttle(for: .milliseconds(80), scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
         providerVisibility.$popupOpacity
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -3513,6 +3650,13 @@ final class SessionPopupController {
             .store(in: &cancellables)
 
         providerVisibility.$popupWindowPosition
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupRightAlignsTextOnRightSide
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updatePopup()
@@ -3758,13 +3902,14 @@ final class SessionPopupController {
             popupWidth: CGFloat(providerVisibility.popupWindowWidth),
             popupScale: CGFloat(providerVisibility.popupScale),
             glassEnabled: providerVisibility.popupGlassEnabled,
-            glassOpacity: 1,
+            usesClearGlass: providerVisibility.popupUsesClearGlass,
+            glassOpacity: providerVisibility.popupGlassOpacity,
             textOpacity: 1,
             textShadowStrength: providerVisibility.effectivePopupTextShadowStrength,
             textShadowDistance: CGFloat(providerVisibility.effectivePopupTextShadowDistance),
             textShadowRadius: CGFloat(providerVisibility.effectivePopupTextShadowRadius),
-            alignsHeaderTrailing: !providerVisibility.popupGlassEnabled
-                && providerVisibility.popupWindowPosition.alignsPopupHeaderTrailing,
+            alignsTextTrailing: providerVisibility.popupRightAlignsTextOnRightSide
+                && providerVisibility.popupWindowPosition.isRightSide,
             placesNewestSessionAtBottom: providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom,
             showsResponseBody: providerVisibility.popupShowsResponseBody,
             responseCharacterLimit: providerVisibility.popupResponseCharacterLimit,
@@ -3878,6 +4023,10 @@ final class SessionPopupController {
             "\(providerVisibility.popupOffsetY)",
             "\(providerVisibility.popupScale)",
             "\(providerVisibility.popupGlassEnabled)",
+            "\(providerVisibility.popupUsesClearGlass)",
+            "\(providerVisibility.popupGlassOpacity)",
+            "\(providerVisibility.popupRightAlignsTextOnRightSide)",
+            "\(providerVisibility.popupWindowPosition.isRightSide)",
             "\(providerVisibility.effectivePopupTextShadowStrength)",
             "\(providerVisibility.effectivePopupTextShadowDistance)",
             "\(providerVisibility.effectivePopupTextShadowRadius)",
@@ -4205,12 +4354,13 @@ private struct LatestParentSessionsPopupView: View {
     let popupWidth: CGFloat
     let popupScale: CGFloat
     let glassEnabled: Bool
+    let usesClearGlass: Bool
     let glassOpacity: Double
     let textOpacity: Double
     let textShadowStrength: Double
     let textShadowDistance: CGFloat
     let textShadowRadius: CGFloat
-    let alignsHeaderTrailing: Bool
+    let alignsTextTrailing: Bool
     let placesNewestSessionAtBottom: Bool
     let showsResponseBody: Bool
     let responseCharacterLimit: Int
@@ -4230,7 +4380,8 @@ private struct LatestParentSessionsPopupView: View {
                 PopupSessionRow(
                     session: session,
                     metrics: metrics,
-                    alignsHeaderTrailing: alignsHeaderTrailing,
+                    rowContentWidth: rowContentWidth,
+                    alignsTextTrailing: alignsTextTrailing,
                     showsResponseBody: showsResponseBody,
                     responseCharacterLimit: responseCharacterLimit,
                     responseLineLimit: responseLineLimit
@@ -4242,6 +4393,7 @@ private struct LatestParentSessionsPopupView: View {
                     if glassEnabled {
                         PopupLiquidGlassBackground(
                             metrics: metrics,
+                            usesClearGlass: usesClearGlass,
                             opacity: glassOpacity
                         )
                     }
@@ -4253,12 +4405,33 @@ private struct LatestParentSessionsPopupView: View {
         .accessibilityElement(children: .contain)
     }
 
+    private var rowContentWidth: CGFloat {
+        max(popupWidth * metricsScale - (2 * rowOuterHorizontalPadding), 1)
+    }
+
+    private var metricsScale: CGFloat {
+        min(max(popupScale, 0.5), 1.5)
+    }
+
+    private var rowOuterHorizontalPadding: CGFloat {
+        let metrics = PopupScaleMetrics(
+            scale: popupScale,
+            textOpacity: textOpacity,
+            textShadowStrength: textShadowStrength,
+            textShadowDistance: textShadowDistance,
+            textShadowRadius: textShadowRadius
+        )
+        return metrics.horizontalPadding + metrics.shadowBleedPadding
+    }
+
     private var displayedSessions: [AgentSession] {
+        let parentSessions = sessions.filter { !$0.isSubagent }
+
         if placesNewestSessionAtBottom {
-            return Array(sessions.reversed())
+            return Array(parentSessions.reversed())
         }
 
-        return sessions
+        return parentSessions
     }
 
     private var displayedSessionIDs: [String] {
@@ -4275,6 +4448,7 @@ private struct LatestParentSessionsPopupView: View {
 
 private struct PopupLiquidGlassBackground: View {
     let metrics: PopupScaleMetrics
+    let usesClearGlass: Bool
     let opacity: Double
 
     var body: some View {
@@ -4283,25 +4457,23 @@ private struct PopupLiquidGlassBackground: View {
 
         shape
             .fill(.clear)
-            .glassEffect(nativeGlass(opacity: opacity), in: shape)
-            .overlay {
-                shape.strokeBorder(.white.opacity(0.18 * opacity), lineWidth: metrics.glassBorderWidth)
-            }
+            .glassEffect(nativeGlass(opacity: opacity, usesClearGlass: usesClearGlass), in: shape)
             .shadow(
                 color: .black.opacity(0.025 * opacity),
                 radius: metrics.glassShadowRadius,
                 x: 0,
                 y: metrics.glassShadowYOffset
             )
+            .opacity(opacity)
     }
 
-    private func nativeGlass(opacity: Double) -> Glass {
+    private func nativeGlass(opacity: Double, usesClearGlass: Bool) -> Glass {
         guard opacity > 0.001 else {
             return .identity
         }
 
-        return Glass.clear
-            .tint(.white.opacity(0.12 * opacity))
+        let glass = usesClearGlass ? Glass.clear : Glass.regular
+        return glass
             .interactive(false)
     }
 }
@@ -4309,62 +4481,84 @@ private struct PopupLiquidGlassBackground: View {
 private struct PopupSessionRow: View {
     let session: AgentSession
     let metrics: PopupScaleMetrics
-    let alignsHeaderTrailing: Bool
+    let rowContentWidth: CGFloat
+    let alignsTextTrailing: Bool
     let showsResponseBody: Bool
     let responseCharacterLimit: Int
     let responseLineLimit: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
-            HStack(alignment: .top, spacing: metrics.titleSpacing) {
-                if alignsHeaderTrailing {
-                    Spacer(minLength: 0)
-                }
-
-                providerIcon
-
-                Text(titleText)
-                    .font(.system(size: metrics.titleFontSize, weight: .semibold))
-                    .foregroundStyle(.white.opacity(metrics.textOpacity))
-                    .popupTextShadow(metrics)
-                    .lineLimit(2)
-                    .multilineTextAlignment(alignsHeaderTrailing ? .trailing : .leading)
-                    .truncationMode(.tail)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(1)
-                    .padding(.horizontal, metrics.titleHorizontalPadding)
-                    .padding(.vertical, metrics.titleVerticalPadding)
-                    .frame(
-                        maxWidth: alignsHeaderTrailing ? nil : .infinity,
-                        alignment: alignsHeaderTrailing ? .trailing : .leading
-                    )
-
-                PopupSessionStateTimeText(
-                    session: session,
-                    metrics: metrics
-                )
-                .layoutPriority(2)
-            }
+            titleRow
             .padding(.horizontal, metrics.responseHorizontalPadding)
-            .frame(
-                maxWidth: .infinity,
-                alignment: alignsHeaderTrailing ? .trailing : .leading
-            )
+            .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
 
             if let responseText {
-                PopupJustifiedResponseText(
+                PopupAlignedText(
                     text: responseText,
                     fontSize: metrics.responseFontSize,
                     textOpacity: metrics.textOpacity,
-                    lineLimit: responseLineLimit
+                    lineLimit: responseLineLimit,
+                    alignsTrailing: alignsTextTrailing
                 )
                     .popupTextShadow(metrics)
                     .padding(.horizontal, metrics.responseHorizontalPadding)
                     .padding(.vertical, metrics.responseVerticalPadding)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
+    }
+
+    @ViewBuilder
+    private var titleRow: some View {
+        if alignsTextTrailing {
+            HStack(alignment: .top, spacing: metrics.titleSpacing) {
+                PopupSessionStateTimeText(
+                    session: session,
+                    metrics: metrics,
+                    alignsTrailing: false
+                )
+                .layoutPriority(2)
+
+                Spacer(minLength: metrics.titleSpacing)
+
+                titleCluster
+            }
+        } else {
+            HStack(alignment: .top, spacing: metrics.titleSpacing) {
+                titleCluster
+
+                PopupSessionStateTimeText(
+                    session: session,
+                    metrics: metrics,
+                    alignsTrailing: true
+                )
+                .layoutPriority(2)
+            }
+        }
+    }
+
+    private var titleCluster: some View {
+        HStack(alignment: .top, spacing: metrics.titleSpacing) {
+            providerIcon
+
+            PopupAlignedText(
+                text: titleText,
+                fontSize: metrics.titleFontSize,
+                fontWeight: .semibold,
+                textOpacity: metrics.textOpacity,
+                lineLimit: 2,
+                alignsTrailing: alignsTextTrailing
+            )
+                .popupTextShadow(metrics)
+                .layoutPriority(1)
+                .padding(.horizontal, metrics.titleHorizontalPadding)
+                .padding(.vertical, metrics.titleVerticalPadding)
+                .frame(width: titleColumnWidth, alignment: alignsTextTrailing ? .trailing : .leading)
+                .frame(maxWidth: alignsTextTrailing ? nil : .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
+        }
+        .frame(maxWidth: alignsTextTrailing ? nil : .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
     }
 
     @ViewBuilder
@@ -4375,6 +4569,7 @@ private struct PopupSessionRow: View {
             iconSize: metrics.iconSize
         )
         .frame(width: metrics.iconSize, height: metrics.iconSize)
+        .padding(.top, metrics.titleVerticalPadding)
         .accessibilityHidden(true)
     }
 
@@ -4385,6 +4580,29 @@ private struct PopupSessionRow: View {
         }
 
         return session.displayTitle
+    }
+
+    private var titleColumnWidth: CGFloat? {
+        guard alignsTextTrailing else {
+            return nil
+        }
+
+        return min(measuredTitleColumnWidth, titleColumnMaxWidth)
+    }
+
+    private var measuredTitleColumnWidth: CGFloat {
+        let font = NSFont.systemFont(ofSize: metrics.titleFontSize, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let measuredWidth = (titleText as NSString).size(withAttributes: attributes).width
+        return max(ceil(measuredWidth) + (2 * metrics.titleHorizontalPadding), 1)
+    }
+
+    private var titleColumnMaxWidth: CGFloat {
+        let titleRowWidth = rowContentWidth - (2 * metrics.responseHorizontalPadding)
+        let fixedWidth = metrics.iconSize
+            + metrics.metadataColumnWidth
+            + (3 * metrics.titleSpacing)
+        return max(titleRowWidth - fixedWidth, 1)
     }
 
     private var responseText: String? {
@@ -4414,10 +4632,11 @@ private struct PopupSessionRow: View {
 private struct PopupSessionStateTimeText: View {
     let session: AgentSession
     let metrics: PopupScaleMetrics
+    var alignsTrailing = true
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { timeline in
-            VStack(alignment: .trailing, spacing: metrics.metadataLineSpacing) {
+            VStack(alignment: horizontalAlignment, spacing: metrics.metadataLineSpacing) {
                 Text(session.state.displayName)
                     .lineLimit(1)
 
@@ -4427,12 +4646,25 @@ private struct PopupSessionStateTimeText: View {
             }
             .font(.system(size: metrics.metadataFontSize, weight: .semibold))
             .foregroundStyle(metadataColor.opacity(metrics.textOpacity))
-            .multilineTextAlignment(.trailing)
-            .fixedSize(horizontal: true, vertical: true)
+            .multilineTextAlignment(textAlignment)
+            .frame(width: metrics.metadataColumnWidth, alignment: frameAlignment)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, metrics.titleVerticalPadding)
             .popupTextShadow(metrics)
         }
         .accessibilityLabel(accessibilityText)
+    }
+
+    private var horizontalAlignment: HorizontalAlignment {
+        alignsTrailing ? .trailing : .leading
+    }
+
+    private var textAlignment: TextAlignment {
+        alignsTrailing ? .trailing : .leading
+    }
+
+    private var frameAlignment: Alignment {
+        alignsTrailing ? .trailing : .leading
     }
 
     private var metadataColor: Color {
@@ -4581,24 +4813,26 @@ private final class PopupAgentIconImageView: NSImageView {
     }
 }
 
-private struct PopupJustifiedResponseText: NSViewRepresentable {
+private struct PopupAlignedText: NSViewRepresentable {
     let text: String
     let fontSize: CGFloat
+    var fontWeight: NSFont.Weight = .regular
     let textOpacity: Double
     let lineLimit: Int
+    var alignsTrailing = false
 
-    func makeNSView(context: Context) -> JustifiedTextView {
-        let textView = JustifiedTextView()
+    func makeNSView(context: Context) -> AlignedTextView {
+        let textView = AlignedTextView()
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return textView
     }
 
-    func updateNSView(_ textView: JustifiedTextView, context: Context) {
+    func updateNSView(_ textView: AlignedTextView, context: Context) {
         configure(textView)
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: JustifiedTextView, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: AlignedTextView, context: Context) -> CGSize? {
         guard let width = proposal.width, width.isFinite, width > 0 else {
             return nil
         }
@@ -4607,25 +4841,27 @@ private struct PopupJustifiedResponseText: NSViewRepresentable {
         return nsView.measuredSize(width: width)
     }
 
-    private func configure(_ textView: JustifiedTextView) {
+    private func configure(_ textView: AlignedTextView) {
         textView.configure(
             text: text,
             fontSize: fontSize,
+            fontWeight: fontWeight,
             textOpacity: textOpacity,
-            lineLimit: lineLimit
+            lineLimit: lineLimit,
+            alignsTrailing: alignsTrailing
         )
     }
 
-    final class JustifiedTextView: NSView {
-        // Full justification on very short wrapped fragments creates large CJK/Latin gaps.
-        private static let minimumFillRatioForFullJustification: CGFloat = 0.76
+    final class AlignedTextView: NSView {
         private static let softBreak = "\u{200B}"
         private static let softBreakCharacters = Set<Character>(".:/_-()[]{}")
 
         private var renderedText = ""
         private var renderedFontSize: CGFloat = 0
+        private var renderedFontWeight: NSFont.Weight = .regular
         private var renderedTextOpacity: Double = 1
         private var renderedLineLimit = 1
+        private var renderedAlignsTrailing = false
         private var renderedFont = NSFont.systemFont(ofSize: 10)
         private var preferredMaxLayoutWidth: CGFloat = 0
 
@@ -4633,14 +4869,23 @@ private struct PopupJustifiedResponseText: NSViewRepresentable {
             false
         }
 
-        func configure(text: String, fontSize: CGFloat, textOpacity: Double, lineLimit: Int) {
+        func configure(
+            text: String,
+            fontSize: CGFloat,
+            fontWeight: NSFont.Weight,
+            textOpacity: Double,
+            lineLimit: Int,
+            alignsTrailing: Bool
+        ) {
             let normalizedOpacity = min(max(textOpacity, 0), 1)
             let normalizedLineLimit = max(lineLimit, 1)
 
             let changed = renderedText != text
                 || abs(renderedFontSize - fontSize) > 0.001
+                || renderedFontWeight != fontWeight
                 || abs(renderedTextOpacity - normalizedOpacity) > 0.001
                 || renderedLineLimit != normalizedLineLimit
+                || renderedAlignsTrailing != alignsTrailing
 
             guard changed else {
                 return
@@ -4648,9 +4893,11 @@ private struct PopupJustifiedResponseText: NSViewRepresentable {
 
             renderedText = text
             renderedFontSize = fontSize
+            renderedFontWeight = fontWeight
             renderedTextOpacity = normalizedOpacity
             renderedLineLimit = normalizedLineLimit
-            renderedFont = NSFont.systemFont(ofSize: fontSize)
+            renderedAlignsTrailing = alignsTrailing
+            renderedFont = NSFont.systemFont(ofSize: fontSize, weight: fontWeight)
             invalidateIntrinsicContentSize()
             needsDisplay = true
         }
@@ -4702,7 +4949,7 @@ private struct PopupJustifiedResponseText: NSViewRepresentable {
             context.saveGState()
             context.textMatrix = .identity
 
-            for (index, layoutLine) in result.lines.enumerated() {
+            for layoutLine in result.lines {
                 defer {
                     baselineY -= lineHeight
                 }
@@ -4711,42 +4958,19 @@ private struct PopupJustifiedResponseText: NSViewRepresentable {
                     continue
                 }
 
-                let isLastRenderedLine = index == result.lines.count - 1
-                let drawLine = lineForDrawing(
-                    line,
-                    layoutLine: layoutLine,
-                    result: result,
-                    isLastRenderedLine: isLastRenderedLine,
-                    width: bounds.width
-                )
-
-                context.textPosition = CGPoint(x: 0, y: baselineY)
-                CTLineDraw(drawLine, context)
+                context.textPosition = CGPoint(x: originX(for: layoutLine, width: bounds.width), y: baselineY)
+                CTLineDraw(line, context)
             }
 
             context.restoreGState()
         }
 
-        private func lineForDrawing(
-            _ line: CTLine,
-            layoutLine: LayoutLine,
-            result: LayoutResult,
-            isLastRenderedLine: Bool,
-            width: CGFloat
-        ) -> CTLine {
-            guard !layoutLine.endsParagraph,
-                  !(isLastRenderedLine && result.isTruncated),
-                  width > 0,
-                  layoutLine.naturalWidth > 0 else {
-                return line
+        private func originX(for layoutLine: LayoutLine, width: CGFloat) -> CGFloat {
+            guard renderedAlignsTrailing, width > 0, layoutLine.naturalWidth > 0 else {
+                return 0
             }
 
-            let fillRatio = min(layoutLine.naturalWidth / width, 1)
-            guard fillRatio >= Self.minimumFillRatioForFullJustification else {
-                return line
-            }
-
-            return CTLineCreateJustifiedLine(line, 1.0, Double(width)) ?? line
+            return max(width - layoutLine.naturalWidth, 0)
         }
 
         private func layoutLines(width: CGFloat) -> LayoutResult {
@@ -4952,6 +5176,13 @@ private struct PopupScaleMetrics {
     var titleHorizontalPadding: CGFloat { 5 * scale }
     var titleVerticalPadding: CGFloat { 2 * scale }
     var metadataLineSpacing: CGFloat { 0 }
+    var metadataColumnWidth: CGFloat {
+        let font = NSFont.systemFont(ofSize: metadataFontSize, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let statusWidth = ("Working" as NSString).size(withAttributes: attributes).width
+        let timeWidth = ("00s ago" as NSString).size(withAttributes: attributes).width
+        return ceil(max(statusWidth, timeWidth)) + 2 * scale
+    }
     var responseHorizontalPadding: CGFloat { 6 * scale }
     var responseVerticalPadding: CGFloat { 3 * scale }
     var shadowBleedPadding: CGFloat { textShadowRadius + textShadowDistance + 2 * scale }

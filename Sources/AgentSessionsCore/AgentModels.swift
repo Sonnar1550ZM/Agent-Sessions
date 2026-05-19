@@ -53,6 +53,10 @@ public enum AgentSessionVisibility {
         }
 
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isCodexInternalSuggestionTitle(trimmedTitle) {
+            return true
+        }
+
         guard trimmedTitle.isEmpty else {
             return false
         }
@@ -60,19 +64,51 @@ public enum AgentSessionVisibility {
         return isCodexInternalSuggestionText(latestResponseText)
     }
 
+    private static func isCodexInternalSuggestionTitle(_ value: String) -> Bool {
+        let normalized = normalizedSuggestionText(value)
+        guard !normalized.isEmpty else {
+            return false
+        }
+
+        if normalized.contains("generate 0 to 3 hyperpersonalized suggestions")
+            && normalized.contains("for what this user can do with codex in this local project") {
+            return true
+        }
+
+        return normalized.contains("gmail")
+            && normalized.contains("\u{306e}\u{76f4}\u{8fd1}5\u{65e5}\u{306e}\u{53d7}\u{4fe1}\u{30e1}\u{30fc}\u{30eb}")
+            && normalized.contains("\u{3053}\u{306e}\u{30e6}\u{30fc}\u{30b6}\u{30fc}\u{672c}\u{4eba}\u{304c}\u{4eca}\u{5bfe}\u{5fdc}\u{3059}\u{3079}\u{304d}\u{5f37}\u{3044}\u{30b7}\u{30b0}\u{30ca}\u{30eb}")
+            && normalized.contains("0-5")
+            && normalized.contains("\u{62bd}\u{51fa}")
+    }
+
     private static func isCodexInternalSuggestionText(_ value: String?) -> Bool {
         guard let value else {
             return false
         }
 
-        let normalized = value
+        let normalized = normalizedSuggestionText(value)
+
+        return normalized.contains("generate 0 to 3 hyperpersonalized suggestions")
+            && normalized.contains("for what this user can do with codex in this local project")
+    }
+
+    private static func normalizedSuggestionText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\u{ff10}", with: "0")
+            .replacingOccurrences(of: "\u{ff11}", with: "1")
+            .replacingOccurrences(of: "\u{ff12}", with: "2")
+            .replacingOccurrences(of: "\u{ff13}", with: "3")
+            .replacingOccurrences(of: "\u{ff14}", with: "4")
+            .replacingOccurrences(of: "\u{ff15}", with: "5")
+            .replacingOccurrences(of: "\u{ff16}", with: "6")
+            .replacingOccurrences(of: "\u{ff17}", with: "7")
+            .replacingOccurrences(of: "\u{ff18}", with: "8")
+            .replacingOccurrences(of: "\u{ff19}", with: "9")
             .lowercased()
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-
-        return normalized.contains("generate 0 to 3 hyperpersonalized suggestions")
-            && normalized.contains("for what this user can do with codex in this local project")
     }
 
     private static func normalizedPath(_ path: String) -> String {
@@ -92,6 +128,30 @@ public enum AgentSessionVisibility {
         }
 
         return URL(fileURLWithPath: expandedPath).standardizedFileURL.path
+    }
+}
+
+private enum AgentSubagentDetector {
+    static func isSubagent(parentSessionId: String?, sessionId: String, transcriptPath: String?) -> Bool {
+        if parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return true
+        }
+
+        return pathContainsSubagentsComponent(sessionId)
+            || pathContainsSubagentsComponent(transcriptPath)
+    }
+
+    private static func pathContainsSubagentsComponent(_ value: String?) -> Bool {
+        guard let value else {
+            return false
+        }
+
+        let normalized = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\", with: "/")
+
+        return normalized.hasPrefix("subagents/")
+            || normalized.contains("/subagents/")
     }
 }
 
@@ -272,7 +332,11 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var isSubagent: Bool {
-        parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        AgentSubagentDetector.isSubagent(
+            parentSessionId: parentSessionId,
+            sessionId: sessionId,
+            transcriptPath: transcriptPath
+        )
     }
 
     public init(
@@ -451,7 +515,11 @@ public struct AgentEvent: Codable, Equatable, Sendable {
     public var latestResponsePhase: String?
 
     public var isSubagent: Bool {
-        parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        AgentSubagentDetector.isSubagent(
+            parentSessionId: parentSessionId,
+            sessionId: sessionId,
+            transcriptPath: transcriptPath
+        )
     }
 
     private enum CodingKeys: String, CodingKey {

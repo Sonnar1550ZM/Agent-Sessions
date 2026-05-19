@@ -212,6 +212,25 @@ final class AgentStateStoreTests: XCTestCase {
         ))
     }
 
+    func testPopupParentSessionsExcludeSubagentPathWithoutParentMetadata() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil)
+
+        store.apply(AgentEvent(
+            agent: .claudeCode,
+            sessionId: "parent/subagents/agent-a",
+            state: .working,
+            updatedAt: base,
+            transcriptPath: "/tmp/parent/subagents/agent-a.jsonl",
+            latestResponseText: "Child response"
+        ))
+
+        XCTAssertEqual(store.popupParentSessions(now: base.addingTimeInterval(1), displayInterval: 10, limit: 5), [])
+        XCTAssertEqual(store.displayRows(for: .claudeCode, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.aggregateState(for: .claudeCode, now: base.addingTimeInterval(1)), .idle)
+        XCTAssertEqual(store.workingSessionCounts(for: .claudeCode, now: base.addingTimeInterval(1)), AgentWorkingSessionCounts())
+    }
+
     func testLatestPopupParentSessionKeepsActiveSessionPastIdleDisplayInterval() {
         let base = Date(timeIntervalSince1970: 1_000)
         let store = AgentStateStore(persistence: nil, activeStaleInterval: 60)
@@ -629,6 +648,26 @@ final class AgentStateStoreTests: XCTestCase {
             store.popupParentSessions(now: base.addingTimeInterval(1), displayInterval: 10, limit: 1),
             []
         )
+        XCTAssertEqual(store.sessions, [])
+    }
+
+    func testCodexGmailSignalSuggestionSessionsAreNotVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "gmail-suggestions",
+            state: .working,
+            title: "Gmailの直近５日の受信メールから、このユーザー本人が今対応すべき強いシグナルを 0-5 件抽出してください。",
+            cwd: "/tmp/project",
+            updatedAt: base
+        ))
+
+        XCTAssertEqual(store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(1)), .idle)
+        XCTAssertEqual(store.workingSessionCounts(for: .codex, now: base.addingTimeInterval(1)), AgentWorkingSessionCounts())
         XCTAssertEqual(store.sessions, [])
     }
 
