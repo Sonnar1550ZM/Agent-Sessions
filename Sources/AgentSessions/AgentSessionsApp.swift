@@ -2997,6 +2997,10 @@ final class SessionPopupController {
     private static let appearanceAnimationDuration: TimeInterval = 0.32
     private static let disappearanceAnimationDuration: TimeInterval = 0.24
     private static let appearanceAnimationOffset: CGFloat = 14
+    private static let mouseProximityCheckInterval: TimeInterval = 1.0 / 30.0
+    private static let mouseProximityMargin: CGFloat = 80
+    private static let mouseProximityAlpha: CGFloat = 0.2
+    private static let mouseProximityAnimationDuration: TimeInterval = 0.08
 
     private enum PopupVisibilityState {
         case hidden
@@ -3010,6 +3014,8 @@ final class SessionPopupController {
     private var panel: NSPanel?
     private var hostingController: NSHostingController<LatestParentSessionsPopupView>?
     private var refreshTimer: Timer?
+    private var mouseProximityTimer: Timer?
+    private var mouseProximityIsDimmed: Bool?
     private var popupAnimationGeneration = 0
     private var popupVisibilityState: PopupVisibilityState = .hidden
     private var cancellables: Set<AnyCancellable> = []
@@ -3231,15 +3237,22 @@ final class SessionPopupController {
         hostingController.view.frame.size = frame.size
 
         let shouldAnimateAppearance = !panel.isVisible || popupVisibilityState == .hidden || popupVisibilityState == .disappearing
-        panel.alphaValue = 1
-        panel.setFrame(frame, display: true)
-
+        let appearanceAnimationGeneration: Int?
         if shouldAnimateAppearance {
             popupAnimationGeneration += 1
-            let animationGeneration = popupAnimationGeneration
             popupVisibilityState = .appearing
+            appearanceAnimationGeneration = popupAnimationGeneration
+        } else {
+            appearanceAnimationGeneration = nil
+        }
+
+        panel.setFrame(frame, display: true)
+        updatePopupPanelAlpha(animated: false)
+
+        if let animationGeneration = appearanceAnimationGeneration {
             preparePopupContentForAppearance(hostingController.view)
             panel.orderFrontRegardless()
+            startMouseProximityTracking()
             animatePopupContentIn(
                 hostingController.view,
                 position: providerVisibility.popupWindowPosition,
@@ -3247,6 +3260,7 @@ final class SessionPopupController {
             )
         } else {
             panel.orderFrontRegardless()
+            startMouseProximityTracking()
             if popupVisibilityState == .visible {
                 resetPopupContentAnimation(hostingController.view)
             }
@@ -3254,6 +3268,7 @@ final class SessionPopupController {
     }
 
     private func closePopup() {
+        stopMouseProximityTracking()
         guard let panel, panel.isVisible else {
             panel?.alphaValue = 1
             popupVisibilityState = .hidden
@@ -3332,6 +3347,63 @@ final class SessionPopupController {
         panel.isReleasedWhenClosed = false
         self.panel = panel
         return panel
+    }
+
+    private func startMouseProximityTracking() {
+        updatePopupPanelAlpha(animated: false)
+
+        guard mouseProximityTimer == nil else {
+            return
+        }
+
+        let timer = Timer(timeInterval: Self.mouseProximityCheckInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updatePopupPanelAlpha(animated: true)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        mouseProximityTimer = timer
+    }
+
+    private func stopMouseProximityTracking() {
+        mouseProximityTimer?.invalidate()
+        mouseProximityTimer = nil
+        mouseProximityIsDimmed = nil
+    }
+
+    private func updatePopupPanelAlpha(animated: Bool) {
+        guard let panel, popupVisibilityState != .hidden else {
+            return
+        }
+
+        let isDimmed = popupShouldDim(forMouseLocation: NSEvent.mouseLocation)
+        let targetAlpha = isDimmed ? Self.mouseProximityAlpha : 1
+        guard mouseProximityIsDimmed != isDimmed else {
+            return
+        }
+        mouseProximityIsDimmed = isDimmed
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Self.mouseProximityAnimationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().alphaValue = targetAlpha
+            }
+        } else {
+            panel.alphaValue = targetAlpha
+        }
+    }
+
+    private func popupShouldDim(forMouseLocation mouseLocation: NSPoint) -> Bool {
+        guard let panel else {
+            return false
+        }
+
+        let proximityFrame = panel.frame.insetBy(
+            dx: -Self.mouseProximityMargin,
+            dy: -Self.mouseProximityMargin
+        )
+        return proximityFrame.contains(mouseLocation)
     }
 
     private func positionedFrame(for fittingSize: NSSize, position: PopupWindowPosition) -> NSRect {
