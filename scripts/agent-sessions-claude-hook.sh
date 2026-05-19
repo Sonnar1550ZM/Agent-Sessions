@@ -61,6 +61,44 @@ try:
 except Exception:
     pid = None
 
+def sanitized_title(value):
+    if not isinstance(value, str):
+        return ""
+    title = " ".join(value.split())
+    return title[:160]
+
+def text_from_value(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("prompt", "message", "input", "text", "user_prompt", "userPrompt", "content"):
+            text = text_from_value(value.get(key))
+            if text:
+                return text
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            text = text_from_value(item)
+            if text:
+                parts.append(text)
+        return " ".join(parts)
+    return ""
+
+def prompt_title(event):
+    if hook_event != "UserPromptSubmit":
+        return ""
+    for key in ("prompt", "message", "input", "text", "user_prompt", "userPrompt", "content"):
+        title = sanitized_title(text_from_value(event.get(key)))
+        if title:
+            return title
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        for key in ("prompt", "message", "input", "text", "user_prompt", "userPrompt", "content"):
+            title = sanitized_title(text_from_value(payload.get(key)))
+            if title:
+                return title
+    return ""
+
 transcript_path = event.get("transcript_path") or event.get("transcriptPath") or ""
 session_id = event.get("session_id") or event.get("sessionId") or ""
 if not session_id and isinstance(transcript_path, str) and transcript_path:
@@ -72,7 +110,7 @@ payload = {
     "agent": "Claude Code",
     "sessionId": session_id or "default",
     "state": state,
-    "title": "",
+    "title": prompt_title(event),
     "cwd": event.get("cwd") or "",
     "event": hook_event,
     "terminal": term_map.get(os.environ.get("TERM_PROGRAM") or "", os.environ.get("TERM_PROGRAM") or ""),

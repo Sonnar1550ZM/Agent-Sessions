@@ -2474,6 +2474,10 @@ private enum AgentEventEnricher {
         if event.agent == .codex {
             return event.title
         }
+        let title = event.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            return title
+        }
         guard !event.isSubagent else {
             return event.title
         }
@@ -2796,6 +2800,10 @@ final class AppController: ObservableObject {
     private func fallbackTitle(for session: AgentSession) -> String {
         guard session.agent != .codex else {
             return session.title
+        }
+        let title = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            return title
         }
         guard !session.isSubagent else {
             return session.title
