@@ -4490,8 +4490,8 @@ private struct PopupSessionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
             titleRow
-            .padding(.horizontal, metrics.responseHorizontalPadding)
-            .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
+                .padding(.horizontal, metrics.responseHorizontalPadding)
+                .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
 
             if let responseText {
                 PopupAlignedText(
@@ -4506,37 +4506,24 @@ private struct PopupSessionRow: View {
                     .padding(.vertical, metrics.responseVerticalPadding)
                     .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
             }
+
+            stateTimeRow
+                .padding(.horizontal, metrics.responseHorizontalPadding)
+                .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
         }
         .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
     }
 
-    @ViewBuilder
     private var titleRow: some View {
-        if alignsTextTrailing {
-            HStack(alignment: .top, spacing: metrics.titleSpacing) {
-                PopupSessionStateTimeText(
-                    session: session,
-                    metrics: metrics,
-                    alignsTrailing: false
-                )
-                .layoutPriority(2)
+        titleCluster
+    }
 
-                Spacer(minLength: metrics.titleSpacing)
-
-                titleCluster
-            }
-        } else {
-            HStack(alignment: .top, spacing: metrics.titleSpacing) {
-                titleCluster
-
-                PopupSessionStateTimeText(
-                    session: session,
-                    metrics: metrics,
-                    alignsTrailing: true
-                )
-                .layoutPriority(2)
-            }
-        }
+    private var stateTimeRow: some View {
+        PopupSessionStateTimeText(
+            session: session,
+            metrics: metrics,
+            alignsTrailing: alignsTextTrailing
+        )
     }
 
     private var titleCluster: some View {
@@ -4600,8 +4587,7 @@ private struct PopupSessionRow: View {
     private var titleColumnMaxWidth: CGFloat {
         let titleRowWidth = rowContentWidth - (2 * metrics.responseHorizontalPadding)
         let fixedWidth = metrics.iconSize
-            + metrics.metadataColumnWidth
-            + (3 * metrics.titleSpacing)
+            + metrics.titleSpacing
         return max(titleRowWidth - fixedWidth, 1)
     }
 
@@ -4636,27 +4622,18 @@ private struct PopupSessionStateTimeText: View {
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { timeline in
-            VStack(alignment: horizontalAlignment, spacing: metrics.metadataLineSpacing) {
-                Text(session.state.displayName)
-                    .lineLimit(1)
-
-                Text(relativeTimeText(relativeTo: timeline.date))
-                    .monospacedDigit()
-                    .lineLimit(1)
-            }
-            .font(.system(size: metrics.metadataFontSize, weight: .semibold))
-            .foregroundStyle(metadataColor.opacity(metrics.textOpacity))
-            .multilineTextAlignment(textAlignment)
-            .frame(width: metrics.metadataColumnWidth, alignment: frameAlignment)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, metrics.titleVerticalPadding)
-            .popupTextShadow(metrics)
+            Text(stateTimeText(relativeTo: timeline.date))
+                .monospacedDigit()
+                .lineLimit(1)
+                .font(.system(size: metrics.metadataFontSize, weight: .semibold))
+                .foregroundStyle(metadataColor.opacity(metrics.textOpacity))
+                .multilineTextAlignment(textAlignment)
+                .frame(maxWidth: .infinity, alignment: frameAlignment)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, metrics.titleVerticalPadding)
+                .popupTextShadow(metrics)
         }
         .accessibilityLabel(accessibilityText)
-    }
-
-    private var horizontalAlignment: HorizontalAlignment {
-        alignsTrailing ? .trailing : .leading
     }
 
     private var textAlignment: TextAlignment {
@@ -4673,6 +4650,10 @@ private struct PopupSessionStateTimeText: View {
 
     private var accessibilityText: String {
         "\(session.state.displayName) \(Self.relativeFormatter.localizedString(for: session.updatedAt, relativeTo: Date()))"
+    }
+
+    private func stateTimeText(relativeTo now: Date) -> String {
+        "\(session.state.displayName) · \(relativeTimeText(relativeTo: now))"
     }
 
     private func relativeTimeText(relativeTo now: Date) -> String {
@@ -5175,14 +5156,6 @@ private struct PopupScaleMetrics {
     var verticalPadding: CGFloat { 3 * scale }
     var titleHorizontalPadding: CGFloat { 5 * scale }
     var titleVerticalPadding: CGFloat { 2 * scale }
-    var metadataLineSpacing: CGFloat { 0 }
-    var metadataColumnWidth: CGFloat {
-        let font = NSFont.systemFont(ofSize: metadataFontSize, weight: .semibold)
-        let attributes: [NSAttributedString.Key: Any] = [.font: font]
-        let statusWidth = ("Working" as NSString).size(withAttributes: attributes).width
-        let timeWidth = ("00s ago" as NSString).size(withAttributes: attributes).width
-        return ceil(max(statusWidth, timeWidth)) + 2 * scale
-    }
     var responseHorizontalPadding: CGFloat { 6 * scale }
     var responseVerticalPadding: CGFloat { 3 * scale }
     var shadowBleedPadding: CGFloat { textShadowRadius + textShadowDistance + 2 * scale }
