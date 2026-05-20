@@ -57,7 +57,7 @@ public enum AgentSessionVisibility {
             return true
         }
 
-        guard trimmedTitle.isEmpty else {
+        guard trimmedTitle.isEmpty || isCodexPlaceholderTitle(trimmedTitle) else {
             return false
         }
 
@@ -70,13 +70,14 @@ public enum AgentSessionVisibility {
             return false
         }
 
-        if normalized.contains("generate 0 to 3 hyperpersonalized suggestions")
+        if (normalized.hasPrefix("# overview generate 0 to 3 hyperpersonalized suggestions")
+            || normalized.hasPrefix("overview generate 0 to 3 hyperpersonalized suggestions")
+            || normalized.hasPrefix("generate 0 to 3 hyperpersonalized suggestions"))
             && normalized.contains("for what this user can do with codex in this local project") {
             return true
         }
 
-        return normalized.contains("gmail")
-            && normalized.contains("\u{306e}\u{76f4}\u{8fd1}5\u{65e5}\u{306e}\u{53d7}\u{4fe1}\u{30e1}\u{30fc}\u{30eb}")
+        return normalized.hasPrefix("gmail\u{306e}\u{76f4}\u{8fd1}5\u{65e5}\u{306e}\u{53d7}\u{4fe1}\u{30e1}\u{30fc}\u{30eb}")
             && normalized.contains("\u{3053}\u{306e}\u{30e6}\u{30fc}\u{30b6}\u{30fc}\u{672c}\u{4eba}\u{304c}\u{4eca}\u{5bfe}\u{5fdc}\u{3059}\u{3079}\u{304d}\u{5f37}\u{3044}\u{30b7}\u{30b0}\u{30ca}\u{30eb}")
             && normalized.contains("0-5")
             && normalized.contains("\u{62bd}\u{51fa}")
@@ -91,6 +92,10 @@ public enum AgentSessionVisibility {
 
         return normalized.contains("generate 0 to 3 hyperpersonalized suggestions")
             && normalized.contains("for what this user can do with codex in this local project")
+    }
+
+    private static func isCodexPlaceholderTitle(_ value: String) -> Bool {
+        normalizedSuggestionText(value) == "thinking..."
     }
 
     private static func normalizedSuggestionText(_ value: String) -> String {
@@ -741,18 +746,36 @@ public struct AgentEvent: Codable, Equatable, Sendable {
 }
 
 public enum AgentSessionsDates {
+    private static let sharedFormatter = LockedAgentSessionsDateFormatter()
+
     public static func string(from date: Date) -> String {
-        formatter().string(from: date)
+        sharedFormatter.string(from: date)
     }
 
     public static func date(from value: String) -> Date? {
-        formatter().date(from: value)
+        sharedFormatter.date(from: value)
+    }
+}
+
+private final class LockedAgentSessionsDateFormatter: @unchecked Sendable {
+    private let lock = NSLock()
+    private let formatter: ISO8601DateFormatter
+
+    init() {
+        formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     }
 
-    private static func formatter() -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
+    func string(from date: Date) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return formatter.string(from: date)
+    }
+
+    func date(from value: String) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return formatter.date(from: value)
     }
 }
 

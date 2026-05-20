@@ -203,6 +203,33 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.title, "")
     }
 
+    func testIgnoresAmbientSuggestionPromptWhenChoosingTemporaryPromptTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"suggestions","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# Overview\\nGenerate 0 to 3 hyperpersonalized suggestions\\nfor what this user can do with Codex in this local project: /tmp/project"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "")
+        XCTAssertTrue(parsed.isInternalSubagent)
+    }
+
+    func testQuotedAmbientSuggestionPromptStillLooksLikeUserSession() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"debug","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"このメッセージも表示された\\n\\n# Overview\\nGenerate 0 to 3 hyperpersonalized suggestions\\nfor what this user can do with Codex in this local project: /tmp/project"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(
+            parsed.title,
+            "このメッセージも表示された # Overview Generate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in this local project: /tmp/project"
+        )
+        XCTAssertFalse(parsed.isInternalSubagent)
+    }
+
     func testParsesLatestAssistantResponseFromResponseItems() {
         let text = """
         {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
@@ -215,6 +242,18 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.latestResponseText, "最終応答です")
         XCTAssertEqual(parsed.latestResponsePhase, "final_answer")
         XCTAssertEqual(parsed.state, .idle)
+    }
+
+    func testParsesPlaceholderSuggestionOverviewAsInternalSession() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"suggestions","cwd":"/tmp/project","thread_source":"user","source":"vscode","thread_name":"thinking..."}}
+        {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"# Overview\\nGenerate 0 to 3 hyperpersonalized suggestions\\nfor what this user can do with Codex in this local project: /tmp/project"}],"phase":"commentary"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "thinking...")
+        XCTAssertTrue(parsed.isInternalSubagent)
     }
 
     func testParsesInternalSuggestionOverviewAsLatestResponse() {

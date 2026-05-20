@@ -3,14 +3,11 @@ import Foundation
 
 public enum EventServerError: Error, LocalizedError {
     case invalidPort(UInt16)
-    case invalidRequest
 
     public var errorDescription: String? {
         switch self {
         case .invalidPort(let port):
             "Invalid port: \(port)"
-        case .invalidRequest:
-            "Invalid HTTP request"
         }
     }
 }

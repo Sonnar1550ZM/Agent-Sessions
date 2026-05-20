@@ -293,7 +293,7 @@ final class CodexSessionWatcher {
         let now = Date()
         sessionLookupCacheLock.lock()
         if let entry = sessionLookupCache[normalizedSessionId],
-           now.timeIntervalSince(entry.checkedAt) <= sessionLookupCacheTTL {
+           now.timeIntervalSince(entry.checkedAt) <= sessionLookupCacheTTL(for: entry.lookup.status) {
             sessionLookupCacheLock.unlock()
             return entry.lookup
         }
@@ -331,7 +331,15 @@ final class CodexSessionWatcher {
         let lookup: SessionLookup
     }
 
-    private static let sessionLookupCacheTTL: TimeInterval = 2
+    private static func sessionLookupCacheTTL(for status: CodexSessionFileStatus) -> TimeInterval {
+        switch status {
+        case .active, .archived:
+            return 30
+        case .missing:
+            return 2
+        }
+    }
+
     private static let sessionLookupCacheLock = NSLock()
     nonisolated(unsafe) private static var sessionLookupCache: [String: SessionLookupCacheEntry] = [:]
 

@@ -9,6 +9,7 @@ public enum CodexSessionFileStatus: Equatable, Sendable {
 public struct CodexSessionFileIndex: Sendable {
     public var activeRoot: URL
     public var archivedRoot: URL
+    private static let rolloutFileCache = RolloutFileCache(ttl: 30)
 
     public init(
         activeRoot: URL = Self.defaultActiveRoot(),
@@ -65,28 +66,83 @@ public struct CodexSessionFileIndex: Sendable {
 
     private func rolloutFile(for sessionId: String, under root: URL) -> URL? {
         let normalizedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedSessionId.isEmpty,
-              let enumerator = FileManager.default.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles]
-              ) else {
+        guard !normalizedSessionId.isEmpty else {
             return nil
         }
 
-        for case let url as URL in enumerator {
-            guard url.lastPathComponent.hasPrefix("rollout-"),
-                  url.pathExtension == "jsonl",
-                  url.lastPathComponent.contains(normalizedSessionId),
-                  let values = try? url.resourceValues(forKeys: [.isRegularFileKey]),
-                  values.isRegularFile == true,
-                  Self.sessionId(fromRolloutURL: url) == normalizedSessionId else {
-                continue
-            }
+        return Self.rolloutFileCache.file(for: normalizedSessionId, under: root)
+    }
 
-            return url
+    private final class RolloutFileCache: @unchecked Sendable {
+        private struct Snapshot {
+            var expiresAt: Date
+            var filesBySessionId: [String: URL]
         }
 
-        return nil
+        private let lock = NSLock()
+        private let ttl: TimeInterval
+        private var snapshots: [String: Snapshot] = [:]
+
+        init(ttl: TimeInterval) {
+            self.ttl = ttl
+        }
+
+        func file(for sessionId: String, under root: URL) -> URL? {
+            let rootPath = root.standardizedFileURL.path
+            let now = Date()
+
+            lock.lock()
+            if let snapshot = snapshots[rootPath],
+               snapshot.expiresAt > now {
+                let file = snapshot.filesBySessionId[sessionId]
+                lock.unlock()
+                return file
+            }
+            lock.unlock()
+
+            let filesBySessionId = Self.buildIndex(under: root)
+            let snapshot = Snapshot(
+                expiresAt: now.addingTimeInterval(ttl),
+                filesBySessionId: filesBySessionId
+            )
+
+            lock.lock()
+            snapshots[rootPath] = snapshot
+            lock.unlock()
+
+            return filesBySessionId[sessionId]
+        }
+
+        private static func buildIndex(under root: URL) -> [String: URL] {
+            guard let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                return [:]
+            }
+
+            var filesBySessionId: [String: (url: URL, modifiedAt: Date)] = [:]
+            for case let url as URL in enumerator {
+                guard url.lastPathComponent.hasPrefix("rollout-"),
+                      url.pathExtension == "jsonl",
+                      let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                      values.isRegularFile == true else {
+                    continue
+                }
+
+                let sessionId = CodexSessionFileIndex.sessionId(fromRolloutURL: url)
+                guard !sessionId.isEmpty else {
+                    continue
+                }
+
+                let modifiedAt = values.contentModificationDate ?? .distantPast
+                if filesBySessionId[sessionId] == nil || modifiedAt > filesBySessionId[sessionId]!.modifiedAt {
+                    filesBySessionId[sessionId] = (url, modifiedAt)
+                }
+            }
+
+            return filesBySessionId.mapValues(\.url)
+        }
     }
 }

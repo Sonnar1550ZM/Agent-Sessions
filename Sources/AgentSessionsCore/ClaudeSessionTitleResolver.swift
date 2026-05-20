@@ -115,6 +115,19 @@ public enum ClaudeSessionTitleResolver {
         )
     }
 
+    public static func title(for sessionId: String, transcriptPath: String?) -> String? {
+        title(
+            for: sessionId,
+            transcriptPath: transcriptPath,
+            projectsRoot: FileManager.default
+                .homeDirectoryForCurrentUser
+                .appendingPathComponent(".claude/projects", isDirectory: true),
+            appSessionsRoot: FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Claude/claude-code-sessions", isDirectory: true)
+        )
+    }
+
     static func title(for sessionId: String, projectsRoot: URL) -> String? {
         title(for: sessionId, projectsRoot: projectsRoot, appSessionsRoot: nil)
     }
@@ -126,6 +139,29 @@ public enum ClaudeSessionTitleResolver {
 
         if let appTitle = appSessionTitle(for: sessionId, sessionsRoot: appSessionsRoot) {
             return appTitle
+        }
+
+        return transcriptTitle(for: sessionId, projectsRoot: projectsRoot)
+    }
+
+    static func title(
+        for sessionId: String,
+        transcriptPath: String?,
+        projectsRoot: URL,
+        appSessionsRoot: URL?
+    ) -> String? {
+        guard !sessionId.isEmpty else {
+            return nil
+        }
+
+        if let appTitle = appSessionTitle(for: sessionId, sessionsRoot: appSessionsRoot) {
+            return appTitle
+        }
+
+        if let transcriptPath = transcriptPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !transcriptPath.isEmpty,
+           let title = transcriptTitle(for: sessionId, file: URL(fileURLWithPath: transcriptPath)) {
+            return title
         }
 
         return transcriptTitle(for: sessionId, projectsRoot: projectsRoot)
@@ -180,7 +216,15 @@ public enum ClaudeSessionTitleResolver {
     private static func transcriptTitle(for sessionId: String, projectsRoot: URL) -> String? {
         guard !sessionId.isEmpty,
               let file = transcriptFile(for: sessionId, projectsRoot: projectsRoot),
-              let text = transcriptText(from: file) else {
+              let title = transcriptTitle(for: sessionId, file: file) else {
+            return nil
+        }
+
+        return title
+    }
+
+    private static func transcriptTitle(for sessionId: String, file: URL) -> String? {
+        guard let text = transcriptText(from: file) else {
             return nil
         }
 

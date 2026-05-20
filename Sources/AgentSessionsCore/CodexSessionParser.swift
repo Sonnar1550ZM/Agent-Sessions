@@ -104,13 +104,19 @@ public enum CodexSessionParser {
         }
 
         func toSession() -> CodexParsedSession {
-            CodexParsedSession(
+            let sessionTitle = title.isEmpty ? promptTitle : title
+            let isInternalSuggestion = AgentSessionVisibility.isCodexInternalSuggestion(
+                agent: .codex,
+                title: sessionTitle,
+                latestResponseText: latestResponseText
+            )
+            return CodexParsedSession(
                 sessionId: sessionId,
                 state: state,
-                title: title.isEmpty ? promptTitle : title,
+                title: sessionTitle,
                 cwd: cwd,
                 event: event,
-                isInternalSubagent: isInternalSubagent,
+                isInternalSubagent: isInternalSubagent || isInternalSuggestion,
                 parentSessionId: parentSessionId,
                 subagentNickname: subagentNickname,
                 subagentRole: subagentRole,
@@ -199,6 +205,9 @@ public enum CodexSessionParser {
                         parserState.interruptedTurnId = nil
                         parserState.state = .working
                         parserState.event = "user_message"
+                        if containsInternalSuggestionUserPrompt(payload) {
+                            parserState.isInternalSubagent = true
+                        }
                         if parserState.promptTitle.isEmpty,
                            let userTitle = extractPromptTitle(fromUserMessagePayload: payload) {
                             parserState.promptTitle = userTitle
@@ -261,6 +270,9 @@ public enum CodexSessionParser {
                     parserState.turnInterrupted = false
                     parserState.interruptedTurnId = nil
                     parserState.state = .working
+                    if isInternalSuggestionPrompt(payload["message"] as? String) {
+                        parserState.isInternalSubagent = true
+                    }
                     if parserState.promptTitle.isEmpty,
                        let userTitle = sanitizedUserPromptTitle(payload["message"] as? String) {
                         parserState.promptTitle = userTitle
@@ -402,13 +414,49 @@ public enum CodexSessionParser {
         return sanitizedTitle(text)
     }
 
+    private static func containsInternalSuggestionUserPrompt(_ payload: [String: Any]) -> Bool {
+        if let text = payload["content"] as? String {
+            return isInternalSuggestionPrompt(text)
+        }
+
+        guard let content = payload["content"] as? [[String: Any]] else {
+            return false
+        }
+
+        return content.contains { item in
+            let type = item["type"] as? String
+            guard type == "input_text" || type == "text" else {
+                return false
+            }
+            return isInternalSuggestionPrompt(item["text"] as? String)
+        }
+    }
+
+    private static func isInternalSuggestionPrompt(_ value: String?) -> Bool {
+        guard let value else {
+            return false
+        }
+
+        return AgentSessionVisibility.isCodexInternalSuggestion(
+            agent: .codex,
+            title: value.trimmingCharacters(in: .whitespacesAndNewlines),
+            latestResponseText: nil
+        )
+    }
+
     private static func sanitizedUserPromptTitle(_ value: String?) -> String? {
         guard let value else {
             return nil
         }
 
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isBootstrapContext(trimmed) else {
+        guard !trimmed.isEmpty,
+              !isBootstrapContext(trimmed),
+              !AgentSessionVisibility.isCodexInternalSuggestion(
+                  agent: .codex,
+                  title: trimmed,
+                  latestResponseText: nil
+              ) else {
             return nil
         }
 

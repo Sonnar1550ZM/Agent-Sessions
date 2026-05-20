@@ -2834,6 +2834,11 @@ private enum AgentEventEnricher {
         switch event.agent {
         case .codex:
             return AgentSessionVisibility.isCodexMemoryWorkspace(agent: .codex, cwd: event.cwd)
+                || AgentSessionVisibility.isCodexInternalSuggestion(
+                    agent: .codex,
+                    title: event.title,
+                    latestResponseText: event.latestResponseText
+                )
         case .claudeCode:
             return !event.isSubagent && isClaudeProbeSession(cwd: event.cwd, title: event.title)
         }
@@ -2848,6 +2853,7 @@ private enum AgentEventEnricher {
                 title: event.title,
                 cwd: event.cwd,
                 event: event.event,
+                latestResponseText: event.latestResponseText,
                 allowsUnresolvedLiveSession: true
             )
         case .claudeCode:
@@ -2925,15 +2931,8 @@ private enum AgentEventEnricher {
     }
 
     private static func eventWithResolvedTitle(_ event: AgentEvent) -> AgentEvent {
-        let title: String
-        switch event.agent {
-        case .codex:
-            title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
-                ?? event.title
-        case .claudeCode:
-            title = resolvedTitle(agent: event.agent, sessionId: event.sessionId)
-                ?? fallbackTitle(for: event)
-        }
+        let title = resolvedTitle(for: event)
+            ?? (event.agent == .claudeCode ? fallbackTitle(for: event) : event.title)
 
         guard title != event.title else {
             return event
@@ -2959,12 +2958,12 @@ private enum AgentEventEnricher {
         )
     }
 
-    private static func resolvedTitle(agent: AgentKind, sessionId: String) -> String? {
-        switch agent {
+    private static func resolvedTitle(for event: AgentEvent) -> String? {
+        switch event.agent {
         case .codex:
-            CodexSessionWatcher.title(for: sessionId)
+            CodexSessionWatcher.title(for: event.sessionId)
         case .claudeCode:
-            ClaudeSessionTitleResolver.title(for: sessionId)
+            ClaudeSessionTitleResolver.title(for: event.sessionId, transcriptPath: event.transcriptPath)
         }
     }
 
@@ -2974,8 +2973,17 @@ private enum AgentEventEnricher {
         title: String,
         cwd: String,
         event: String,
+        latestResponseText: String?,
         allowsUnresolvedLiveSession: Bool
     ) -> Bool {
+        if AgentSessionVisibility.isCodexInternalSuggestion(
+            agent: .codex,
+            title: title,
+            latestResponseText: latestResponseText
+        ) {
+            return true
+        }
+
         switch CodexSessionWatcher.fileStatus(for: sessionId) {
         case .active:
             break
@@ -3129,8 +3137,6 @@ private enum AgentEventEnricher {
 
 @MainActor
 final class AppController: ObservableObject {
-    @Published var serverMessage = "Listening on 127.0.0.1:7823"
-
     let store = AgentStateStore()
     private let providerVisibility = ProviderVisibilityStore.shared
     private var server: EventServer?
@@ -3167,9 +3173,8 @@ final class AppController: ObservableObject {
             }
             try eventServer.start()
             server = eventServer
-            serverMessage = "Listening on 127.0.0.1:7823"
         } catch {
-            serverMessage = "Server failed: \(error.localizedDescription)"
+            NSLog("Agent Sessions server failed: \(error.localizedDescription)")
         }
     }
 
@@ -3449,15 +3454,11 @@ final class AppController: ObservableObject {
     }
 
     private func resolvedTitle(for session: AgentSession) -> String? {
-        resolvedTitle(agent: session.agent, sessionId: session.sessionId)
-    }
-
-    private func resolvedTitle(agent: AgentKind, sessionId: String) -> String? {
-        switch agent {
+        switch session.agent {
         case .codex:
-            CodexSessionWatcher.title(for: sessionId)
+            CodexSessionWatcher.title(for: session.sessionId)
         case .claudeCode:
-            ClaudeSessionTitleResolver.title(for: sessionId)
+            ClaudeSessionTitleResolver.title(for: session.sessionId, transcriptPath: session.transcriptPath)
         }
     }
 
@@ -3505,6 +3506,7 @@ final class AppController: ObservableObject {
                 title: session.title,
                 cwd: session.cwd,
                 event: session.event,
+                latestResponseText: session.latestResponseText,
                 allowsUnresolvedLiveSession: true
             )
         case .claudeCode:
@@ -3526,8 +3528,17 @@ final class AppController: ObservableObject {
         title: String,
         cwd: String,
         event: String,
+        latestResponseText: String?,
         allowsUnresolvedLiveSession: Bool
     ) -> Bool {
+        if AgentSessionVisibility.isCodexInternalSuggestion(
+            agent: .codex,
+            title: title,
+            latestResponseText: latestResponseText
+        ) {
+            return true
+        }
+
         switch CodexSessionWatcher.fileStatus(for: sessionId) {
         case .active:
             break
@@ -3669,9 +3680,14 @@ final class SessionPopupController {
     private static let frameUpdateAnimationDuration: TimeInterval = 0.18
     private static let emptySessionCloseDelay: TimeInterval = 0.35
     private static let appearanceAnimationOffset: CGFloat = 14
-    private static let mouseProximityCheckInterval: TimeInterval = 1.0 / 30.0
     private static let mouseProximityMargin: CGFloat = 30
     private static let mouseProximityAnimationDuration: TimeInterval = 0.08
+    private static let mouseProximityEventMask: NSEvent.EventTypeMask = [
+        .mouseMoved,
+        .leftMouseDragged,
+        .rightMouseDragged,
+        .otherMouseDragged
+    ]
 
     private enum PopupVisibilityState {
         case hidden
@@ -3686,7 +3702,8 @@ final class SessionPopupController {
     private var hostingController: NSHostingController<LatestParentSessionsPopupView>?
     private var refreshTimer: Timer?
     private var emptyCloseTimer: Timer?
-    private var mouseProximityTimer: Timer?
+    private var mouseProximityLocalMonitor: Any?
+    private var mouseProximityGlobalMonitor: Any?
     private var mouseProximityIsDimmed: Bool?
     private var renderedPopupSignature: String?
     private var popupAnimationGeneration = 0
@@ -4221,22 +4238,33 @@ final class SessionPopupController {
     private func startMouseProximityTracking() {
         updatePopupPanelAlpha(animated: false)
 
-        guard mouseProximityTimer == nil else {
+        guard mouseProximityLocalMonitor == nil, mouseProximityGlobalMonitor == nil else {
             return
         }
 
-        let timer = Timer(timeInterval: Self.mouseProximityCheckInterval, repeats: true) { [weak self] _ in
+        mouseProximityLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: Self.mouseProximityEventMask) { [weak self] event in
+            Task { @MainActor in
+                self?.updatePopupPanelAlpha(animated: true)
+            }
+            return event
+        }
+
+        mouseProximityGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.mouseProximityEventMask) { [weak self] _ in
             Task { @MainActor in
                 self?.updatePopupPanelAlpha(animated: true)
             }
         }
-        RunLoop.main.add(timer, forMode: .common)
-        mouseProximityTimer = timer
     }
 
     private func stopMouseProximityTracking() {
-        mouseProximityTimer?.invalidate()
-        mouseProximityTimer = nil
+        if let mouseProximityLocalMonitor {
+            NSEvent.removeMonitor(mouseProximityLocalMonitor)
+        }
+        if let mouseProximityGlobalMonitor {
+            NSEvent.removeMonitor(mouseProximityGlobalMonitor)
+        }
+        mouseProximityLocalMonitor = nil
+        mouseProximityGlobalMonitor = nil
         mouseProximityIsDimmed = nil
     }
 
@@ -4990,6 +5018,8 @@ private struct PopupAlignedText: NSViewRepresentable {
         private var renderedElidesShortFinalLine = false
         private var renderedFont = NSFont.systemFont(ofSize: 10)
         private var preferredMaxLayoutWidth: CGFloat = 0
+        private var cachedLayoutWidth: CGFloat?
+        private var cachedLayoutResult: LayoutResult?
 
         override var isOpaque: Bool {
             false
@@ -5007,15 +5037,16 @@ private struct PopupAlignedText: NSViewRepresentable {
             let normalizedOpacity = min(max(textOpacity, 0), 1)
             let normalizedLineLimit = max(lineLimit, 1)
 
-            let changed = renderedText != text
+            let layoutChanged = renderedText != text
                 || abs(renderedFontSize - fontSize) > 0.001
                 || renderedFontWeight != fontWeight
-                || abs(renderedTextOpacity - normalizedOpacity) > 0.001
                 || renderedLineLimit != normalizedLineLimit
-                || renderedAlignsTrailing != alignsTrailing
                 || renderedElidesShortFinalLine != elidesShortFinalLine
+            let displayChanged = layoutChanged
+                || abs(renderedTextOpacity - normalizedOpacity) > 0.001
+                || renderedAlignsTrailing != alignsTrailing
 
-            guard changed else {
+            guard displayChanged else {
                 return
             }
 
@@ -5027,7 +5058,11 @@ private struct PopupAlignedText: NSViewRepresentable {
             renderedAlignsTrailing = alignsTrailing
             renderedElidesShortFinalLine = elidesShortFinalLine
             renderedFont = NSFont.systemFont(ofSize: fontSize, weight: fontWeight)
-            invalidateIntrinsicContentSize()
+
+            if layoutChanged {
+                invalidateLayoutCache()
+                invalidateIntrinsicContentSize()
+            }
             needsDisplay = true
         }
 
@@ -5077,6 +5112,7 @@ private struct PopupAlignedText: NSViewRepresentable {
 
             context.saveGState()
             context.textMatrix = .identity
+            context.setAlpha(renderedTextOpacity)
 
             for layoutLine in result.lines {
                 defer {
@@ -5103,6 +5139,20 @@ private struct PopupAlignedText: NSViewRepresentable {
         }
 
         private func layoutLines(width: CGFloat) -> LayoutResult {
+            let normalizedWidth = normalizedLayoutWidth(width)
+            if let cachedLayoutWidth,
+               abs(cachedLayoutWidth - normalizedWidth) <= 0.5,
+               let cachedLayoutResult {
+                return cachedLayoutResult
+            }
+
+            let result = makeLayoutLines(width: width)
+            cachedLayoutWidth = normalizedWidth
+            cachedLayoutResult = result
+            return result
+        }
+
+        private func makeLayoutLines(width: CGFloat) -> LayoutResult {
             let attributedText = attributedText()
             let rawString = attributedText.string as NSString
             let totalLength = rawString.length
@@ -5157,6 +5207,15 @@ private struct PopupAlignedText: NSViewRepresentable {
             }
 
             return LayoutResult(lines: lines, consumedLength: index, totalLength: totalLength)
+        }
+
+        private func normalizedLayoutWidth(_ width: CGFloat) -> CGFloat {
+            max(width.rounded(.toNearestOrAwayFromZero), 0)
+        }
+
+        private func invalidateLayoutCache() {
+            cachedLayoutWidth = nil
+            cachedLayoutResult = nil
         }
 
         private func linesByElidingShortFinalLine(_ lines: [LayoutLine], width: CGFloat) -> [LayoutLine] {
@@ -5266,26 +5325,24 @@ private struct PopupAlignedText: NSViewRepresentable {
 
         private func attributedText() -> NSAttributedString {
             let font = CTFontCreateWithName(renderedFont.fontName as CFString, renderedFont.pointSize, nil)
-            let color = NSColor.white.withAlphaComponent(renderedTextOpacity).cgColor
 
             return NSAttributedString(
                 string: Self.textWithSoftBreaks(renderedText),
                 attributes: [
                     kCTFontAttributeName as NSAttributedString.Key: font,
-                    kCTForegroundColorAttributeName as NSAttributedString.Key: color
+                    kCTForegroundColorAttributeName as NSAttributedString.Key: NSColor.white.cgColor
                 ]
             )
         }
 
         private func attributedEllipsis() -> NSAttributedString {
             let font = CTFontCreateWithName(renderedFont.fontName as CFString, renderedFont.pointSize, nil)
-            let color = NSColor.white.withAlphaComponent(renderedTextOpacity).cgColor
 
             return NSAttributedString(
                 string: "...",
                 attributes: [
                     kCTFontAttributeName as NSAttributedString.Key: font,
-                    kCTForegroundColorAttributeName as NSAttributedString.Key: color
+                    kCTForegroundColorAttributeName as NSAttributedString.Key: NSColor.white.cgColor
                 ]
             )
         }
@@ -5472,9 +5529,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var fallbackStatusItem: NSStatusItem?
     private var statusIconRefreshTimer: Timer?
     private var statusIconRefreshInterval: TimeInterval?
+    private var statusIconRefreshRepeats = false
+    private var statusIconRefreshTargetDate: Date?
     private var statusIconAnimationStartDate = Date()
     private var statusIconDisplayStates: [AgentKind: AgentState] = [:]
     private var statusIconRenderKeys: [AgentKind: StatusIconRenderKey] = [:]
+    private var fallbackStatusIconRendered = false
     private var lastStatusIconStateRefreshDate = Date.distantPast
     private var cancellables: Set<AnyCancellable> = []
     private var isMenuOpen = false
@@ -5483,8 +5543,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var hostedViews: [NSView] = []
     private static let statusItemHorizontalPadding: CGFloat = 1
     private static let menuLayoutSizeEpsilon: CGFloat = 0.5
-    private static let idleStatusIconRefreshInterval: TimeInterval = 1
     private static let statusIconStateRefreshInterval: TimeInterval = 1
+    private static let statusIconRefreshTargetEpsilon: TimeInterval = 0.05
     private static let animatedStatusIconRefreshInterval = AgentIconAnimation.animatedRefreshInterval
 
     init(controller: AppController) {
@@ -5715,6 +5775,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         NSStatusBar.system.removeStatusItem(fallbackStatusItem)
         self.fallbackStatusItem = nil
+        fallbackStatusIconRendered = false
     }
 
     private func updateStatusIcons(refreshDisplayStates: Bool = true) {
@@ -5725,7 +5786,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         if shouldRefreshDisplayStates {
             lastStatusIconStateRefreshDate = now
         }
-        updateStatusIconRefreshTimer(animated: hasAnimatedIcon)
+        updateStatusIconRefreshTimer(animated: hasAnimatedIcon, now: now)
     }
 
     private func renderStatusIcons(now: Date, refreshDisplayStates: Bool) -> Bool {
@@ -5759,9 +5820,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
 
         if let fallbackStatusItem {
+            guard !fallbackStatusIconRendered else {
+                return hasAnimatedIcon
+            }
             let image = AgentImages.menuBarStatus([])
             fallbackStatusItem.button?.image = image
             fallbackStatusItem.length = image.size.width + Self.statusItemHorizontalPadding
+            fallbackStatusIconRendered = true
         }
 
         return hasAnimatedIcon
@@ -5772,31 +5837,99 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             return
         }
 
-        updateStatusIconRefreshTimer(animated: false)
+        updateStatusIconRefreshTimer(animated: false, now: Date())
     }
 
-    private func updateStatusIconRefreshTimer(animated: Bool) {
-        let interval = animated
-            ? Self.animatedStatusIconRefreshInterval
-            : Self.idleStatusIconRefreshInterval
-
-        if animated && statusIconRefreshInterval != Self.animatedStatusIconRefreshInterval {
-            statusIconAnimationStartDate = Date()
-        }
-
-        guard statusIconRefreshInterval != interval else {
+    private func updateStatusIconRefreshTimer(animated: Bool, now: Date) {
+        if animated {
+            scheduleStatusIconRefreshTimer(
+                interval: Self.animatedStatusIconRefreshInterval,
+                repeats: true,
+                targetDate: nil,
+                refreshDisplayStatesOnFire: false
+            )
             return
         }
 
+        guard let delay = nextTransientStartupRefreshDelay(now: now) else {
+            invalidateStatusIconRefreshTimer()
+            return
+        }
+
+        let targetDate = now.addingTimeInterval(delay)
+        scheduleStatusIconRefreshTimer(
+            interval: delay,
+            repeats: false,
+            targetDate: targetDate,
+            refreshDisplayStatesOnFire: true
+        )
+    }
+
+    private func scheduleStatusIconRefreshTimer(
+        interval: TimeInterval,
+        repeats: Bool,
+        targetDate: Date?,
+        refreshDisplayStatesOnFire: Bool
+    ) {
+        if repeats,
+           statusIconRefreshRepeats,
+           statusIconRefreshInterval == interval {
+            return
+        }
+
+        if !repeats,
+           !statusIconRefreshRepeats,
+           let statusIconRefreshTargetDate,
+           let targetDate,
+           abs(statusIconRefreshTargetDate.timeIntervalSince(targetDate)) <= Self.statusIconRefreshTargetEpsilon {
+            return
+        }
+
+        if repeats && !statusIconRefreshRepeats {
+            statusIconAnimationStartDate = Date()
+        }
+
         statusIconRefreshTimer?.invalidate()
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: interval, repeats: repeats) { [weak self] _ in
             Task { @MainActor in
-                self?.updateStatusIcons(refreshDisplayStates: false)
+                guard let self else { return }
+                if !repeats {
+                    self.clearStatusIconRefreshTimerState()
+                }
+                self.updateStatusIcons(refreshDisplayStates: refreshDisplayStatesOnFire)
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         statusIconRefreshTimer = timer
         statusIconRefreshInterval = interval
+        statusIconRefreshRepeats = repeats
+        statusIconRefreshTargetDate = targetDate
+    }
+
+    private func invalidateStatusIconRefreshTimer() {
+        statusIconRefreshTimer?.invalidate()
+        clearStatusIconRefreshTimerState()
+    }
+
+    private func clearStatusIconRefreshTimerState() {
+        statusIconRefreshTimer = nil
+        statusIconRefreshInterval = nil
+        statusIconRefreshRepeats = false
+        statusIconRefreshTargetDate = nil
+    }
+
+    private func nextTransientStartupRefreshDelay(now: Date) -> TimeInterval? {
+        let expirationDates = AgentKind.allCases.flatMap { agent in
+            controller.store.visibleSessions(for: agent, now: now).compactMap { session in
+                AgentDisplayState.transientStartupExpirationDate(for: session, now: now)
+            }
+        }
+
+        guard let soonestExpiration = expirationDates.min() else {
+            return nil
+        }
+
+        return max(0.05, soonestExpiration.timeIntervalSince(now))
     }
 
     private func statusIconDisplayState(for agent: AgentKind, now: Date, refreshDisplayState: Bool) -> AgentState {
@@ -5980,16 +6113,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         image.isTemplate = true
         return image.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)) ?? image
-    }
-
-    @objc private func reloadState() {
-        controller.reload()
-        updateStatusIcons()
-        resizeMenuIfOpen()
-    }
-
-    @objc private func openStateFile() {
-        NSWorkspace.shared.activateFileViewerSelecting([StatePersistence.defaultStateURL()])
     }
 
     @objc private func openSettings() {
@@ -6272,13 +6395,21 @@ private enum AgentDisplayState {
             return aggregateState
         }
 
-        let hasRecentStartupSession = store.visibleSessions(for: agent, now: now).contains { session in
-            session.state == .idle
-                && startupIdleEvents.contains(session.event)
-                && now.timeIntervalSince(session.updatedAt) <= recentStartupWorkingInterval
+        let hasRecentStartupSession = store.visibleSessions(for: agent, now: now).contains {
+            transientStartupExpirationDate(for: $0, now: now) != nil
         }
 
         return hasRecentStartupSession ? .working : aggregateState
+    }
+
+    static func transientStartupExpirationDate(for session: AgentSession, now: Date) -> Date? {
+        guard session.state == .idle,
+              startupIdleEvents.contains(session.event) else {
+            return nil
+        }
+
+        let expirationDate = session.updatedAt.addingTimeInterval(recentStartupWorkingInterval)
+        return expirationDate > now ? expirationDate : nil
     }
 }
 

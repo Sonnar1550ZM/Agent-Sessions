@@ -691,6 +691,25 @@ final class AgentStateStoreTests: XCTestCase {
         )
     }
 
+    func testThinkingPlaceholderCodexSuggestionSessionIsNotVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "suggestions",
+            state: .working,
+            title: "thinking...",
+            cwd: "/tmp/project",
+            updatedAt: base,
+            latestResponseText: "Generate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in this local project: /tmp/project"
+        ))
+
+        XCTAssertEqual(store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(1)), .idle)
+        XCTAssertEqual(store.sessions, [])
+    }
+
     func testOrdinaryMemoriesProjectSessionIsVisible() {
         let store = AgentStateStore(persistence: nil)
         let base = Date(timeIntervalSince1970: 1_000)

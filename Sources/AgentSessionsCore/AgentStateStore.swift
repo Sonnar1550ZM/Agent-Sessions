@@ -122,6 +122,9 @@ public final class AgentStateStore: ObservableObject {
         )
 
         if let index = sessions.firstIndex(where: { Self.key(agent: $0.agent, sessionId: $0.sessionId) == key }) {
+            guard sessions[index] != next else {
+                return next
+            }
             sessions[index] = next
         } else {
             sessions.append(next)
