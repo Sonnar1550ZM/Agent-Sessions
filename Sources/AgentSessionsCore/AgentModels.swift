@@ -92,10 +92,11 @@ public enum AgentSessionVisibility {
             return false
         }
 
-        if (normalized.hasPrefix("# overview generate 0 to 3 hyperpersonalized suggestions")
-            || normalized.hasPrefix("overview generate 0 to 3 hyperpersonalized suggestions")
-            || normalized.hasPrefix("generate 0 to 3 hyperpersonalized suggestions"))
-            && normalized.contains("for what this user can do with codex in this local project") {
+        if isCodexProjectSuggestionText(normalized) {
+            return true
+        }
+
+        if isCodexAmbientSuggestionReviewText(normalized) {
             return true
         }
 
@@ -112,12 +113,24 @@ public enum AgentSessionVisibility {
 
         let normalized = normalizedSuggestionText(value)
 
-        return normalized.contains("generate 0 to 3 hyperpersonalized suggestions")
-            && normalized.contains("for what this user can do with codex in this local project")
+        return isCodexProjectSuggestionText(normalized)
+            || isCodexAmbientSuggestionReviewText(normalized)
     }
 
     private static func isCodexPlaceholderTitle(_ value: String) -> Bool {
         normalizedSuggestionText(value) == "thinking..."
+    }
+
+    private static func isCodexProjectSuggestionText(_ normalized: String) -> Bool {
+        (normalized.hasPrefix("# overview generate 0 to 3 hyperpersonalized suggestions")
+            || normalized.hasPrefix("overview generate 0 to 3 hyperpersonalized suggestions")
+            || normalized.hasPrefix("generate 0 to 3 hyperpersonalized suggestions"))
+            && normalized.contains("for what this user can do with codex in this local project")
+    }
+
+    private static func isCodexAmbientSuggestionReviewText(_ normalized: String) -> Bool {
+        normalized.hasPrefix("you are an expert at upholding safety and compliance standards for codex ambient suggestions")
+            && normalized.contains("i will present")
     }
 
     private static func normalizedSuggestionText(_ value: String) -> String {

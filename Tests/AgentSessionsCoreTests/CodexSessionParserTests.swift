@@ -192,6 +192,18 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.event, "user_message")
     }
 
+    func testIgnoresSafetyComplianceAmbientSuggestionUserMessageEvent() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"suggestions","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"user_message","message":"You are an expert at upholding safety and compliance\\nstandards for Codex ambient suggestions. I will present\\n\\n\\nRun a local project suggestion review."}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "")
+        XCTAssertTrue(parsed.isInternalSubagent)
+    }
+
     func testIgnoresBootstrapContextWhenChoosingTemporaryPromptTitle() {
         let text = """
         {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
@@ -215,6 +227,18 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertTrue(parsed.isInternalSubagent)
     }
 
+    func testIgnoresSafetyComplianceAmbientSuggestionPromptWhenChoosingTemporaryPromptTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"suggestions","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"You are an expert at upholding safety and compliance\\nstandards for Codex ambient suggestions. I will present\\n\\n\\nRun a local project suggestion review."}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "")
+        XCTAssertTrue(parsed.isInternalSubagent)
+    }
+
     func testQuotedAmbientSuggestionPromptStillLooksLikeUserSession() {
         let text = """
         {"type":"session_meta","payload":{"id":"debug","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
@@ -226,6 +250,21 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(
             parsed.title,
             "このメッセージも表示された # Overview Generate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in this local project: /tmp/project"
+        )
+        XCTAssertFalse(parsed.isInternalSubagent)
+    }
+
+    func testQuotedSafetyComplianceAmbientSuggestionPromptStillLooksLikeUserSession() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"debug","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"この名前が表示された\\n\\nYou are an expert at upholding safety and compliance\\nstandards for Codex ambient suggestions. I will present"}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(
+            parsed.title,
+            "この名前が表示された You are an expert at upholding safety and compliance standards for Codex ambient suggestions. I will present"
         )
         XCTAssertFalse(parsed.isInternalSubagent)
     }

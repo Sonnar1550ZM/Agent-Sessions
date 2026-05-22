@@ -671,6 +671,29 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(store.sessions, [])
     }
 
+    func testCodexSafetyComplianceSuggestionSessionsAreNotVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "ambient-review",
+            state: .working,
+            title: """
+            You are an expert at upholding safety and compliance
+            standards for Codex ambient suggestions. I will present
+            """,
+            cwd: "/tmp/project",
+            updatedAt: base
+        ))
+
+        XCTAssertEqual(store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(1)), .idle)
+        XCTAssertEqual(store.workingSessionCounts(for: .codex, now: base.addingTimeInterval(1)), AgentWorkingSessionCounts())
+        XCTAssertEqual(store.sessions, [])
+    }
+
     func testTitledCodexSessionMentioningInternalSuggestionPromptStaysVisible() {
         let store = AgentStateStore(persistence: nil)
         let base = Date(timeIntervalSince1970: 1_000)
