@@ -96,6 +96,12 @@ enum ProviderPlacement: String, CaseIterable, Identifiable {
     }
 }
 
+private struct KeyboardShortcutModifierSymbol: Identifiable, Equatable {
+    let id: String
+    let systemName: String
+    let accessibilityLabel: String
+}
+
 private struct PopupToggleKeyboardShortcut: Codable, Equatable {
     let keyCode: UInt32
     let modifierFlagsRawValue: UInt
@@ -163,6 +169,55 @@ private struct PopupToggleKeyboardShortcut: Codable, Equatable {
         return parts.joined(separator: "+")
     }
 
+    var modifierSymbols: [KeyboardShortcutModifierSymbol] {
+        var symbols: [KeyboardShortcutModifierSymbol] = []
+        let modifierFlags = modifierFlags
+        if modifierFlags.contains(.control) {
+            symbols.append(KeyboardShortcutModifierSymbol(
+                id: "control",
+                systemName: "control",
+                accessibilityLabel: "Control"
+            ))
+        }
+        if modifierFlags.contains(.option) {
+            symbols.append(KeyboardShortcutModifierSymbol(
+                id: "option",
+                systemName: "option",
+                accessibilityLabel: "Option"
+            ))
+        }
+        if modifierFlags.contains(.shift) {
+            symbols.append(KeyboardShortcutModifierSymbol(
+                id: "shift",
+                systemName: "shift",
+                accessibilityLabel: "Shift"
+            ))
+        }
+        if modifierFlags.contains(.command) {
+            symbols.append(KeyboardShortcutModifierSymbol(
+                id: "command",
+                systemName: "command",
+                accessibilityLabel: "Command"
+            ))
+        }
+        return symbols
+    }
+
+    var menuKeyEquivalentModifierMask: NSEvent.ModifierFlags {
+        modifierFlags
+    }
+
+    var menuKeyEquivalent: String? {
+        if let keyEquivalent = Self.menuKeyEquivalents[UInt32(keyCode)] {
+            return keyEquivalent
+        }
+
+        guard keyDisplay.count == 1 else {
+            return nil
+        }
+        return keyDisplay.lowercased()
+    }
+
     static func supportedModifierFlags(from flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
         let supportedFlags: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
         return flags.intersection(supportedFlags)
@@ -207,6 +262,34 @@ private struct PopupToggleKeyboardShortcut: Codable, Equatable {
         UInt32(kVK_F10): "F10",
         UInt32(kVK_F11): "F11",
         UInt32(kVK_F12): "F12"
+    ]
+
+    private static let menuKeyEquivalents: [UInt32: String] = [
+        UInt32(kVK_Return): "\r",
+        UInt32(kVK_Tab): "\t",
+        UInt32(kVK_Space): " ",
+        UInt32(kVK_Delete): "\u{8}",
+        UInt32(kVK_ForwardDelete): "\u{F728}",
+        UInt32(kVK_Home): "\u{F729}",
+        UInt32(kVK_End): "\u{F72B}",
+        UInt32(kVK_PageUp): "\u{F72C}",
+        UInt32(kVK_PageDown): "\u{F72D}",
+        UInt32(kVK_LeftArrow): "\u{F702}",
+        UInt32(kVK_RightArrow): "\u{F703}",
+        UInt32(kVK_DownArrow): "\u{F701}",
+        UInt32(kVK_UpArrow): "\u{F700}",
+        UInt32(kVK_F1): "\u{F704}",
+        UInt32(kVK_F2): "\u{F705}",
+        UInt32(kVK_F3): "\u{F706}",
+        UInt32(kVK_F4): "\u{F707}",
+        UInt32(kVK_F5): "\u{F708}",
+        UInt32(kVK_F6): "\u{F709}",
+        UInt32(kVK_F7): "\u{F70A}",
+        UInt32(kVK_F8): "\u{F70B}",
+        UInt32(kVK_F9): "\u{F70C}",
+        UInt32(kVK_F10): "\u{F70D}",
+        UInt32(kVK_F11): "\u{F70E}",
+        UInt32(kVK_F12): "\u{F70F}"
     ]
 }
 
@@ -2831,7 +2914,18 @@ private struct SettingsKeyboardShortcutRow: View {
                 Button {
                     toggleRecording()
                 } label: {
-                    Label(buttonTitle, systemImage: "keyboard")
+                    HStack(spacing: 6) {
+                        Image(systemName: "keyboard")
+
+                        if isRecording {
+                            Text("Press shortcut")
+                        } else if let shortcut {
+                            KeyboardShortcutDisplay(shortcut: shortcut)
+                        } else {
+                            Text("None")
+                        }
+                    }
+                    .lineLimit(1)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
@@ -2854,14 +2948,6 @@ private struct SettingsKeyboardShortcutRow: View {
         .onDisappear {
             stopRecording()
         }
-    }
-
-    private var buttonTitle: String {
-        if isRecording {
-            return "Press shortcut"
-        }
-
-        return shortcut?.displayText ?? "None"
     }
 
     private func toggleRecording() {
@@ -2910,6 +2996,26 @@ private struct SettingsKeyboardShortcutRow: View {
 
         setShortcut(shortcut)
         stopRecording()
+    }
+}
+
+private struct KeyboardShortcutDisplay: View {
+    let shortcut: PopupToggleKeyboardShortcut
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(shortcut.modifierSymbols) { symbol in
+                Image(systemName: symbol.systemName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .accessibilityLabel(symbol.accessibilityLabel)
+            }
+
+            Text(shortcut.keyDisplay)
+                .font(.system(size: 13, weight: .medium))
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(shortcut.displayText)
     }
 }
 
@@ -3556,9 +3662,12 @@ final class AppController: ObservableObject {
     private var claudeSubagentWatcher: ClaudeSubagentWatcher?
     private var claudeMainInterruptWatcher: ClaudeMainSessionInterruptWatcher?
     private var maintenanceTimer: Timer?
+    private var serverRetryWorkItem: DispatchWorkItem?
+    private var serverGeneration = 0
     private let eventEnrichmentQueue = DispatchQueue(label: "app.agentsessions.event-enrichment", qos: .utility)
     private var claudeResponseRefreshWorkItems: [String: [DispatchWorkItem]] = [:]
     private var cancellables: Set<AnyCancellable> = []
+    private static let serverRetryDelay: TimeInterval = 5
     private static let claudeResponseRetryDelays: [TimeInterval] = [0.5, 2.0]
     private static let claudeResponseRefreshFreshnessWindow: TimeInterval = 5 * 60
 
@@ -3577,17 +3686,58 @@ final class AppController: ObservableObject {
             return
         }
 
+        serverGeneration += 1
+        let generation = serverGeneration
+
         do {
-            let eventServer = try EventServer(host: "127.0.0.1", port: 7823) { [weak self] event in
-                Task { @MainActor in
-                    self?.applyEvent(event)
+            let eventServer = try EventServer(
+                host: "127.0.0.1",
+                port: 7823,
+                failureHandler: { [weak self] error in
+                    Task { @MainActor in
+                        self?.handleServerFailure(error, generation: generation)
+                    }
+                },
+                handler: { [weak self] event in
+                    Task { @MainActor in
+                        self?.applyEvent(event)
+                    }
                 }
-            }
+            )
             try eventServer.start()
+            serverRetryWorkItem?.cancel()
+            serverRetryWorkItem = nil
             server = eventServer
         } catch {
             NSLog("Agent Sessions server failed: \(error.localizedDescription)")
+            scheduleServerRetry()
         }
+    }
+
+    private func handleServerFailure(_ error: Error, generation: Int) {
+        guard generation == serverGeneration else {
+            return
+        }
+
+        NSLog("Agent Sessions server failed: \(error.localizedDescription)")
+        server?.stop()
+        server = nil
+        scheduleServerRetry()
+    }
+
+    private func scheduleServerRetry() {
+        guard serverRetryWorkItem == nil else {
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.serverRetryWorkItem = nil
+                self?.startServer()
+            }
+        }
+        serverRetryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.serverRetryDelay, execute: workItem)
     }
 
     func reload() {
@@ -4178,7 +4328,6 @@ final class SessionPopupController {
     private func observeChanges() {
         controller.store.$sessions
             .receive(on: DispatchQueue.main)
-            .throttle(for: .milliseconds(500), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] _ in
                 self?.updatePopup()
             }
@@ -5152,23 +5301,27 @@ private struct PopupSessionRow: View {
     private var titleCluster: some View {
         HStack(alignment: .top, spacing: metrics.titleSpacing) {
             providerIcon
-
-            PopupAlignedText(
-                text: titleText,
-                fontSize: metrics.titleFontSize,
-                fontWeight: .semibold,
-                textOpacity: metrics.textOpacity,
-                lineLimit: 2,
-                alignsTrailing: alignsTextTrailing
-            )
-                .popupTextShadow(metrics)
-                .layoutPriority(1)
-                .padding(.horizontal, metrics.titleHorizontalPadding)
-                .padding(.vertical, metrics.titleVerticalPadding)
-                .frame(width: titleColumnWidth, alignment: alignsTextTrailing ? .trailing : .leading)
-                .frame(maxWidth: alignsTextTrailing ? nil : .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
+            titleTextView
         }
         .frame(maxWidth: alignsTextTrailing ? nil : .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
+    }
+
+    private var titleTextView: some View {
+        PopupAlignedText(
+            text: titleText,
+            fontSize: metrics.titleFontSize,
+            fontWeight: .semibold,
+            textOpacity: metrics.textOpacity,
+            lineLimit: 2,
+            alignsTrailing: alignsTextTrailing
+        )
+            .popupTextShadow(metrics)
+            .layoutPriority(1)
+            .padding(.leading, metrics.titleHorizontalPadding)
+            .padding(.trailing, alignsTextTrailing ? 0 : metrics.titleHorizontalPadding)
+            .padding(.vertical, metrics.titleVerticalPadding)
+            .frame(width: titleColumnWidth, alignment: alignsTextTrailing ? .trailing : .leading)
+            .frame(maxWidth: alignsTextTrailing ? nil : .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
     }
 
     @ViewBuilder
@@ -5203,8 +5356,13 @@ private struct PopupSessionRow: View {
     private var measuredTitleColumnWidth: CGFloat {
         let font = NSFont.systemFont(ofSize: metrics.titleFontSize, weight: .semibold)
         let attributes: [NSAttributedString.Key: Any] = [.font: font]
-        let measuredWidth = (titleText as NSString).size(withAttributes: attributes).width
-        return max(ceil(measuredWidth) + (2 * metrics.titleHorizontalPadding), 1)
+        let textWidthLimit = max(titleColumnMaxWidth - metrics.titleHorizontalPadding, 1)
+        let measuredWidth = (titleText as NSString).boundingRect(
+            with: NSSize(width: textWidthLimit, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        ).width
+        return max(ceil(min(measuredWidth, textWidthLimit)) + metrics.titleHorizontalPadding, 1)
     }
 
     private var titleColumnMaxWidth: CGFloat {
@@ -5981,6 +6139,7 @@ private final class DropdownMenuRefreshClock: ObservableObject {
 final class StatusMenuController: NSObject, NSMenuDelegate {
     private let controller: AppController
     private let providerVisibility = ProviderVisibilityStore.shared
+    private let keyboardShortcuts = KeyboardShortcutStore.shared
     private let menuRefreshClock = DropdownMenuRefreshClock(interval: 1)
     private let menu = NSMenu()
     private var statusItems: [AgentKind: NSStatusItem] = [:]
@@ -6133,6 +6292,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .store(in: &cancellables)
 
         providerVisibility.$popupWindowPosition
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.setNeedsMenuRebuild()
+            }
+            .store(in: &cancellables)
+
+        keyboardShortcuts.$popupToggleShortcut
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.setNeedsMenuRebuild()
@@ -6506,7 +6672,20 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let item = actionItem(title: "Popup", action: #selector(togglePopup))
         item.image = menuSymbol(named: "bubble.left", accessibilityDescription: "Popup")
         item.state = providerVisibility.popupEnabled ? .on : .off
+        applyPopupToggleShortcut(to: item)
         return item
+    }
+
+    private func applyPopupToggleShortcut(to item: NSMenuItem) {
+        guard let shortcut = keyboardShortcuts.popupToggleShortcut,
+              let keyEquivalent = shortcut.menuKeyEquivalent else {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = []
+            return
+        }
+
+        item.keyEquivalent = keyEquivalent
+        item.keyEquivalentModifierMask = shortcut.menuKeyEquivalentModifierMask
     }
 
     private func popupPositionMenuItem() -> NSMenuItem {

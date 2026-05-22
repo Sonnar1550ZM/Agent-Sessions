@@ -36,6 +36,7 @@ final class IncrementalSessionWatcher<Parsed> {
     private let handler: (AgentEvent) -> Void
     private var timer: DispatchSourceTimer?
     private var activityMonitor: FileSystemActivityMonitor?
+    private var isActivityMonitorRunning = false
     private var pendingChangePoll: DispatchWorkItem?
     private var pendingChangedPaths: Set<String> = []
     private var pendingFullPoll = false
@@ -44,6 +45,8 @@ final class IncrementalSessionWatcher<Parsed> {
     private var fileTrackers: [String: FileTracker] = [:]
     private static var changePollDelay: TimeInterval { 0.02 }
     private static var minimumChangePollInterval: TimeInterval { 0.05 }
+    private static var activityMonitorUnavailablePollInterval: TimeInterval { 5 }
+    private static var activityMonitorUnavailablePollLeeway: DispatchTimeInterval { .seconds(1) }
 
     init(adapter: Adapter, handler: @escaping (AgentEvent) -> Void) {
         self.adapter = adapter
@@ -52,24 +55,16 @@ final class IncrementalSessionWatcher<Parsed> {
     }
 
     func start() {
+        guard timer == nil else { return }
+
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(
-            deadline: .now(),
-            repeating: adapter.fallbackPollInterval,
-            leeway: adapter.fallbackPollLeeway
-        )
         timer.setEventHandler { [weak self] in
             self?.poll()
         }
         self.timer = timer
-        activityMonitor = FileSystemActivityMonitor(
-            paths: [adapter.watchRoot()],
-            latency: Self.changePollDelay,
-            queue: queue
-        ) { [weak self] paths in
-            self?.scheduleChangedPathPoll(paths)
-        }
-        activityMonitor?.start()
+        createActivityMonitorIfNeeded()
+        isActivityMonitorRunning = activityMonitor?.start() ?? false
+        scheduleFallbackTimer(deadline: .now())
         timer.resume()
     }
 
@@ -78,6 +73,7 @@ final class IncrementalSessionWatcher<Parsed> {
         timer = nil
         activityMonitor?.stop()
         activityMonitor = nil
+        isActivityMonitorRunning = false
         pendingChangePoll?.cancel()
         pendingChangePoll = nil
         pendingChangedPaths.removeAll()
@@ -85,6 +81,7 @@ final class IncrementalSessionWatcher<Parsed> {
     }
 
     private func poll() {
+        retryActivityMonitorIfNeeded()
         lastPollDate = Date()
         var activePaths: Set<String> = []
         for file in adapter.latestFiles(50) {
@@ -92,6 +89,46 @@ final class IncrementalSessionWatcher<Parsed> {
             ingest(file)
         }
         fileTrackers = fileTrackers.filter { activePaths.contains($0.key) }
+    }
+
+    private func createActivityMonitorIfNeeded() {
+        guard activityMonitor == nil else { return }
+
+        activityMonitor = FileSystemActivityMonitor(
+            paths: [adapter.watchRoot()],
+            latency: Self.changePollDelay,
+            queue: queue
+        ) { [weak self] paths in
+            self?.scheduleChangedPathPoll(paths)
+        }
+    }
+
+    private func retryActivityMonitorIfNeeded() {
+        guard !isActivityMonitorRunning else { return }
+
+        createActivityMonitorIfNeeded()
+        guard activityMonitor?.start() == true else { return }
+
+        isActivityMonitorRunning = true
+        scheduleFallbackTimer(deadline: .now() + adapter.fallbackPollInterval)
+    }
+
+    private func scheduleFallbackTimer(deadline: DispatchTime) {
+        guard let timer else { return }
+
+        if isActivityMonitorRunning {
+            timer.schedule(
+                deadline: deadline,
+                repeating: adapter.fallbackPollInterval,
+                leeway: adapter.fallbackPollLeeway
+            )
+        } else {
+            timer.schedule(
+                deadline: deadline,
+                repeating: min(adapter.fallbackPollInterval, Self.activityMonitorUnavailablePollInterval),
+                leeway: Self.activityMonitorUnavailablePollLeeway
+            )
+        }
     }
 
     private func scheduleChangedPathPoll(_ paths: [String]) {

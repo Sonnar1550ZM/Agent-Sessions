@@ -14,14 +14,21 @@ public enum EventServerError: Error, LocalizedError {
 
 public final class EventServer: @unchecked Sendable {
     public typealias Handler = @Sendable (AgentEvent) -> Void
+    public typealias FailureHandler = @Sendable (Error) -> Void
 
     private let host: NWEndpoint.Host
     private let port: NWEndpoint.Port
     private let queue = DispatchQueue(label: "app.agentsessions.event-server")
     private let handler: Handler
+    private let failureHandler: FailureHandler?
     private var listener: NWListener?
 
-    public init(host: String = "127.0.0.1", port: UInt16 = 7823, handler: @escaping Handler) throws {
+    public init(
+        host: String = "127.0.0.1",
+        port: UInt16 = 7823,
+        failureHandler: FailureHandler? = nil,
+        handler: @escaping Handler
+    ) throws {
         guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
             throw EventServerError.invalidPort(port)
         }
@@ -31,6 +38,7 @@ public final class EventServer: @unchecked Sendable {
             self.host = NWEndpoint.Host(host)
         }
         self.port = endpointPort
+        self.failureHandler = failureHandler
         self.handler = handler
     }
 
@@ -41,9 +49,9 @@ public final class EventServer: @unchecked Sendable {
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }
-        listener.stateUpdateHandler = { state in
-            if case .failed = state {
-                // NWListener cannot recover after failed; the app can be relaunched.
+        listener.stateUpdateHandler = { [weak self] state in
+            if case .failed(let error) = state {
+                self?.handleListenerFailed(error)
             }
         }
         self.listener = listener
@@ -53,6 +61,12 @@ public final class EventServer: @unchecked Sendable {
     public func stop() {
         listener?.cancel()
         listener = nil
+    }
+
+    private func handleListenerFailed(_ error: NWError) {
+        listener?.cancel()
+        listener = nil
+        failureHandler?(error)
     }
 
     private func accept(_ connection: NWConnection) {
