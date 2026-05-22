@@ -1,5 +1,63 @@
 import Foundation
 
+public enum AgentSessionTitleSanitizer {
+    public static func normalized(_ value: String, limit: Int = 160) -> String {
+        let collapsed = value
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let title = removingCJKSeparatorSpaces(from: collapsed)
+        guard title.count > limit else {
+            return title
+        }
+        return String(title.prefix(limit))
+    }
+
+    public static func optional(_ value: String?, limit: Int = 160) -> String? {
+        guard let value else {
+            return nil
+        }
+        let title = normalized(value, limit: limit)
+        return title.isEmpty ? nil : title
+    }
+
+    private static func removingCJKSeparatorSpaces(from value: String) -> String {
+        guard value.contains(" ") else {
+            return value
+        }
+
+        let characters = Array(value)
+        guard characters.count >= 3 else {
+            return value
+        }
+
+        var result = ""
+        for index in characters.indices {
+            let character = characters[index]
+            if character == " ",
+               index > characters.startIndex,
+               index < characters.index(before: characters.endIndex),
+               isCJKTitleCharacter(characters[characters.index(before: index)]),
+               isCJKTitleCharacter(characters[characters.index(after: index)]) {
+                continue
+            }
+            result.append(character)
+        }
+        return result
+    }
+
+    private static func isCJKTitleCharacter(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3000...0x30FF, 0x3400...0x9FFF, 0xF900...0xFAFF:
+                true
+            default:
+                false
+            }
+        }
+    }
+}
+
 public enum AgentKind: String, Codable, CaseIterable, Sendable {
     case codex
     case claudeCode
@@ -100,10 +158,9 @@ public enum AgentSessionVisibility {
             return true
         }
 
-        return normalized.hasPrefix("gmail\u{306e}\u{76f4}\u{8fd1}5\u{65e5}\u{306e}\u{53d7}\u{4fe1}\u{30e1}\u{30fc}\u{30eb}")
-            && normalized.contains("\u{3053}\u{306e}\u{30e6}\u{30fc}\u{30b6}\u{30fc}\u{672c}\u{4eba}\u{304c}\u{4eca}\u{5bfe}\u{5fdc}\u{3059}\u{3079}\u{304d}\u{5f37}\u{3044}\u{30b7}\u{30b0}\u{30ca}\u{30eb}")
-            && normalized.contains("0-5")
-            && normalized.contains("\u{62bd}\u{51fa}")
+        return isCodexGmailSuggestionText(normalized)
+            || isCodexGoogleCalendarSuggestionText(normalized)
+            || isCodexRepositorySuggestionText(normalized)
     }
 
     private static func isCodexInternalSuggestionText(_ value: String?) -> Bool {
@@ -115,6 +172,9 @@ public enum AgentSessionVisibility {
 
         return isCodexProjectSuggestionText(normalized)
             || isCodexAmbientSuggestionReviewText(normalized)
+            || isCodexGmailSuggestionText(normalized)
+            || isCodexGoogleCalendarSuggestionText(normalized)
+            || isCodexRepositorySuggestionText(normalized)
     }
 
     private static func isCodexPlaceholderTitle(_ value: String) -> Bool {
@@ -131,6 +191,49 @@ public enum AgentSessionVisibility {
     private static func isCodexAmbientSuggestionReviewText(_ normalized: String) -> Bool {
         normalized.hasPrefix("you are an expert at upholding safety and compliance standards for codex ambient suggestions")
             && normalized.contains("i will present")
+    }
+
+    private static func isCodexGmailSuggestionText(_ normalized: String) -> Bool {
+        if normalized.hasPrefix("gmail\u{306e}\u{76f4}\u{8fd1}5\u{65e5}\u{306e}\u{53d7}\u{4fe1}\u{30e1}\u{30fc}\u{30eb}") {
+            return normalized.contains("\u{3053}\u{306e}\u{30e6}\u{30fc}\u{30b6}\u{30fc}\u{672c}\u{4eba}\u{304c}\u{4eca}\u{5bfe}\u{5fdc}\u{3059}\u{3079}\u{304d}\u{5f37}\u{3044}\u{30b7}\u{30b0}\u{30ca}\u{30eb}")
+                && normalized.contains("0-5")
+                && normalized.contains("\u{62bd}\u{51fa}")
+        }
+
+        return normalized.hasPrefix("gmail \u{306b}\u{6765}\u{3066}\u{3044}\u{305f} ")
+            && normalized.contains("\u{524d}\u{63d0}\u{306b}")
+    }
+
+    private static func isCodexGoogleCalendarSuggestionText(_ normalized: String) -> Bool {
+        let hasCalendarPrefix = normalized.hasPrefix("google calendar ")
+            || normalized.hasPrefix("gcal ")
+            || normalized.hasPrefix("\u{30ab}\u{30ec}\u{30f3}\u{30c0}\u{30fc}")
+        guard hasCalendarPrefix else {
+            return false
+        }
+
+        return normalized.contains("\u{4e88}\u{5b9a}")
+            || normalized.contains("\u{4f1a}\u{8b70}")
+            || normalized.contains("\u{30a4}\u{30d9}\u{30f3}\u{30c8}")
+            || normalized.contains("\u{8981}\u{7d04}")
+            || normalized.contains("\u{78ba}\u{8a8d}")
+    }
+
+    private static func isCodexRepositorySuggestionText(_ normalized: String) -> Bool {
+        let hasRepositoryPrefix = normalized.hasPrefix("\u{3053}\u{306e}\u{30ea}\u{30dd}\u{30b8}\u{30c8}\u{30ea}\u{3067}\u{3001}")
+            || normalized.hasPrefix("\u{3053}\u{306e} repo ")
+            || normalized.hasPrefix("\u{3053}\u{306e} project ")
+        guard hasRepositoryPrefix else {
+            return false
+        }
+
+        return normalized.contains("codex")
+            || normalized.contains("agent sessions")
+            || normalized.contains("\u{672a}\u{30b3}\u{30df}\u{30c3}\u{30c8}")
+            || normalized.contains("\u{56de}\u{5e30}\u{30c6}\u{30b9}\u{30c8}")
+            || normalized.contains("\u{5b9f}\u{88c5}")
+            || normalized.contains("\u{8abf}\u{67fb}")
+            || normalized.contains("\u{78ba}\u{8a8d}")
     }
 
     private static func normalizedSuggestionText(_ value: String) -> String {
@@ -417,7 +520,7 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
         self.agent = agent
         self.sessionId = sessionId
         self.state = state
-        self.title = title
+        self.title = AgentSessionTitleSanitizer.normalized(title)
         self.cwd = cwd
         self.event = event
         self.terminal = terminal
@@ -435,8 +538,9 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var displayTitle: String {
-        if !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return title
+        let explicitTitle = AgentSessionTitleSanitizer.normalized(title)
+        if !explicitTitle.isEmpty {
+            return explicitTitle
         }
 
         if isSubagent,
@@ -457,7 +561,7 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var subagentDisplayLabel: String {
-        let explicitTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explicitTitle = AgentSessionTitleSanitizer.normalized(title)
         let role = Self.formattedSubagentRole(subagentRole)
         let name = subagentNickname?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var parts: [String] = []
@@ -492,7 +596,7 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var subagentSessionTitle: String {
-        let explicitTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explicitTitle = AgentSessionTitleSanitizer.normalized(title)
         if !explicitTitle.isEmpty {
             return explicitTitle
         }
@@ -627,7 +731,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         self.agent = agent
         self.sessionId = sessionId
         self.state = state
-        self.title = title
+        self.title = AgentSessionTitleSanitizer.normalized(title)
         self.cwd = cwd
         self.event = event
         self.terminal = terminal
@@ -668,7 +772,9 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         }
         sessionId = normalizedSessionId
         state = AgentState(label: rawState)
-        title = (try container.decodeIfPresent(String.self, forKey: .title) ?? "").trimmed(limit: 160)
+        title = AgentSessionTitleSanitizer.normalized(
+            try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        )
         cwd = (try container.decodeIfPresent(String.self, forKey: .cwd) ?? "").trimmed(limit: 512)
         event = (try container.decodeIfPresent(String.self, forKey: .event) ?? "").trimmed(limit: 80)
         terminal = (try container.decodeIfPresent(String.self, forKey: .terminal) ?? "").trimmed(limit: 80)

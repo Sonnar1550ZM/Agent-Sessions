@@ -16,6 +16,17 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(sessions[0].title, "Second")
     }
 
+    func testApplyNormalizesSessionTitleWhitespace() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let store = AgentStateStore(persistence: nil, clock: { now })
+
+        store.apply(AgentEvent(agent: .codex, sessionId: "a", state: .working, title: "  修正 セッション名先頭空白  "))
+
+        let session = store.visibleSessions(for: .codex, now: now).first
+        XCTAssertEqual(session?.title, "修正セッション名先頭空白")
+        XCTAssertEqual(session?.displayTitle, "修正セッション名先頭空白")
+    }
+
     func testDifferentSessionsCreateSeparateRows() {
         let now = Date(timeIntervalSince1970: 1_000)
         let store = AgentStateStore(persistence: nil, clock: { now })
@@ -660,6 +671,46 @@ final class AgentStateStoreTests: XCTestCase {
             sessionId: "gmail-suggestions",
             state: .working,
             title: "Gmailの直近５日の受信メールから、このユーザー本人が今対応すべき強いシグナルを 0-5 件抽出してください。",
+            cwd: "/tmp/project",
+            updatedAt: base
+        ))
+
+        XCTAssertEqual(store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(1)), .idle)
+        XCTAssertEqual(store.workingSessionCounts(for: .codex, now: base.addingTimeInterval(1)), AgentWorkingSessionCounts())
+        XCTAssertEqual(store.sessions, [])
+    }
+
+    func testCodexRepositorySuggestionSessionsAreNotVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "repo-suggestions",
+            state: .working,
+            title: "このリポジトリで、未コミットの popup/menu bar 設定変更に対する回帰テストを追加して。",
+            cwd: "/tmp/project",
+            updatedAt: base
+        ))
+
+        XCTAssertEqual(store.visibleSessions(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.displayRows(for: .codex, now: base.addingTimeInterval(1)), [])
+        XCTAssertEqual(store.aggregateState(for: .codex, now: base.addingTimeInterval(1)), .idle)
+        XCTAssertEqual(store.workingSessionCounts(for: .codex, now: base.addingTimeInterval(1)), AgentWorkingSessionCounts())
+        XCTAssertEqual(store.sessions, [])
+    }
+
+    func testCodexGoogleCalendarSuggestionSessionsAreNotVisible() {
+        let store = AgentStateStore(persistence: nil)
+        let base = Date(timeIntervalSince1970: 1_000)
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "calendar-suggestions",
+            state: .working,
+            title: "Google Calendar の今週の予定を確認して、会議前に準備すべき点を要約してください。",
             cwd: "/tmp/project",
             updatedAt: base
         ))

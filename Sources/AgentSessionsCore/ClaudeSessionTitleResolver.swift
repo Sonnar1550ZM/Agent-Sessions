@@ -336,14 +336,7 @@ public enum ClaudeSessionTitleResolver {
     }
 
     private static func sanitizedTitle(_ value: String) -> String? {
-        let title = value
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        guard !title.isEmpty else {
-            return nil
-        }
-        return String(title.prefix(160))
+        AgentSessionTitleSanitizer.optional(value)
     }
 
     private static func timestampScore(from object: [String: Any]) -> Double? {

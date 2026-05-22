@@ -157,6 +157,26 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.title, "Fix menu bar layout spacing")
     }
 
+    func testNormalizesJapaneseThreadNameSeparatorWhitespace() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode","thread_name":"  修正 セッション名先頭空白  "}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "修正セッション名先頭空白")
+    }
+
+    func testKeepsSeparatorWhitespaceBeforeLatinTitleText() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode","thread_name":"修正 popup表示"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "修正 popup表示")
+    }
+
     func testUsesUserPromptAsTemporaryTitleWhenThreadNameIsMissing() {
         let text = """
         {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
@@ -231,6 +251,30 @@ final class CodexSessionParserTests: XCTestCase {
         let text = """
         {"type":"session_meta","payload":{"id":"suggestions","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
         {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"You are an expert at upholding safety and compliance\\nstandards for Codex ambient suggestions. I will present\\n\\n\\nRun a local project suggestion review."}]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "")
+        XCTAssertTrue(parsed.isInternalSubagent)
+    }
+
+    func testIgnoresJapaneseRepositorySuggestionUserMessageEvent() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"suggestions","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"user_message","message":"このリポジトリで、未コミットの popup/menu bar 設定変更に対する回帰テストを追加して。対象は menuBarEnabled と popupOffsetX/Y。"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "")
+        XCTAssertTrue(parsed.isInternalSubagent)
+    }
+
+    func testIgnoresGoogleCalendarSuggestionPromptWhenChoosingTemporaryPromptTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"suggestions","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Google Calendar の今週の予定を確認して、会議前に準備すべき点を要約してください。"}]}}
         """
 
         let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
