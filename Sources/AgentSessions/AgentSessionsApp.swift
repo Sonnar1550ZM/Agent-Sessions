@@ -1,5 +1,6 @@
 import AgentSessionsCore
 import AppKit
+import Carbon
 import Combine
 import CoreText
 import QuartzCore
@@ -91,6 +92,282 @@ enum ProviderPlacement: String, CaseIterable, Identifiable {
             "menubar.rectangle"
         case .dropdownMenu:
             "list.bullet.rectangle"
+        }
+    }
+}
+
+private struct PopupToggleKeyboardShortcut: Codable, Equatable {
+    let keyCode: UInt32
+    let modifierFlagsRawValue: UInt
+    let keyDisplay: String
+
+    init?(event: NSEvent) {
+        let keyCode = UInt32(event.keyCode)
+        guard keyCode != UInt32(kVK_Escape) else {
+            return nil
+        }
+
+        let modifierFlags = Self.supportedModifierFlags(from: event.modifierFlags)
+        guard !modifierFlags.isEmpty else {
+            return nil
+        }
+
+        let keyDisplay = Self.displayKey(for: event)
+        guard !keyDisplay.isEmpty else {
+            return nil
+        }
+
+        self.keyCode = keyCode
+        self.modifierFlagsRawValue = modifierFlags.rawValue
+        self.keyDisplay = keyDisplay
+    }
+
+    var modifierFlags: NSEvent.ModifierFlags {
+        NSEvent.ModifierFlags(rawValue: modifierFlagsRawValue)
+    }
+
+    var carbonModifierFlags: UInt32 {
+        var flags: UInt32 = 0
+        let modifierFlags = modifierFlags
+        if modifierFlags.contains(.command) {
+            flags |= UInt32(cmdKey)
+        }
+        if modifierFlags.contains(.option) {
+            flags |= UInt32(optionKey)
+        }
+        if modifierFlags.contains(.control) {
+            flags |= UInt32(controlKey)
+        }
+        if modifierFlags.contains(.shift) {
+            flags |= UInt32(shiftKey)
+        }
+        return flags
+    }
+
+    var displayText: String {
+        var parts: [String] = []
+        let modifierFlags = modifierFlags
+        if modifierFlags.contains(.control) {
+            parts.append("Ctrl")
+        }
+        if modifierFlags.contains(.option) {
+            parts.append("Opt")
+        }
+        if modifierFlags.contains(.shift) {
+            parts.append("Shift")
+        }
+        if modifierFlags.contains(.command) {
+            parts.append("Cmd")
+        }
+        parts.append(keyDisplay)
+        return parts.joined(separator: "+")
+    }
+
+    static func supportedModifierFlags(from flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
+        let supportedFlags: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+        return flags.intersection(supportedFlags)
+    }
+
+    private static func displayKey(for event: NSEvent) -> String {
+        if let key = specialKeyNames[UInt32(event.keyCode)] {
+            return key
+        }
+
+        guard let characters = event.charactersIgnoringModifiers?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !characters.isEmpty else {
+            return ""
+        }
+
+        return characters.uppercased()
+    }
+
+    private static let specialKeyNames: [UInt32: String] = [
+        UInt32(kVK_Return): "Return",
+        UInt32(kVK_Tab): "Tab",
+        UInt32(kVK_Space): "Space",
+        UInt32(kVK_Delete): "Delete",
+        UInt32(kVK_ForwardDelete): "Forward Delete",
+        UInt32(kVK_Home): "Home",
+        UInt32(kVK_End): "End",
+        UInt32(kVK_PageUp): "Page Up",
+        UInt32(kVK_PageDown): "Page Down",
+        UInt32(kVK_LeftArrow): "Left",
+        UInt32(kVK_RightArrow): "Right",
+        UInt32(kVK_DownArrow): "Down",
+        UInt32(kVK_UpArrow): "Up",
+        UInt32(kVK_F1): "F1",
+        UInt32(kVK_F2): "F2",
+        UInt32(kVK_F3): "F3",
+        UInt32(kVK_F4): "F4",
+        UInt32(kVK_F5): "F5",
+        UInt32(kVK_F6): "F6",
+        UInt32(kVK_F7): "F7",
+        UInt32(kVK_F8): "F8",
+        UInt32(kVK_F9): "F9",
+        UInt32(kVK_F10): "F10",
+        UInt32(kVK_F11): "F11",
+        UInt32(kVK_F12): "F12"
+    ]
+}
+
+@MainActor
+private final class KeyboardShortcutStore: ObservableObject {
+    static let shared = KeyboardShortcutStore()
+
+    @Published private(set) var popupToggleShortcut: PopupToggleKeyboardShortcut?
+    @Published private(set) var popupToggleStatusText: String
+
+    private let defaults: UserDefaults
+    private let storageKey = "PopupToggleKeyboardShortcut"
+    private var hotKeyRef: EventHotKeyRef?
+    private var eventHandlerRef: EventHandlerRef?
+    private var popupToggleAction: (() -> Void)?
+
+    private static let popupToggleHotKeySignature = fourCharCode("AgSS")
+    private static let popupToggleHotKeyIDValue: UInt32 = 1
+
+    private init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let loadedShortcut: PopupToggleKeyboardShortcut?
+        if let data = defaults.data(forKey: storageKey),
+           let shortcut = try? JSONDecoder().decode(PopupToggleKeyboardShortcut.self, from: data) {
+            loadedShortcut = shortcut
+        } else {
+            loadedShortcut = nil
+        }
+        popupToggleShortcut = loadedShortcut
+        popupToggleStatusText = loadedShortcut == nil
+            ? "No shortcut registered."
+            : "Registered for toggling Popup."
+        installEventHandlerIfNeeded()
+        registerPopupToggleHotKey()
+    }
+
+    func configurePopupToggleAction(_ action: @escaping () -> Void) {
+        popupToggleAction = action
+    }
+
+    func setPopupToggleShortcut(_ shortcut: PopupToggleKeyboardShortcut?) {
+        popupToggleShortcut = shortcut
+        savePopupToggleShortcut()
+        registerPopupToggleHotKey()
+    }
+
+    func clearPopupToggleShortcut() {
+        setPopupToggleShortcut(nil)
+    }
+
+    private func savePopupToggleShortcut() {
+        guard let popupToggleShortcut else {
+            defaults.removeObject(forKey: storageKey)
+            return
+        }
+
+        guard let data = try? JSONEncoder().encode(popupToggleShortcut) else {
+            return
+        }
+        defaults.set(data, forKey: storageKey)
+    }
+
+    private func installEventHandlerIfNeeded() {
+        guard eventHandlerRef == nil else {
+            return
+        }
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let status = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, userData in
+                guard let event, let userData else {
+                    return noErr
+                }
+
+                var hotKeyID = EventHotKeyID()
+                let status = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard status == noErr else {
+                    return status
+                }
+
+                DispatchQueue.main.async {
+                    let store = Unmanaged<KeyboardShortcutStore>.fromOpaque(userData).takeUnretainedValue()
+                    store.handleHotKeyPressed(hotKeyID)
+                }
+                return noErr
+            },
+            1,
+            &eventType,
+            Unmanaged.passUnretained(self).toOpaque(),
+            &eventHandlerRef
+        )
+
+        if status != noErr {
+            popupToggleStatusText = "Shortcut listener unavailable."
+        }
+    }
+
+    private func registerPopupToggleHotKey() {
+        unregisterPopupToggleHotKey()
+
+        guard let popupToggleShortcut else {
+            popupToggleStatusText = "No shortcut registered."
+            return
+        }
+
+        var hotKeyID = EventHotKeyID()
+        hotKeyID.signature = Self.popupToggleHotKeySignature
+        hotKeyID.id = Self.popupToggleHotKeyIDValue
+
+        var hotKeyRef: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            popupToggleShortcut.keyCode,
+            popupToggleShortcut.carbonModifierFlags,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+
+        guard status == noErr else {
+            popupToggleStatusText = "Shortcut unavailable. Choose another."
+            return
+        }
+
+        self.hotKeyRef = hotKeyRef
+        popupToggleStatusText = "Registered for toggling Popup."
+    }
+
+    private func unregisterPopupToggleHotKey() {
+        guard let hotKeyRef else {
+            return
+        }
+
+        UnregisterEventHotKey(hotKeyRef)
+        self.hotKeyRef = nil
+    }
+
+    private func handleHotKeyPressed(_ hotKeyID: EventHotKeyID) {
+        guard hotKeyID.signature == Self.popupToggleHotKeySignature,
+              hotKeyID.id == Self.popupToggleHotKeyIDValue else {
+            return
+        }
+
+        popupToggleAction?()
+    }
+
+    private static func fourCharCode(_ value: String) -> OSType {
+        value.unicodeScalars.prefix(4).reduce(0) { result, scalar in
+            (result << 8) + OSType(scalar.value)
         }
     }
 }
@@ -1678,6 +1955,7 @@ final class LaunchAtLoginStore: ObservableObject {
 
 private struct GeneralSettingsView: View {
     @ObservedObject private var launchAtLogin = LaunchAtLoginStore.shared
+    @ObservedObject private var keyboardShortcuts = KeyboardShortcutStore.shared
 
     var body: some View {
         SettingsForm(title: SettingsSection.general.title) {
@@ -1696,6 +1974,23 @@ private struct GeneralSettingsView: View {
                             launchAtLogin.setEnabled(isEnabled)
                         }
                     )
+                )
+            }
+
+            SettingsGroupBox(
+                title: "Keyboard Shortcuts",
+                subtitle: keyboardShortcuts.popupToggleStatusText
+            ) {
+                SettingsKeyboardShortcutRow(
+                    title: "Toggle Popup",
+                    subtitle: "Global shortcut for switching Popup on or off.",
+                    shortcut: keyboardShortcuts.popupToggleShortcut,
+                    setShortcut: { shortcut in
+                        keyboardShortcuts.setPopupToggleShortcut(shortcut)
+                    },
+                    clearShortcut: {
+                        keyboardShortcuts.clearPopupToggleShortcut()
+                    }
                 )
             }
 
@@ -2160,7 +2455,7 @@ private struct PopupSettingsView: View {
                 Button {
                     providerVisibility.resetPopupPreferences()
                 } label: {
-                    Label("Reset Popup Settings", systemImage: "arrow.counterclockwise")
+                    Label("Reset to default", systemImage: "arrow.counterclockwise")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
@@ -2517,6 +2812,107 @@ private struct SettingsWarningRow: View {
     }
 }
 
+private struct SettingsKeyboardShortcutRow: View {
+    let title: String
+    let subtitle: String
+    let shortcut: PopupToggleKeyboardShortcut?
+    let setShortcut: (PopupToggleKeyboardShortcut) -> Void
+    let clearShortcut: () -> Void
+    @State private var isRecording = false
+    @State private var eventMonitor: Any?
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            SettingsRowLabel(title: title, subtitle: subtitle)
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                Button {
+                    toggleRecording()
+                } label: {
+                    Label(buttonTitle, systemImage: "keyboard")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .help("Record keyboard shortcut")
+
+                Button {
+                    clearShortcut()
+                    stopRecording()
+                } label: {
+                    Image(systemName: "xmark.circle")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.regular)
+                .help("Clear keyboard shortcut")
+                .disabled(shortcut == nil && !isRecording)
+            }
+            .fixedSize()
+        }
+        .padding(.vertical, 5)
+        .onDisappear {
+            stopRecording()
+        }
+    }
+
+    private var buttonTitle: String {
+        if isRecording {
+            return "Press shortcut"
+        }
+
+        return shortcut?.displayText ?? "None"
+    }
+
+    private func toggleRecording() {
+        if isRecording {
+            stopRecording()
+        } else {
+            startRecording()
+        }
+    }
+
+    private func startRecording() {
+        stopRecording()
+        isRecording = true
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handleKeyDown(event)
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+    }
+
+    private func handleKeyDown(_ event: NSEvent) {
+        let modifierFlags = PopupToggleKeyboardShortcut.supportedModifierFlags(from: event.modifierFlags)
+
+        if event.keyCode == UInt16(kVK_Escape) {
+            stopRecording()
+            return
+        }
+
+        if event.keyCode == UInt16(kVK_Delete), modifierFlags.isEmpty {
+            clearShortcut()
+            stopRecording()
+            return
+        }
+
+        guard let shortcut = PopupToggleKeyboardShortcut(event: event) else {
+            NSSound.beep()
+            return
+        }
+
+        setShortcut(shortcut)
+        stopRecording()
+    }
+}
+
 private struct SettingsRowLabel: View {
     let title: String
     let subtitle: String
@@ -2738,6 +3134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.controller = controller
         statusMenuController = StatusMenuController(controller: controller)
         popupController = SessionPopupController(controller: controller)
+        KeyboardShortcutStore.shared.configurePopupToggleAction {
+            Task { @MainActor in
+                let providerVisibility = ProviderVisibilityStore.shared
+                providerVisibility.setPopupEnabled(!providerVisibility.popupEnabled)
+            }
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -2981,6 +3383,16 @@ private enum AgentEventEnricher {
             title: title,
             latestResponseText: latestResponseText
         ) {
+            return true
+        }
+
+        if AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: .codex,
+            title: title,
+            event: event,
+            latestResponseText: latestResponseText
+        ),
+           CodexSessionWatcher.title(for: sessionId) == nil {
             return true
         }
 
@@ -3259,6 +3671,11 @@ final class AppController: ObservableObject {
     private func applyEvent(_ event: AgentEvent) {
         let immediateEvent = event.settingUpdatedAtIfMissing(Date())
 
+        if shouldDropUnresolvedCodexToolEvent(immediateEvent) {
+            removeHiddenSession(immediateEvent)
+            return
+        }
+
         guard !AgentEventEnricher.shouldHideImmediately(immediateEvent) else {
             removeHiddenSession(immediateEvent)
             return
@@ -3267,6 +3684,37 @@ final class AppController: ObservableObject {
         let session = store.apply(immediateEvent)
         scheduleClaudeResponseRefreshes(for: session)
         enrichEventAfterInitialApply(immediateEvent)
+    }
+
+    private func shouldDropUnresolvedCodexToolEvent(_ event: AgentEvent) -> Bool {
+        guard AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: event.agent,
+            title: event.title,
+            event: event.event,
+            latestResponseText: event.latestResponseText
+        ) else {
+            return false
+        }
+
+        guard CodexSessionWatcher.title(for: event.sessionId) == nil else {
+            return false
+        }
+
+        guard let existing = store.sessions.first(where: {
+            $0.agent == event.agent && $0.sessionId == event.sessionId
+        }) else {
+            return true
+        }
+
+        let existingHasTitle = !existing.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let existingHasResponse = existing.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let existingIsUnresolvedToolEvent = AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: existing.agent,
+            title: existing.title,
+            event: existing.event,
+            latestResponseText: existing.latestResponseText
+        )
+        return !existingHasTitle && !existingHasResponse && existingIsUnresolvedToolEvent
     }
 
     private func enrichEventAfterInitialApply(_ event: AgentEvent) {
@@ -3536,6 +3984,16 @@ final class AppController: ObservableObject {
             title: title,
             latestResponseText: latestResponseText
         ) {
+            return true
+        }
+
+        if AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: .codex,
+            title: title,
+            event: event,
+            latestResponseText: latestResponseText
+        ),
+           CodexSessionWatcher.title(for: sessionId) == nil {
             return true
         }
 
@@ -6622,7 +7080,7 @@ private struct SessionMenuRow: View {
             return false
         }
 
-        return session.state == .working || session.event == "SessionStart" || session.event == "JSONLWatch"
+        return session.event == "SessionStart" || session.event == "JSONLWatch"
     }
 
     private var latestResponseText: String? {

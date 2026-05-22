@@ -64,6 +64,28 @@ public enum AgentSessionVisibility {
         return isCodexInternalSuggestionText(latestResponseText)
     }
 
+    public static func isCodexUnresolvedToolEvent(
+        agent: AgentKind,
+        title: String,
+        event: String,
+        latestResponseText: String?
+    ) -> Bool {
+        guard agent == .codex else {
+            return false
+        }
+
+        let normalizedEvent = event.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedEvent == "PreToolUse" || normalizedEvent == "PostToolUse" else {
+            return false
+        }
+
+        guard title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+
+        return latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+    }
+
     private static func isCodexInternalSuggestionTitle(_ value: String) -> Bool {
         let normalized = normalizedSuggestionText(value)
         guard !normalized.isEmpty else {

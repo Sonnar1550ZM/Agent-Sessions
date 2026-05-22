@@ -710,6 +710,36 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(store.sessions, [])
     }
 
+    func testCodexUnresolvedToolEventDetectionRequiresBlankTitleAndResponse() {
+        XCTAssertTrue(AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: .codex,
+            title: "",
+            event: "PreToolUse",
+            latestResponseText: nil
+        ))
+
+        XCTAssertFalse(AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: .codex,
+            title: "Implement fix",
+            event: "PreToolUse",
+            latestResponseText: nil
+        ))
+
+        XCTAssertFalse(AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: .codex,
+            title: "",
+            event: "PreToolUse",
+            latestResponseText: "Working on it"
+        ))
+
+        XCTAssertFalse(AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: .codex,
+            title: "",
+            event: "UserPromptSubmit",
+            latestResponseText: nil
+        ))
+    }
+
     func testOrdinaryMemoriesProjectSessionIsVisible() {
         let store = AgentStateStore(persistence: nil)
         let base = Date(timeIntervalSince1970: 1_000)
