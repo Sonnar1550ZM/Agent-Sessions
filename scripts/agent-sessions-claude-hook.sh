@@ -32,16 +32,85 @@ try:
 except Exception:
     event = {}
 
+hook_event = event.get("hook_event_name") or ""
+
+def first_string(*values):
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+def notification_type(event):
+    candidates = [
+        event.get("notification_type"),
+        event.get("notificationType"),
+        event.get("type"),
+        event.get("name"),
+    ]
+    for key in ("notification", "payload"):
+        value = event.get(key)
+        if isinstance(value, dict):
+            candidates.extend([
+                value.get("notification_type"),
+                value.get("notificationType"),
+                value.get("type"),
+                value.get("name"),
+            ])
+    return first_string(*candidates).lower()
+
+def tool_name(event):
+    candidates = [
+        event.get("tool_name"),
+        event.get("toolName"),
+        event.get("name"),
+    ]
+    for key in ("tool", "tool_use", "toolUse", "payload"):
+        value = event.get(key)
+        if isinstance(value, dict):
+            candidates.extend([
+                value.get("name"),
+                value.get("tool_name"),
+                value.get("toolName"),
+            ])
+    return first_string(*candidates)
+
+def requires_user_input_tool(name):
+    compact = "".join(ch for ch in name.lower() if ch.isalnum())
+    return (
+        "askuserquestion" in compact
+        or "requestuserinput" in compact
+    )
+
+def waits_for_user(event):
+    if hook_event in ("PermissionRequest", "AskUserQuestion"):
+        return True
+    if hook_event == "PreToolUse" and requires_user_input_tool(tool_name(event)):
+        return True
+    if hook_event == "Notification":
+        kind = notification_type(event)
+        return kind in (
+            "permission_prompt",
+            "permission_request",
+            "ask_user_question",
+            "choice_prompt",
+            "choice_dialog",
+            "question_prompt",
+        )
+    return False
+
 state = os.environ.get("STATE") or "Working"
-if state == "Auto":
+if hook_event == "PreCompact":
+    state = "Working"
+elif hook_event == "PostCompact":
+    state = "Idle"
+elif waits_for_user(event):
+    state = "Waiting"
+elif state == "Auto":
     state = "Working"
 elif state == "ToolFail":
     state = "Idle" if event.get("is_interrupt") is True else "Working"
 elif state == "Waiting":
-    message = (event.get("message") or "").lower()
-    state = "Waiting" if "permission" in message or "confirm" in message else "Idle"
-
-hook_event = event.get("hook_event_name") or ""
+    state = "Working"
 
 term_map = {
     "iTerm.app": "iTerm",
@@ -85,6 +154,10 @@ def text_from_value(value):
     return ""
 
 def prompt_title(event):
+    if hook_event == "PreCompact":
+        return "Compacting context"
+    if hook_event == "PostCompact":
+        return "Context compacted"
     if hook_event != "UserPromptSubmit":
         return ""
     for key in ("prompt", "message", "input", "text", "user_prompt", "userPrompt", "content"):

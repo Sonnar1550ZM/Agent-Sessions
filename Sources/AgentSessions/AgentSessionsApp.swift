@@ -3471,6 +3471,10 @@ private enum AgentEventEnricher {
     }
 
     private static func eventWithResolvedTitle(_ event: AgentEvent) -> AgentEvent {
+        guard !AgentCompactionStatus.hasMatchingDisplayTitle(event: event.event, title: event.title) else {
+            return event
+        }
+
         let title = resolvedTitle(for: event)
             ?? (event.agent == .claudeCode ? fallbackTitle(for: event) : event.title)
 
@@ -3501,9 +3505,9 @@ private enum AgentEventEnricher {
     private static func resolvedTitle(for event: AgentEvent) -> String? {
         switch event.agent {
         case .codex:
-            CodexSessionWatcher.title(for: event.sessionId)
+            return CodexSessionWatcher.title(for: event.sessionId)
         case .claudeCode:
-            ClaudeSessionTitleResolver.title(for: event.sessionId, transcriptPath: event.transcriptPath)
+            return ClaudeSessionTitleResolver.title(for: event.sessionId, transcriptPath: event.transcriptPath)
         }
     }
 
@@ -4084,11 +4088,15 @@ final class AppController: ObservableObject {
     }
 
     private func resolvedTitle(for session: AgentSession) -> String? {
+        if AgentCompactionStatus.hasMatchingDisplayTitle(event: session.event, title: session.title) {
+            return session.title
+        }
+
         switch session.agent {
         case .codex:
-            CodexSessionWatcher.title(for: session.sessionId)
+            return CodexSessionWatcher.title(for: session.sessionId)
         case .claudeCode:
-            ClaudeSessionTitleResolver.title(for: session.sessionId, transcriptPath: session.transcriptPath)
+            return ClaudeSessionTitleResolver.title(for: session.sessionId, transcriptPath: session.transcriptPath)
         }
     }
 
@@ -7595,7 +7603,7 @@ enum AgentImages {
         state: AgentState,
         highlightPhase: CGFloat? = nil
     ) -> NSImage {
-        guard state == .working else {
+        guard state == .working || state == .waiting else {
             return menuHeaderIcon(for: agent, color: color)
         }
 

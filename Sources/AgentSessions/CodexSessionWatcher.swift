@@ -159,8 +159,13 @@ final class CodexSessionWatcher {
     ) -> IncrementalSessionWatcher<CodexParsedSession>.Snapshot {
         let age = Date().timeIntervalSince(modifiedAt)
         let state: AgentState = age > 600 ? .idle : parsed.state
-        let title = threadTitle(for: parsed.sessionId)
-            ?? parsed.title
+        let title: String
+        if AgentCompactionStatus.hasMatchingDisplayTitle(event: parsed.event, title: parsed.title) {
+            title = parsed.title
+        } else {
+            title = threadTitle(for: parsed.sessionId)
+                ?? parsed.title
+        }
 
         let event = AgentEvent(
             agent: .codex,

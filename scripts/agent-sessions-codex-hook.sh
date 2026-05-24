@@ -32,10 +32,77 @@ except Exception:
     event = {}
 
 hook_event = event.get("hook_event_name") or ""
-if hook_event in ("UserPromptSubmit", "PreToolUse"):
+
+def first_string(*values):
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+def tool_name(event):
+    candidates = [
+        event.get("tool_name"),
+        event.get("toolName"),
+        event.get("name"),
+    ]
+    for key in ("tool", "tool_use", "toolUse", "payload"):
+        value = event.get(key)
+        if isinstance(value, dict):
+            candidates.extend([
+                value.get("name"),
+                value.get("tool_name"),
+                value.get("toolName"),
+            ])
+    return first_string(*candidates)
+
+def requires_user_input_tool(name):
+    compact = "".join(ch for ch in name.lower() if ch.isalnum())
+    return (
+        "requestuserinput" in compact
+        or "askuserquestion" in compact
+    )
+
+def notification_type(event):
+    candidates = [
+        event.get("notification_type"),
+        event.get("notificationType"),
+        event.get("type"),
+        event.get("name"),
+    ]
+    for key in ("notification", "payload"):
+        value = event.get(key)
+        if isinstance(value, dict):
+            candidates.extend([
+                value.get("notification_type"),
+                value.get("notificationType"),
+                value.get("type"),
+                value.get("name"),
+            ])
+    return first_string(*candidates).lower()
+
+def notification_is_waiting_dialog(event):
+    kind = notification_type(event)
+    return kind in (
+        "permission_prompt",
+        "permission_request",
+        "ask_user_question",
+        "choice_prompt",
+        "choice_dialog",
+        "question_prompt",
+    )
+
+if hook_event == "PreCompact":
     state = "Working"
-elif hook_event == "Notification":
+elif hook_event == "PostCompact":
+    state = "Idle"
+elif hook_event in ("PermissionRequest", "AskUserQuestion"):
     state = "Waiting"
+elif hook_event == "Notification":
+    state = "Waiting" if notification_is_waiting_dialog(event) else "Working"
+elif hook_event == "PreToolUse":
+    state = "Waiting" if requires_user_input_tool(tool_name(event)) else "Working"
+elif hook_event == "UserPromptSubmit":
+    state = "Working"
 elif hook_event in ("SessionEnd",):
     state = "Ended"
 else:
@@ -66,6 +133,10 @@ def sanitized_title(value):
     return title[:160]
 
 def prompt_title(event):
+    if hook_event == "PreCompact":
+        return "Compacting context"
+    if hook_event == "PostCompact":
+        return "Context compacted"
     if hook_event != "UserPromptSubmit":
         return ""
     for key in ("prompt", "message", "input", "text", "user_prompt", "userPrompt"):

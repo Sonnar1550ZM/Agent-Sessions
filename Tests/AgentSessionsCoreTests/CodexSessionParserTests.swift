@@ -135,6 +135,110 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.state, .working)
     }
 
+    func testContextCompactedEventMarksSessionIdleWithStatusTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"task_complete"}}
+        {"type":"event_msg","payload":{"type":"context_compacted"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .idle)
+        XCTAssertEqual(parsed.event, "context_compacted")
+        XCTAssertEqual(parsed.title, "Context compacted")
+    }
+
+    func testCompactedRecordMarksSessionIdleWithStatusTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"task_complete"}}
+        {"type":"compacted","payload":{"message":"","replacement_history":[]}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .idle)
+        XCTAssertEqual(parsed.event, "compacted")
+        XCTAssertEqual(parsed.title, "Context compacted")
+    }
+
+    func testPreCompactHookEventMarksSessionWorkingWithStatusTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"task_complete"}}
+        {"type":"event_msg","payload":{"type":"hook_started","run":{"event_name":"PreCompact"}}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .working)
+        XCTAssertEqual(parsed.event, "PreCompact")
+        XCTAssertEqual(parsed.title, "Compacting context")
+    }
+
+    func testPostCompactStartedEventReturnsSessionToIdleWithStatusTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"hook_started","run":{"event_name":"PreCompact"}}}
+        {"type":"event_msg","payload":{"type":"hook_started","run":{"event_name":"PostCompact"}}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .idle)
+        XCTAssertEqual(parsed.event, "PostCompact")
+        XCTAssertEqual(parsed.title, "Context compacted")
+    }
+
+    func testRequestUserInputFunctionCallWaits() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"call-1","arguments":"{\\"questions\\":[{\\"question\\":\\"実行しますか？\\"}]}"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .waiting)
+        XCTAssertEqual(parsed.event, "request_user_input")
+    }
+
+    func testAskUserQuestionFunctionCallWaits() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"function_call","name":"AskUserQuestion","call_id":"call-1","arguments":"{\\"questions\\":[{\\"question\\":\\"続けますか？\\"}]}"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .waiting)
+        XCTAssertEqual(parsed.event, "request_user_input")
+    }
+
+    func testEscalatedExecCommandFunctionCallWaitsForPermission() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\\"cmd\\":\\"open -a Safari\\",\\"sandbox_permissions\\":\\"require_escalated\\",\\"justification\\":\\"ブラウザを開いてよいですか？\\"}"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .waiting)
+        XCTAssertEqual(parsed.event, "permission_request")
+    }
+
+    func testMcpElicitationFunctionCallDoesNotWait() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"function_call","name":"mcp__server__elicitation","call_id":"call-1","arguments":"{\\"message\\":\\"値を入力してください\\"}"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .working)
+        XCTAssertEqual(parsed.event, "function_call")
+    }
+
     func testParsesGuardianAsInternalSubagent() {
         let text = """
         {"type":"session_meta","payload":{"id":"guardian","cwd":"/tmp/project","thread_source":"subagent","source":{"subagent":{"other":"guardian"}}}}

@@ -61,6 +61,40 @@ def replace_managed_hook(entry: dict, new_command: str, markers: tuple[str, ...]
     entry["hooks"] = kept
 
 
+def remove_managed_event_hooks(hooks: dict, event_name: str, markers: tuple[str, ...]) -> None:
+    entries = hooks.get(event_name)
+    if not isinstance(entries, list):
+        return
+
+    kept_entries = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            kept_entries.append(entry)
+            continue
+
+        event_hooks = entry.get("hooks")
+        if not isinstance(event_hooks, list):
+            kept_entries.append(entry)
+            continue
+
+        kept_hooks = []
+        for hook in event_hooks:
+            command = hook.get("command", "") if isinstance(hook, dict) else ""
+            if any(marker in command for marker in markers):
+                continue
+            kept_hooks.append(hook)
+
+        if kept_hooks:
+            updated_entry = dict(entry)
+            updated_entry["hooks"] = kept_hooks
+            kept_entries.append(updated_entry)
+
+    if kept_entries:
+        hooks[event_name] = kept_entries
+    else:
+        hooks.pop(event_name, None)
+
+
 def ensure_codex_hooks() -> None:
     backup(codex_hooks_path)
     data = load_json(codex_hooks_path)
@@ -69,7 +103,10 @@ def ensure_codex_hooks() -> None:
 
     defaults = {
         "PostToolUse": {},
+        "PostCompact": {},
         "PreToolUse": {},
+        "PreCompact": {},
+        "PermissionRequest": {},
         "SessionStart": {"matcher": "startup|resume"},
         "Stop": {},
         "UserPromptSubmit": {},
@@ -96,6 +133,9 @@ def ensure_claude_hooks() -> None:
     states = {
         "SessionEnd": "Ended",
         "Notification": "Waiting",
+        "PermissionRequest": "Waiting",
+        "PreCompact": "Working",
+        "PostCompact": "Idle",
         "PostToolUseFailure": "ToolFail",
         "SessionStart": "Idle",
         "Stop": "Idle",
@@ -111,6 +151,9 @@ def ensure_claude_hooks() -> None:
         command = f"'{claude_script}' {state} # agent-sessions-claude-hook"
         for entry in entries:
             replace_managed_hook(entry, command, CLAUDE_HOOK_MARKERS)
+
+    for event_name in ("Elicitation",):
+        remove_managed_event_hooks(hooks, event_name, CLAUDE_HOOK_MARKERS)
 
     save_json(claude_settings_path, data)
 

@@ -70,6 +70,7 @@ public enum CodexSessionParser {
         var state: AgentState = .idle
         var title = ""
         var promptTitle = ""
+        var statusTitle: String?
         var cwd = ""
         var event = ""
         var isInternalSubagent = false
@@ -89,7 +90,11 @@ public enum CodexSessionParser {
         init(base: CodexParsedSession) {
             self.sessionId = base.sessionId
             self.state = base.state
-            self.title = base.title
+            if AgentCompactionStatus.hasMatchingDisplayTitle(event: base.event, title: base.title) {
+                self.statusTitle = base.title
+            } else {
+                self.title = base.title
+            }
             self.cwd = base.cwd
             self.event = base.event
             self.isInternalSubagent = base.isInternalSubagent
@@ -104,7 +109,7 @@ public enum CodexSessionParser {
         }
 
         func toSession() -> CodexParsedSession {
-            let sessionTitle = title.isEmpty ? promptTitle : title
+            let sessionTitle = statusTitle ?? (title.isEmpty ? promptTitle : title)
             let isInternalSuggestion = AgentSessionVisibility.isCodexInternalSuggestion(
                 agent: .codex,
                 title: sessionTitle,
@@ -188,6 +193,12 @@ public enum CodexSessionParser {
                 parserState.cwd = contextCwd
             }
 
+            if type == "compacted" {
+                parserState.event = "compacted"
+                parserState.state = .idle
+                parserState.statusTitle = AgentCompactionStatus.compactedTitle
+            }
+
             if type == "response_item" {
                 let itemType = payload["type"] as? String ?? ""
                 if itemType == "message", let role = payload["role"] as? String, role == "user" {
@@ -203,6 +214,7 @@ public enum CodexSessionParser {
                     case nil:
                         parserState.turnInterrupted = false
                         parserState.interruptedTurnId = nil
+                        parserState.statusTitle = nil
                         parserState.state = .working
                         parserState.event = "user_message"
                         if containsInternalSuggestionUserPrompt(payload) {
@@ -220,10 +232,17 @@ public enum CodexSessionParser {
                 if parserState.turnInterrupted && isWorkingResponseItem(itemType) {
                     continue
                 }
+                if let waitingEvent = waitingEventForResponseItem(itemType: itemType, payload: payload) {
+                    parserState.statusTitle = nil
+                    parserState.event = waitingEvent
+                    parserState.state = .waiting
+                    continue
+                }
                 if !itemType.isEmpty {
                     parserState.event = itemType
                 }
                 if isWorkingResponseItem(itemType) {
+                    parserState.statusTitle = nil
                     parserState.state = .working
                 }
                 if itemType == "message", let role = payload["role"] as? String, role == "assistant",
@@ -248,7 +267,12 @@ public enum CodexSessionParser {
                 if !eventType.isEmpty {
                     parserState.event = eventType
                 }
-                if !parserState.turnInterrupted && isWorkingEvent(eventType) {
+                if let compactionEvent = compactionEvent(for: eventType, payload: payload) {
+                    parserState.event = compactionEvent.event
+                    parserState.state = compactionEvent.state
+                    parserState.statusTitle = compactionEvent.title
+                } else if !parserState.turnInterrupted && isWorkingEvent(eventType) {
+                    parserState.statusTitle = nil
                     parserState.state = .working
                 }
                 if eventType == "agent_message",
@@ -269,6 +293,7 @@ public enum CodexSessionParser {
                 if eventType == "user_message" {
                     parserState.turnInterrupted = false
                     parserState.interruptedTurnId = nil
+                    parserState.statusTitle = nil
                     parserState.state = .working
                     if isInternalSuggestionPrompt(payload["message"] as? String) {
                         parserState.isInternalSubagent = true
@@ -293,6 +318,145 @@ public enum CodexSessionParser {
         itemType == "function_call"
             || itemType == "function_call_output"
             || itemType == "custom_tool_call_output"
+    }
+
+    private static func waitingEventForResponseItem(itemType: String, payload: [String: Any]) -> String? {
+        guard itemType == "function_call" else {
+            return nil
+        }
+
+        let name = functionCallName(payload)
+        if requiresEscalatedSandboxPermission(payload) {
+            return "permission_request"
+        }
+        if requiresUserInputFunction(name) {
+            return "request_user_input"
+        }
+        return nil
+    }
+
+    private static func functionCallName(_ payload: [String: Any]) -> String {
+        var candidates: [Any?] = [
+            payload["name"],
+            payload["function_name"],
+            payload["tool_name"],
+            payload["toolName"],
+        ]
+        for key in ["function", "tool", "tool_use", "toolUse"] {
+            if let nested = payload[key] as? [String: Any] {
+                candidates.append(nested["name"])
+                candidates.append(nested["tool_name"])
+                candidates.append(nested["toolName"])
+            }
+        }
+        return candidates.compactMap { trimmedString($0, limit: 160) }.first ?? ""
+    }
+
+    private static func requiresUserInputFunction(_ name: String) -> Bool {
+        let compact = name
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+        return compact.contains("requestuserinput")
+            || compact.contains("askuserquestion")
+    }
+
+    private static func requiresEscalatedSandboxPermission(_ payload: [String: Any]) -> Bool {
+        for key in ["arguments", "args", "input", "tool_input", "toolInput"] {
+            guard let value = payload[key] else {
+                continue
+            }
+            if containsEscalatedSandboxPermission(value) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func containsEscalatedSandboxPermission(_ value: Any) -> Bool {
+        if let string = value as? String {
+            if string.contains("\"sandbox_permissions\":\"require_escalated\"")
+                || string.contains("\"sandbox_permissions\": \"require_escalated\"")
+                || string.contains("\"sandboxPermissions\":\"require_escalated\"")
+                || string.contains("\"sandboxPermissions\": \"require_escalated\"") {
+                return true
+            }
+            guard let data = string.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) else {
+                return false
+            }
+            return containsEscalatedSandboxPermission(object)
+        }
+
+        if let dictionary = value as? [String: Any] {
+            for (key, nestedValue) in dictionary {
+                if ["sandbox_permissions", "sandboxPermissions"].contains(key),
+                   trimmedString(nestedValue, limit: 80) == "require_escalated" {
+                    return true
+                }
+                if containsEscalatedSandboxPermission(nestedValue) {
+                    return true
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            return array.contains(where: containsEscalatedSandboxPermission)
+        }
+
+        return false
+    }
+
+    private static func compactionEvent(
+        for eventType: String,
+        payload: [String: Any]
+    ) -> (event: String, state: AgentState, title: String)? {
+        if eventType == "context_compacted" {
+            return ("context_compacted", .idle, AgentCompactionStatus.compactedTitle)
+        }
+
+        guard eventType == "hook_started" || eventType == "hook_completed",
+              let hookName = compactHookEventName(from: payload) else {
+            return nil
+        }
+
+        if hookName == "PreCompact" {
+            return ("PreCompact", .working, AgentCompactionStatus.compactingTitle)
+        }
+        if hookName == "PostCompact" {
+            return ("PostCompact", .idle, AgentCompactionStatus.compactedTitle)
+        }
+        return nil
+    }
+
+    private static func compactHookEventName(from payload: [String: Any]) -> String? {
+        var candidates: [Any?] = [
+            payload["hook_event_name"],
+            payload["hookEventName"],
+            payload["event_name"],
+            payload["eventName"],
+        ]
+
+        for key in ["run", "hook", "hook_run", "hookRun"] {
+            if let nested = payload[key] as? [String: Any] {
+                candidates.append(nested["hook_event_name"])
+                candidates.append(nested["hookEventName"])
+                candidates.append(nested["event_name"])
+                candidates.append(nested["eventName"])
+            }
+        }
+
+        for candidate in candidates.compactMap({ trimmedString($0, limit: 80) }) {
+            let compact = candidate
+                .lowercased()
+                .filter { $0.isLetter || $0.isNumber }
+            if compact == "precompact" {
+                return "PreCompact"
+            }
+            if compact == "postcompact" {
+                return "PostCompact"
+            }
+        }
+        return nil
     }
 
     private static func isWorkingEvent(_ eventType: String) -> Bool {

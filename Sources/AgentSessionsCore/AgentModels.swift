@@ -86,6 +86,29 @@ public enum AgentKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
+public enum AgentCompactionStatus {
+    public static let compactingTitle = "Compacting context"
+    public static let compactedTitle = "Context compacted"
+
+    public static func displayTitle(for event: String) -> String? {
+        switch event.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "PreCompact":
+            return compactingTitle
+        case "PostCompact", "context_compacted", "compacted":
+            return compactedTitle
+        default:
+            return nil
+        }
+    }
+
+    public static func hasMatchingDisplayTitle(event: String, title: String) -> Bool {
+        guard let displayTitle = displayTitle(for: event) else {
+            return false
+        }
+        return AgentSessionTitleSanitizer.normalized(title) == displayTitle
+    }
+}
+
 public enum AgentSessionVisibility {
     public static func isCodexMemoryWorkspace(agent: AgentKind, cwd: String) -> Bool {
         guard agent == .codex else {
