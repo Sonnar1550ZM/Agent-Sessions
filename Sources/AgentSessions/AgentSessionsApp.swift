@@ -540,6 +540,7 @@ private enum ProviderPreferenceDefaults {
     static let subagentLatestResponseLineLimit = 1
     static let latestResponseHideAfterInterval: TimeInterval = 24 * 60 * 60
     static let latestResponseCompactsBlankLines = false
+    static let dropdownShowsUserPrompt = true
     static let showsSubagents = true
     static let subagentHideAfterInterval: TimeInterval = 3 * 60
     static let menuBarEnabled = true
@@ -564,6 +565,7 @@ private enum ProviderPreferenceDefaults {
     static let popupTextShadowDistance = 0.0
     static let popupTextShadowRadius = 1.1633347657784874
     static let popupParentSessionCount = 5
+    static let popupShowsUserPrompt = true
     static let popupShowsResponseBody = true
     static let popupResponseCharacterLimit = 500
     static let popupResponseLineLimit = 5
@@ -850,6 +852,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var subagentLatestResponseLineLimit: Int
     var latestResponseHideAfterInterval: TimeInterval
     var latestResponseCompactsBlankLines: Bool
+    var dropdownShowsUserPrompt: Bool
     var showsSubagents: Bool
     var subagentHideAfterInterval: TimeInterval
     var hideAfterInterval: TimeInterval
@@ -875,6 +878,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var popupTextShadowDistance: Double
     var popupTextShadowRadius: Double
     var popupParentSessionCount: Int
+    var popupShowsUserPrompt: Bool
     var popupShowsResponseBody: Bool
     var popupResponseCharacterLimit: Int
     var popupResponseLineLimit: Int
@@ -891,6 +895,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         subagentLatestResponseLineLimit: Int = ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
         latestResponseHideAfterInterval: TimeInterval = ProviderPreferenceDefaults.latestResponseHideAfterInterval,
         latestResponseCompactsBlankLines: Bool = ProviderPreferenceDefaults.latestResponseCompactsBlankLines,
+        dropdownShowsUserPrompt: Bool = ProviderPreferenceDefaults.dropdownShowsUserPrompt,
         showsSubagents: Bool = ProviderPreferenceDefaults.showsSubagents,
         subagentHideAfterInterval: TimeInterval = ProviderPreferenceDefaults.subagentHideAfterInterval,
         hideAfterInterval: TimeInterval = ProviderPreferenceDefaults.hideAfterInterval,
@@ -916,6 +921,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupTextShadowDistance: Double = ProviderPreferenceDefaults.popupTextShadowDistance,
         popupTextShadowRadius: Double = ProviderPreferenceDefaults.popupTextShadowRadius,
         popupParentSessionCount: Int = ProviderPreferenceDefaults.popupParentSessionCount,
+        popupShowsUserPrompt: Bool = ProviderPreferenceDefaults.popupShowsUserPrompt,
         popupShowsResponseBody: Bool = ProviderPreferenceDefaults.popupShowsResponseBody,
         popupResponseCharacterLimit: Int = ProviderPreferenceDefaults.popupResponseCharacterLimit,
         popupResponseLineLimit: Int = ProviderPreferenceDefaults.popupResponseLineLimit,
@@ -931,6 +937,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.subagentLatestResponseLineLimit = subagentLatestResponseLineLimit
         self.latestResponseHideAfterInterval = latestResponseHideAfterInterval
         self.latestResponseCompactsBlankLines = latestResponseCompactsBlankLines
+        self.dropdownShowsUserPrompt = dropdownShowsUserPrompt
         self.showsSubagents = showsSubagents
         self.subagentHideAfterInterval = subagentHideAfterInterval
         self.hideAfterInterval = hideAfterInterval
@@ -960,6 +967,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.popupTextShadowDistance = ProviderPreferenceDefaults.sanitizedPopupTextShadowDistance(popupTextShadowDistance)
         self.popupTextShadowRadius = ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(popupTextShadowRadius)
         self.popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(popupParentSessionCount)
+        self.popupShowsUserPrompt = popupShowsUserPrompt
         self.popupShowsResponseBody = popupShowsResponseBody
         self.popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(popupResponseCharacterLimit)
         self.popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(popupResponseLineLimit)
@@ -977,6 +985,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case subagentLatestResponseLineLimit
         case latestResponseHideAfterInterval
         case latestResponseCompactsBlankLines
+        case dropdownShowsUserPrompt
         case subagentDisplayCount
         case showsSubagents
         case subagentHideAfterInterval
@@ -1004,6 +1013,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case popupTextShadowRadius
         case popupBackdropBlurRadius
         case popupParentSessionCount
+        case popupShowsUserPrompt
         case popupShowsResponseBody
         case popupResponseCharacterLimit
         case popupResponseLineLimit
@@ -1034,6 +1044,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
             Bool.self,
             forKey: .latestResponseCompactsBlankLines
         ) ?? ProviderPreferenceDefaults.latestResponseCompactsBlankLines
+        dropdownShowsUserPrompt = try container.decodeIfPresent(Bool.self, forKey: .dropdownShowsUserPrompt)
+            ?? ProviderPreferenceDefaults.dropdownShowsUserPrompt
         if let showsSubagents = try container.decodeIfPresent(Bool.self, forKey: .showsSubagents) {
             self.showsSubagents = showsSubagents
         } else if let legacyCount = try container.decodeIfPresent(Int.self, forKey: .subagentDisplayCount) {
@@ -1118,6 +1130,8 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(
             try container.decodeIfPresent(Int.self, forKey: .popupParentSessionCount)
         )
+        popupShowsUserPrompt = try container.decodeIfPresent(Bool.self, forKey: .popupShowsUserPrompt)
+            ?? ProviderPreferenceDefaults.popupShowsUserPrompt
         popupShowsResponseBody = try container.decodeIfPresent(Bool.self, forKey: .popupShowsResponseBody)
             ?? ProviderPreferenceDefaults.popupShowsResponseBody
         let decodedResponseCharacterLimit = try container.decodeIfPresent(Int.self, forKey: .popupResponseCharacterLimit)
@@ -1148,6 +1162,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(subagentLatestResponseLineLimit, forKey: .subagentLatestResponseLineLimit)
         try container.encode(latestResponseHideAfterInterval, forKey: .latestResponseHideAfterInterval)
         try container.encode(latestResponseCompactsBlankLines, forKey: .latestResponseCompactsBlankLines)
+        try container.encode(dropdownShowsUserPrompt, forKey: .dropdownShowsUserPrompt)
         try container.encode(showsSubagents, forKey: .showsSubagents)
         try container.encode(subagentHideAfterInterval, forKey: .subagentHideAfterInterval)
         try container.encode(hideAfterInterval, forKey: .hideAfterInterval)
@@ -1173,6 +1188,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(popupTextShadowDistance, forKey: .popupTextShadowDistance)
         try container.encode(popupTextShadowRadius, forKey: .popupTextShadowRadius)
         try container.encode(popupParentSessionCount, forKey: .popupParentSessionCount)
+        try container.encode(popupShowsUserPrompt, forKey: .popupShowsUserPrompt)
         try container.encode(popupShowsResponseBody, forKey: .popupShowsResponseBody)
         try container.encode(popupResponseCharacterLimit, forKey: .popupResponseCharacterLimit)
         try container.encode(popupResponseLineLimit, forKey: .popupResponseLineLimit)
@@ -1209,6 +1225,7 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var subagentLatestResponseLineLimit: Int
     @Published private(set) var latestResponseHideAfterInterval: TimeInterval
     @Published private(set) var latestResponseCompactsBlankLines: Bool
+    @Published private(set) var dropdownShowsUserPrompt: Bool
     @Published private(set) var showsSubagents: Bool
     @Published private(set) var subagentHideAfterInterval: TimeInterval
     @Published private(set) var hideAfterInterval: TimeInterval
@@ -1239,6 +1256,7 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var popupResponseLineLimit: Int
     @Published private(set) var popupResponseCompactsBlankLines: Bool
     @Published private(set) var popupResponseElidesShortFinalLine: Bool
+    @Published private(set) var popupShowsUserPrompt: Bool
 
     private let defaults: UserDefaults
     private let storageKey = "ProviderPreferences"
@@ -1266,6 +1284,7 @@ final class ProviderVisibilityStore: ObservableObject {
             document.latestResponseHideAfterInterval
         )
         latestResponseCompactsBlankLines = document.latestResponseCompactsBlankLines
+        dropdownShowsUserPrompt = document.dropdownShowsUserPrompt
         showsSubagents = document.showsSubagents
         subagentHideAfterInterval = ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval)
         hideAfterInterval = ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval)
@@ -1298,6 +1317,7 @@ final class ProviderVisibilityStore: ObservableObject {
         popupResponseLineLimit = ProviderPreferenceDefaults.sanitizedPopupResponseLineLimit(document.popupResponseLineLimit)
         popupResponseCompactsBlankLines = document.popupResponseCompactsBlankLines
         popupResponseElidesShortFinalLine = document.popupResponseElidesShortFinalLine
+        popupShowsUserPrompt = document.popupShowsUserPrompt
         saveImmediately()
     }
 
@@ -1352,6 +1372,11 @@ final class ProviderVisibilityStore: ObservableObject {
 
     func setLatestResponseCompactsBlankLines(_ compacts: Bool) {
         latestResponseCompactsBlankLines = compacts
+        save()
+    }
+
+    func setDropdownShowsUserPrompt(_ shows: Bool) {
+        dropdownShowsUserPrompt = shows
         save()
     }
 
@@ -1526,6 +1551,11 @@ final class ProviderVisibilityStore: ObservableObject {
         save()
     }
 
+    func setPopupShowsUserPrompt(_ shows: Bool) {
+        popupShowsUserPrompt = shows
+        save()
+    }
+
     func setPopupResponseCharacterLimit(_ count: Int) {
         popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(count)
         save()
@@ -1594,6 +1624,7 @@ final class ProviderVisibilityStore: ObservableObject {
         popupParentSessionCount = ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(
             ProviderPreferenceDefaults.popupParentSessionCount
         )
+        popupShowsUserPrompt = ProviderPreferenceDefaults.popupShowsUserPrompt
         popupShowsResponseBody = ProviderPreferenceDefaults.popupShowsResponseBody
         popupResponseCharacterLimit = ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(
             ProviderPreferenceDefaults.popupResponseCharacterLimit
@@ -1714,6 +1745,7 @@ final class ProviderVisibilityStore: ObservableObject {
             subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
             latestResponseHideAfterInterval: latestResponseHideAfterInterval,
             latestResponseCompactsBlankLines: latestResponseCompactsBlankLines,
+            dropdownShowsUserPrompt: dropdownShowsUserPrompt,
             showsSubagents: showsSubagents,
             subagentHideAfterInterval: subagentHideAfterInterval,
             hideAfterInterval: hideAfterInterval,
@@ -1739,6 +1771,7 @@ final class ProviderVisibilityStore: ObservableObject {
             popupTextShadowDistance: popupTextShadowDistance,
             popupTextShadowRadius: popupTextShadowRadius,
             popupParentSessionCount: popupParentSessionCount,
+            popupShowsUserPrompt: popupShowsUserPrompt,
             popupShowsResponseBody: popupShowsResponseBody,
             popupResponseCharacterLimit: popupResponseCharacterLimit,
             popupResponseLineLimit: popupResponseLineLimit,
@@ -1770,6 +1803,7 @@ final class ProviderVisibilityStore: ObservableObject {
                 subagentLatestResponseLineLimit: ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
                 latestResponseHideAfterInterval: ProviderPreferenceDefaults.latestResponseHideAfterInterval,
                 latestResponseCompactsBlankLines: ProviderPreferenceDefaults.latestResponseCompactsBlankLines,
+                dropdownShowsUserPrompt: ProviderPreferenceDefaults.dropdownShowsUserPrompt,
                 showsSubagents: ProviderPreferenceDefaults.showsSubagents,
                 subagentHideAfterInterval: ProviderPreferenceDefaults.subagentHideAfterInterval,
                 hideAfterInterval: ProviderPreferenceDefaults.hideAfterInterval,
@@ -1795,6 +1829,7 @@ final class ProviderVisibilityStore: ObservableObject {
                 popupTextShadowDistance: ProviderPreferenceDefaults.popupTextShadowDistance,
                 popupTextShadowRadius: ProviderPreferenceDefaults.popupTextShadowRadius,
                 popupParentSessionCount: ProviderPreferenceDefaults.popupParentSessionCount,
+                popupShowsUserPrompt: ProviderPreferenceDefaults.popupShowsUserPrompt,
                 popupShowsResponseBody: ProviderPreferenceDefaults.popupShowsResponseBody,
                 popupResponseCharacterLimit: ProviderPreferenceDefaults.popupResponseCharacterLimit,
                 popupResponseLineLimit: ProviderPreferenceDefaults.popupResponseLineLimit,
@@ -1817,6 +1852,7 @@ final class ProviderVisibilityStore: ObservableObject {
                 document.latestResponseHideAfterInterval
             ),
             latestResponseCompactsBlankLines: document.latestResponseCompactsBlankLines,
+            dropdownShowsUserPrompt: document.dropdownShowsUserPrompt,
             showsSubagents: document.showsSubagents,
             subagentHideAfterInterval: ProviderPreferenceDefaults.sanitizedSubagentHideAfterInterval(document.subagentHideAfterInterval),
             hideAfterInterval: ProviderPreferenceDefaults.sanitizedHideAfterInterval(document.hideAfterInterval),
@@ -1844,6 +1880,7 @@ final class ProviderVisibilityStore: ObservableObject {
             popupTextShadowDistance: ProviderPreferenceDefaults.sanitizedPopupTextShadowDistance(document.popupTextShadowDistance),
             popupTextShadowRadius: ProviderPreferenceDefaults.sanitizedPopupTextShadowRadius(document.popupTextShadowRadius),
             popupParentSessionCount: ProviderPreferenceDefaults.sanitizedPopupParentSessionCount(document.popupParentSessionCount),
+            popupShowsUserPrompt: document.popupShowsUserPrompt,
             popupShowsResponseBody: document.popupShowsResponseBody,
             popupResponseCharacterLimit: ProviderPreferenceDefaults.sanitizedPopupResponseCharacterLimit(
                 document.popupResponseCharacterLimit
@@ -2192,6 +2229,21 @@ private struct DropdownMenuSettingsView: View {
                 title: "Response Body",
                 subtitle: "Preview text shown below each session title."
             ) {
+                SettingsToggleRow(
+                    title: "User Prompt",
+                    subtitle: "Show the latest user prompt below each session title.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.dropdownShowsUserPrompt
+                        },
+                        set: { showsUserPrompt in
+                            providerVisibility.setDropdownShowsUserPrompt(showsUserPrompt)
+                        }
+                    )
+                )
+
+                SettingsDivider()
+
                 SettingsStepperRow(
                     title: "Lines",
                     subtitle: "Maximum lines shown below each session title.",
@@ -2338,6 +2390,23 @@ private struct PopupSettingsView: View {
                 ) { count in
                     providerVisibility.setPopupParentSessionCount(count)
                 }
+                .disabled(!providerVisibility.popupEnabled)
+                .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
+
+                SettingsDivider()
+
+                SettingsToggleRow(
+                    title: "User Prompt",
+                    subtitle: "Show the latest user prompt below each popup session title.",
+                    isOn: Binding(
+                        get: {
+                            providerVisibility.popupShowsUserPrompt
+                        },
+                        set: { showsUserPrompt in
+                            providerVisibility.setPopupShowsUserPrompt(showsUserPrompt)
+                        }
+                    )
+                )
                 .disabled(!providerVisibility.popupEnabled)
                 .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
 
@@ -3465,6 +3534,7 @@ private enum AgentEventEnricher {
             subagentRole: event.subagentRole ?? metadata.subagentRole,
             subagentDepth: event.subagentDepth ?? metadata.subagentDepth,
             transcriptPath: event.transcriptPath,
+            latestUserPrompt: event.latestUserPrompt,
             latestResponseText: event.latestResponseText,
             latestResponsePhase: event.latestResponsePhase
         )
@@ -3497,6 +3567,7 @@ private enum AgentEventEnricher {
             subagentRole: event.subagentRole,
             subagentDepth: event.subagentDepth,
             transcriptPath: event.transcriptPath,
+            latestUserPrompt: event.latestUserPrompt,
             latestResponseText: event.latestResponseText,
             latestResponsePhase: event.latestResponsePhase
         )
@@ -4009,6 +4080,7 @@ final class AppController: ObservableObject {
             subagentRole: session.subagentRole,
             subagentDepth: session.subagentDepth,
             transcriptPath: latestClaudeResponse.transcriptPath,
+            latestUserPrompt: session.latestUserPrompt,
             latestResponseText: latestClaudeResponse.text,
             latestResponsePhase: "assistant"
         ))
@@ -4059,6 +4131,7 @@ final class AppController: ObservableObject {
                 subagentRole: session.subagentRole,
                 subagentDepth: session.subagentDepth,
                 transcriptPath: transcriptPath,
+                latestUserPrompt: session.latestUserPrompt,
                 latestResponseText: latestResponseText,
                 latestResponsePhase: latestResponsePhase
             ))
@@ -4528,6 +4601,13 @@ final class SessionPopupController {
             }
             .store(in: &cancellables)
 
+        providerVisibility.$popupShowsUserPrompt
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
         providerVisibility.$popupShowsResponseBody
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -4700,6 +4780,7 @@ final class SessionPopupController {
             alignsTextTrailing: providerVisibility.popupRightAlignsTextOnRightSide
                 && providerVisibility.popupWindowPosition.isRightSide,
             placesNewestSessionAtBottom: providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom,
+            showsUserPrompt: providerVisibility.popupShowsUserPrompt,
             showsResponseBody: providerVisibility.popupShowsResponseBody,
             responseCharacterLimit: providerVisibility.popupResponseCharacterLimit,
             responseLineLimit: providerVisibility.popupResponseLineLimit,
@@ -4822,6 +4903,7 @@ final class SessionPopupController {
             "\(providerVisibility.effectivePopupTextShadowDistance)",
             "\(providerVisibility.effectivePopupTextShadowRadius)",
             "\(providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom)",
+            "\(providerVisibility.popupShowsUserPrompt)",
             "\(providerVisibility.popupShowsResponseBody)",
             "\(providerVisibility.popupResponseCharacterLimit)",
             "\(providerVisibility.popupResponseLineLimit)",
@@ -4834,6 +4916,7 @@ final class SessionPopupController {
             parts.append(session.state.rawValue)
             parts.append(session.displayTitle)
             parts.append("\(session.updatedAt.timeIntervalSinceReferenceDate)")
+            parts.append(session.latestUserPrompt ?? "")
             parts.append(session.latestResponseText ?? "")
             parts.append(session.latestResponsePhase ?? "")
         }
@@ -5166,6 +5249,7 @@ private struct LatestParentSessionsPopupView: View {
     let textShadowRadius: CGFloat
     let alignsTextTrailing: Bool
     let placesNewestSessionAtBottom: Bool
+    let showsUserPrompt: Bool
     let showsResponseBody: Bool
     let responseCharacterLimit: Int
     let responseLineLimit: Int
@@ -5188,6 +5272,7 @@ private struct LatestParentSessionsPopupView: View {
                     metrics: metrics,
                     rowContentWidth: rowContentWidth,
                     alignsTextTrailing: alignsTextTrailing,
+                    showsUserPrompt: showsUserPrompt,
                     showsResponseBody: showsResponseBody,
                     responseCharacterLimit: responseCharacterLimit,
                     responseLineLimit: responseLineLimit,
@@ -5291,6 +5376,7 @@ private struct PopupSessionRow: View {
     let metrics: PopupScaleMetrics
     let rowContentWidth: CGFloat
     let alignsTextTrailing: Bool
+    let showsUserPrompt: Bool
     let showsResponseBody: Bool
     let responseCharacterLimit: Int
     let responseLineLimit: Int
@@ -5303,6 +5389,10 @@ private struct PopupSessionRow: View {
                 .padding(.horizontal, metrics.responseHorizontalPadding)
                 .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
 
+            if let userPromptText {
+                promptTextView(userPromptText)
+            }
+
             if let responseText {
                 PopupAlignedText(
                     text: responseText,
@@ -5314,7 +5404,8 @@ private struct PopupSessionRow: View {
                 )
                     .popupTextShadow(metrics)
                     .padding(.horizontal, metrics.responseHorizontalPadding)
-                    .padding(.vertical, metrics.responseVerticalPadding)
+                    .padding(.top, responseTopPadding)
+                    .padding(.bottom, metrics.responseVerticalPadding)
                     .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
             }
 
@@ -5341,8 +5432,17 @@ private struct PopupSessionRow: View {
     private var titleCluster: some View {
         HStack(alignment: .top, spacing: metrics.titleSpacing) {
             providerIcon
+            titleTextStack
+        }
+        .frame(maxWidth: alignsTextTrailing ? nil : .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
+    }
+
+    private var titleTextStack: some View {
+        VStack(alignment: alignsTextTrailing ? .trailing : .leading, spacing: metrics.promptSpacing) {
             titleTextView
         }
+        .layoutPriority(1)
+        .frame(width: titleColumnWidth, alignment: alignsTextTrailing ? .trailing : .leading)
         .frame(maxWidth: alignsTextTrailing ? nil : .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
     }
 
@@ -5356,12 +5456,23 @@ private struct PopupSessionRow: View {
             alignsTrailing: alignsTextTrailing
         )
             .popupTextShadow(metrics)
-            .layoutPriority(1)
             .padding(.leading, metrics.titleHorizontalPadding)
             .padding(.trailing, alignsTextTrailing ? 0 : metrics.titleHorizontalPadding)
-            .padding(.vertical, metrics.titleVerticalPadding)
-            .frame(width: titleColumnWidth, alignment: alignsTextTrailing ? .trailing : .leading)
-            .frame(maxWidth: alignsTextTrailing ? nil : .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
+            .padding(.top, metrics.titleVerticalPadding)
+            .padding(.bottom, titleBottomPadding)
+            .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
+    }
+
+    private func promptTextView(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: metrics.metadataFontSize, weight: .semibold))
+            .foregroundStyle(agentStateDetailTextColor(for: session.state).opacity(metrics.textOpacity))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .multilineTextAlignment(alignsTextTrailing ? .trailing : .leading)
+            .padding(.horizontal, metrics.responseHorizontalPadding)
+            .frame(maxWidth: .infinity, alignment: alignsTextTrailing ? .trailing : .leading)
+            .popupTextShadow(metrics)
     }
 
     @ViewBuilder
@@ -5383,6 +5494,25 @@ private struct PopupSessionRow: View {
         }
 
         return session.displayTitle
+    }
+
+    private var userPromptText: String? {
+        guard showsUserPrompt,
+              let prompt = AgentTextSanitizer.userPromptText(session.latestUserPrompt),
+              !prompt.isEmpty,
+              AgentSessionTitleSanitizer.normalized(prompt) != AgentSessionTitleSanitizer.normalized(titleText) else {
+            return nil
+        }
+
+        return prompt
+    }
+
+    private var titleBottomPadding: CGFloat {
+        userPromptText == nil ? metrics.titleVerticalPadding : 0
+    }
+
+    private var responseTopPadding: CGFloat {
+        userPromptText == nil ? metrics.responseVerticalPadding : 0
     }
 
     private var titleColumnWidth: CGFloat? {
@@ -6091,10 +6221,11 @@ private struct PopupScaleMetrics {
 
     var stackSpacing: CGFloat { 10 * scale }
     var rowSpacing: CGFloat { 2 * scale }
-    var titleSpacing: CGFloat { 3 * scale }
+    var titleSpacing: CGFloat { 1 * scale }
+    var promptSpacing: CGFloat { 0.5 * scale }
     var horizontalPadding: CGFloat { 4 * scale }
     var verticalPadding: CGFloat { 3 * scale }
-    var titleHorizontalPadding: CGFloat { responseHorizontalPadding }
+    var titleHorizontalPadding: CGFloat { 2 * scale }
     var titleVerticalPadding: CGFloat { 2 * scale }
     var metadataTopPadding: CGFloat { 0.5 * scale }
     var metadataBottomPadding: CGFloat { 1 * scale }
@@ -6290,6 +6421,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .store(in: &cancellables)
 
         providerVisibility.$latestResponseCompactsBlankLines
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.setNeedsMenuRebuild()
+                self?.resizeMenuIfOpen()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$dropdownShowsUserPrompt
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.setNeedsMenuRebuild()
@@ -6796,6 +6935,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             subagentLatestResponseLineLimit: providerVisibility.subagentLatestResponseLineLimit,
             latestResponseHideAfterInterval: providerVisibility.latestResponseHideAfterInterval,
             latestResponseCompactsBlankLines: providerVisibility.latestResponseCompactsBlankLines,
+            showsUserPrompt: providerVisibility.dropdownShowsUserPrompt,
             onLayoutMayChange: { [weak self] in
                 self?.resizeMenuIfOpen()
             }
@@ -6932,6 +7072,7 @@ private struct AgentSectionView: View {
     let subagentLatestResponseLineLimit: Int
     let latestResponseHideAfterInterval: TimeInterval
     let latestResponseCompactsBlankLines: Bool
+    let showsUserPrompt: Bool
     let onLayoutMayChange: () -> Void
 
     var body: some View {
@@ -6971,7 +7112,8 @@ private struct AgentSectionView: View {
                                     latestResponseLineLimit: latestResponseLineLimit,
                                     subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
                                     latestResponseHideAfterInterval: latestResponseHideAfterInterval,
-                                    latestResponseCompactsBlankLines: latestResponseCompactsBlankLines
+                                    latestResponseCompactsBlankLines: latestResponseCompactsBlankLines,
+                                    showsUserPrompt: showsUserPrompt
                                 )
                             }
                         }
@@ -6993,6 +7135,7 @@ private struct AgentSectionView: View {
                     id: session.id,
                     indentLevel: indentLevel,
                     latestResponseLineLimit: effectiveLatestResponseLineLimit(for: session),
+                    userPromptText: visibleUserPromptText(for: session),
                     latestResponseText: visibleLatestResponseText(for: session, now: now)
                 )
             }
@@ -7013,6 +7156,21 @@ private struct AgentSectionView: View {
             return nil
         }
         return text
+    }
+
+    private func visibleUserPromptText(for session: AgentSession) -> String? {
+        guard showsUserPrompt,
+              let prompt = AgentTextSanitizer.userPromptText(session.latestUserPrompt),
+              !prompt.isEmpty else {
+            return nil
+        }
+
+        let title = session.isSubagent ? session.subagentSessionTitle : session.displayTitle
+        guard AgentSessionTitleSanitizer.normalized(prompt) != AgentSessionTitleSanitizer.normalized(title) else {
+            return nil
+        }
+
+        return prompt
     }
 
     private func shouldShowLatestResponseText(for session: AgentSession, now: Date) -> Bool {
@@ -7073,6 +7231,7 @@ private struct AgentSectionView: View {
         var id: String
         var indentLevel: Int
         var latestResponseLineLimit: Int
+        var userPromptText: String?
         var latestResponseText: String?
     }
 
@@ -7157,6 +7316,7 @@ private struct SessionMenuRow: View {
     let subagentLatestResponseLineLimit: Int
     let latestResponseHideAfterInterval: TimeInterval
     let latestResponseCompactsBlankLines: Bool
+    let showsUserPrompt: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -7173,6 +7333,20 @@ private struct SessionMenuRow: View {
                     .foregroundStyle(titleColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
+            }
+            if let userPromptText {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Color.clear
+                        .frame(width: titleTextLeadingOffset, height: 0)
+
+                    Text(userPromptText)
+                        .font(.system(size: detailFontSize))
+                        .foregroundStyle(detailColor)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 1)
             }
             if let latestResponseText {
                 HStack(alignment: .top, spacing: 0) {
@@ -7340,6 +7514,17 @@ private struct SessionMenuRow: View {
         return session.isSubagent ? session.subagentSessionTitle : session.displayTitle
     }
 
+    private var userPromptText: String? {
+        guard showsUserPrompt,
+              let prompt = AgentTextSanitizer.userPromptText(session.latestUserPrompt),
+              !prompt.isEmpty,
+              AgentSessionTitleSanitizer.normalized(prompt) != AgentSessionTitleSanitizer.normalized(titleText) else {
+            return nil
+        }
+
+        return prompt
+    }
+
     private var shouldShowPendingTitle: Bool {
         guard !session.isSubagent,
               session.agent == .codex,
@@ -7384,6 +7569,7 @@ private struct SessionMenuRow: View {
             session.subagentNickname.map { "nickname: \($0)" },
             session.cwd.isEmpty ? nil : session.cwd,
             session.event.isEmpty ? nil : "event: \(session.event)",
+            session.latestUserPrompt.map { "prompt: \($0)" },
             session.latestResponsePhase.map { "response: \($0)" }
         ]
         .compactMap { $0 }

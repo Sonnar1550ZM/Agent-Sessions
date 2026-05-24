@@ -81,6 +81,9 @@ def requires_user_input_tool(name):
         or "requestuserinput" in compact
     )
 
+def session_start_source(event):
+    return first_string(event.get("source"), event.get("session_start_source")).lower()
+
 def waits_for_user(event):
     if hook_event in ("PermissionRequest", "AskUserQuestion"):
         return True
@@ -91,6 +94,7 @@ def waits_for_user(event):
         return kind in (
             "permission_prompt",
             "permission_request",
+            "elicitation_dialog",
             "ask_user_question",
             "choice_prompt",
             "choice_dialog",
@@ -99,6 +103,10 @@ def waits_for_user(event):
     return False
 
 state = os.environ.get("STATE") or "Working"
+if hook_event == "SessionStart" and session_start_source(event) == "resume":
+    sys.exit(0)
+if hook_event == "Notification" and not waits_for_user(event):
+    sys.exit(0)
 if hook_event == "PreCompact":
     state = "Working"
 elif hook_event == "PostCompact":
@@ -182,22 +190,29 @@ if not session_id and isinstance(transcript_path, str) and transcript_path:
 if not session_id or session_id == "default":
     sys.exit(0)
 
+title = prompt_title(event)
 payload = {
     "agent": "Claude Code",
     "sessionId": session_id,
     "state": state,
-    "title": prompt_title(event),
+    "title": title,
     "cwd": event.get("cwd") or "",
     "event": hook_event,
     "terminal": term_map.get(os.environ.get("TERM_PROGRAM") or "", os.environ.get("TERM_PROGRAM") or ""),
     "pid": pid,
     "transcriptPath": transcript_path,
+    "latestUserPrompt": title if hook_event == "UserPromptSubmit" and title else None,
 }
 sys.stdout.write(json.dumps(payload, separators=(",", ":")))
 PY
 )"
 
 if [ -z "${payload:-}" ]; then
+  exit 0
+fi
+
+if [ "${AGENT_SESSIONS_DRY_RUN:-}" = "1" ]; then
+  printf '%s\n' "$payload"
   exit 0
 fi
 

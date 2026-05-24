@@ -49,6 +49,7 @@ final class ClaudeSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed?.metadata.subagentRole, "general-purpose")
         XCTAssertEqual(parsed?.state, .idle)
         XCTAssertEqual(parsed?.title, "Inspect")
+        XCTAssertEqual(parsed?.latestUserPrompt, "Inspect")
         XCTAssertEqual(parsed?.cwd, "/tmp/project")
         XCTAssertEqual(parsed?.latestResponseText, "Done")
     }
@@ -65,7 +66,25 @@ final class ClaudeSessionParserTests: XCTestCase {
         )
 
         XCTAssertEqual(parsed?.title, "作業ディレクトリ `/tmp/project` の中身を調査して、簡潔にレポートしてください。")
+        XCTAssertEqual(parsed?.latestUserPrompt, "作業ディレクトリ `/tmp/project` の中身を調査して、簡潔にレポートしてください。")
         XCTAssertEqual(parsed?.metadata.subagentRole, "Explore")
+    }
+
+    func testTracksLatestSubagentUserPromptSeparatelyFromInitialTitle() {
+        let text = """
+        {"parentUuid":null,"isSidechain":true,"agentId":"a3970cb458f30cc75","type":"user","message":{"role":"user","content":"最初の調査"},"cwd":"/tmp/project","sessionId":"parent-session"}
+        {"parentUuid":"one","isSidechain":true,"agentId":"a3970cb458f30cc75","attributionAgent":"Explore","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done"}],"stop_reason":"end_turn"},"cwd":"/tmp/project","sessionId":"parent-session"}
+        {"parentUuid":"two","isSidechain":true,"agentId":"a3970cb458f30cc75","type":"user","message":{"role":"user","content":"追加の確認"},"cwd":"/tmp/project","sessionId":"parent-session"}
+        """
+
+        let parsed = ClaudeSessionParser.parseSubagentTranscript(
+            transcriptPath: "/Users/me/.claude/projects/project/parent-session/subagents/agent-a3970cb458f30cc75.jsonl",
+            text: text
+        )
+
+        XCTAssertEqual(parsed?.title, "最初の調査")
+        XCTAssertEqual(parsed?.latestUserPrompt, "追加の確認")
+        XCTAssertNil(parsed?.latestResponseText)
     }
 
     func testParsesToolUseSubagentAsWorking() {

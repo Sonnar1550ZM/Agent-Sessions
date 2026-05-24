@@ -11,6 +11,7 @@ public struct CodexParsedSession: Equatable, Sendable {
     public var subagentNickname: String?
     public var subagentRole: String?
     public var subagentDepth: Int?
+    public var latestUserPrompt: String?
     public var latestResponseText: String?
     public var latestResponsePhase: String?
     public var turnInterrupted: Bool
@@ -27,6 +28,7 @@ public struct CodexParsedSession: Equatable, Sendable {
         subagentNickname: String? = nil,
         subagentRole: String? = nil,
         subagentDepth: Int? = nil,
+        latestUserPrompt: String? = nil,
         latestResponseText: String? = nil,
         latestResponsePhase: String? = nil,
         turnInterrupted: Bool = false,
@@ -42,6 +44,7 @@ public struct CodexParsedSession: Equatable, Sendable {
         self.subagentNickname = subagentNickname
         self.subagentRole = subagentRole
         self.subagentDepth = subagentDepth
+        self.latestUserPrompt = latestUserPrompt
         self.latestResponseText = latestResponseText
         self.latestResponsePhase = latestResponsePhase
         self.turnInterrupted = turnInterrupted
@@ -78,6 +81,7 @@ public enum CodexSessionParser {
         var subagentNickname: String?
         var subagentRole: String?
         var subagentDepth: Int?
+        var latestUserPrompt: String?
         var latestResponseText: String?
         var latestResponsePhase: String?
         var turnInterrupted = false
@@ -102,6 +106,7 @@ public enum CodexSessionParser {
             self.subagentNickname = base.subagentNickname
             self.subagentRole = base.subagentRole
             self.subagentDepth = base.subagentDepth
+            self.latestUserPrompt = base.latestUserPrompt
             self.latestResponseText = base.latestResponseText
             self.latestResponsePhase = base.latestResponsePhase
             self.turnInterrupted = base.turnInterrupted
@@ -126,6 +131,7 @@ public enum CodexSessionParser {
                 subagentNickname: subagentNickname,
                 subagentRole: subagentRole,
                 subagentDepth: subagentDepth,
+                latestUserPrompt: latestUserPrompt,
                 latestResponseText: latestResponseText,
                 latestResponsePhase: latestResponsePhase,
                 turnInterrupted: turnInterrupted,
@@ -220,9 +226,11 @@ public enum CodexSessionParser {
                         if containsInternalSuggestionUserPrompt(payload) {
                             parserState.isInternalSubagent = true
                         }
-                        if parserState.promptTitle.isEmpty,
-                           let userTitle = extractPromptTitle(fromUserMessagePayload: payload) {
-                            parserState.promptTitle = userTitle
+                        if let userTitle = extractPromptTitle(fromUserMessagePayload: payload) {
+                            if parserState.promptTitle.isEmpty {
+                                parserState.promptTitle = userTitle
+                            }
+                            parserState.latestUserPrompt = userTitle
                         }
                         parserState.latestResponseText = nil
                         parserState.latestResponsePhase = nil
@@ -298,9 +306,11 @@ public enum CodexSessionParser {
                     if isInternalSuggestionPrompt(payload["message"] as? String) {
                         parserState.isInternalSubagent = true
                     }
-                    if parserState.promptTitle.isEmpty,
-                       let userTitle = sanitizedUserPromptTitle(payload["message"] as? String) {
-                        parserState.promptTitle = userTitle
+                    if let userTitle = sanitizedUserPromptTitle(payload["message"] as? String) {
+                        if parserState.promptTitle.isEmpty {
+                            parserState.promptTitle = userTitle
+                        }
+                        parserState.latestUserPrompt = userTitle
                     }
                     parserState.latestResponseText = nil
                     parserState.latestResponsePhase = nil

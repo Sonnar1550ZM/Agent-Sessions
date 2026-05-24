@@ -75,6 +75,7 @@ final class ClaudeSubagentWatcher {
             subagentRole: metadata.subagentRole,
             subagentDepth: metadata.subagentDepth,
             transcriptPath: file.path,
+            latestUserPrompt: parsed.latestUserPrompt,
             latestResponseText: parsed.latestResponseText,
             latestResponsePhase: parsed.latestResponseText == nil ? nil : "assistant"
         )
@@ -91,6 +92,7 @@ final class ClaudeSubagentWatcher {
                 metadata.subagentNickname,
                 metadata.subagentRole,
                 metadata.subagentDepth.description,
+                parsed.latestUserPrompt ?? "",
                 parsed.latestResponseText ?? ""
             ].joined(separator: "|")
         )

@@ -312,8 +312,24 @@ final class CodexSessionParserTests: XCTestCase {
         let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
 
         XCTAssertEqual(parsed.title, "メニュー行の暫定タイトルをプロンプトにして")
+        XCTAssertEqual(parsed.latestUserPrompt, "メニュー行の暫定タイトルをプロンプトにして")
         XCTAssertEqual(parsed.state, .working)
         XCTAssertEqual(parsed.event, "user_message")
+    }
+
+    func testTracksLatestUserPromptSeparatelyFromInitialPromptTitle() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"user_message","message":"最初の依頼"}}
+        {"type":"event_msg","payload":{"type":"agent_message","message":"了解です"}}
+        {"type":"event_msg","payload":{"type":"user_message","message":"次の依頼"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.title, "最初の依頼")
+        XCTAssertEqual(parsed.latestUserPrompt, "次の依頼")
+        XCTAssertNil(parsed.latestResponseText)
     }
 
     func testIgnoresSafetyComplianceAmbientSuggestionUserMessageEvent() {

@@ -27,6 +27,7 @@ public struct ClaudeParsedSubagent: Equatable, Sendable {
     public var state: AgentState
     public var title: String
     public var cwd: String
+    public var latestUserPrompt: String?
     public var latestResponseText: String?
 
     public init(
@@ -34,12 +35,14 @@ public struct ClaudeParsedSubagent: Equatable, Sendable {
         state: AgentState,
         title: String,
         cwd: String,
+        latestUserPrompt: String? = nil,
         latestResponseText: String? = nil
     ) {
         self.metadata = metadata
         self.state = state
         self.title = title
         self.cwd = cwd
+        self.latestUserPrompt = latestUserPrompt
         self.latestResponseText = latestResponseText
     }
 }
@@ -112,6 +115,7 @@ public enum ClaudeSessionParser {
         var title: String = ""
         var cwd: String = ""
         var role: String = ""
+        var latestUserPrompt: String?
         var latestResponseText: String?
 
         init(metadata: ClaudeSubagentMetadata) {
@@ -124,6 +128,7 @@ public enum ClaudeSessionParser {
             self.title = base.title
             self.cwd = base.cwd
             self.role = base.metadata.subagentRole
+            self.latestUserPrompt = base.latestUserPrompt
             self.latestResponseText = base.latestResponseText
         }
 
@@ -142,6 +147,7 @@ public enum ClaudeSessionParser {
                 state: state,
                 title: title.isEmpty ? resolvedRole : title,
                 cwd: cwd,
+                latestUserPrompt: latestUserPrompt,
                 latestResponseText: latestResponseText
             )
         }
@@ -163,10 +169,12 @@ public enum ClaudeSessionParser {
             if let attributionAgent = object["attributionAgent"] as? String, !attributionAgent.isEmpty {
                 parserState.role = attributionAgent
             }
-            if parserState.title.isEmpty,
-               object["type"] as? String == "user",
+            if object["type"] as? String == "user",
                let title = promptTitle(from: object["message"]) {
-                parserState.title = title
+                if parserState.title.isEmpty {
+                    parserState.title = title
+                }
+                parserState.latestUserPrompt = title
             }
 
             let type = object["type"] as? String ?? ""

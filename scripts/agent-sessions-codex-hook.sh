@@ -161,16 +161,18 @@ if not session_id and isinstance(transcript_path, str) and transcript_path:
 if not session_id or session_id == "default":
     sys.exit(0)
 
+title = prompt_title(event)
 payload = {
     "agent": "Codex",
     "sessionId": session_id,
     "state": state,
-    "title": prompt_title(event),
+    "title": title,
     "cwd": event.get("cwd") or "",
     "event": hook_event,
     "terminal": term_map.get(os.environ.get("TERM_PROGRAM") or "", os.environ.get("TERM_PROGRAM") or ""),
     "pid": pid,
     "transcriptPath": transcript_path,
+    "latestUserPrompt": title if hook_event == "UserPromptSubmit" and title else None,
 }
 sys.stdout.write(json.dumps(payload, separators=(",", ":")))
 PY

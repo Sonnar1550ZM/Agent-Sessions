@@ -181,6 +181,7 @@ final class CodexSessionWatcher {
             subagentNickname: parsed.subagentNickname,
             subagentRole: parsed.subagentRole,
             subagentDepth: parsed.subagentDepth,
+            latestUserPrompt: parsed.latestUserPrompt,
             latestResponseText: parsed.latestResponseText,
             latestResponsePhase: parsed.latestResponsePhase
         )
@@ -197,6 +198,7 @@ final class CodexSessionWatcher {
                 parsed.subagentNickname ?? "",
                 parsed.subagentRole ?? "",
                 parsed.subagentDepth.map(String.init) ?? "",
+                parsed.latestUserPrompt ?? "",
                 parsed.latestResponseText ?? "",
                 parsed.latestResponsePhase ?? ""
             ].joined(separator: "|")

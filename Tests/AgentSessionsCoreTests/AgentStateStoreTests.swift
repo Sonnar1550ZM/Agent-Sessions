@@ -82,6 +82,32 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(session?.updatedAt, metadataTime)
     }
 
+    func testLatestUserPromptPersistsAcrossTitleUpdates() {
+        let promptTime = Date(timeIntervalSince1970: 1_000)
+        let metadataTime = promptTime.addingTimeInterval(60)
+        let store = AgentStateStore(persistence: nil, clock: { metadataTime })
+
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "a",
+            state: .working,
+            title: "ユーザーの依頼",
+            event: "UserPromptSubmit",
+            updatedAt: promptTime
+        ))
+        store.apply(AgentEvent(
+            agent: .codex,
+            sessionId: "a",
+            state: .working,
+            title: "Generated title",
+            updatedAt: metadataTime
+        ))
+
+        let session = store.visibleSessions(for: .codex, now: metadataTime).first
+        XCTAssertEqual(session?.title, "Generated title")
+        XCTAssertEqual(session?.latestUserPrompt, "ユーザーの依頼")
+    }
+
     func testLatestResponseTimestampUpdatesWhenBodyChanges() {
         let firstTime = Date(timeIntervalSince1970: 1_000)
         let secondTime = firstTime.addingTimeInterval(30)
@@ -1171,6 +1197,7 @@ final class AgentStateStoreTests: XCTestCase {
           "subagent_role": "explorer",
           "subagent_depth": 1,
           "transcript_path": "/tmp/parent/subagents/agent-a.jsonl",
+          "latest_user_prompt": "ここを確認して",
           "latest_response_text": "進めています。",
           "latest_response_phase": "commentary"
         }
@@ -1186,6 +1213,7 @@ final class AgentStateStoreTests: XCTestCase {
         XCTAssertEqual(decoded.subagentRole, "explorer")
         XCTAssertEqual(decoded.subagentDepth, 1)
         XCTAssertEqual(decoded.transcriptPath, "/tmp/parent/subagents/agent-a.jsonl")
+        XCTAssertEqual(decoded.latestUserPrompt, "ここを確認して")
         XCTAssertEqual(decoded.latestResponseText, "進めています。")
         XCTAssertEqual(decoded.latestResponsePhase, "commentary")
     }

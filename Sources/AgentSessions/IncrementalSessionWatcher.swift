@@ -321,6 +321,7 @@ final class IncrementalSessionWatcher<Parsed> {
             subagentRole: snapshot.event.subagentRole,
             subagentDepth: snapshot.event.subagentDepth,
             transcriptPath: snapshot.event.transcriptPath,
+            latestUserPrompt: snapshot.event.latestUserPrompt,
             latestResponseText: snapshot.event.latestResponseText,
             latestResponsePhase: snapshot.event.latestResponsePhase
         )

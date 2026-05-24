@@ -87,6 +87,9 @@ public final class AgentStateStore: ObservableObject {
         let latestResponsePhase = clearsLatestResponse
             ? nil
             : (event.latestResponsePhase ?? existing?.latestResponsePhase)
+        let latestUserPrompt = event.latestUserPrompt
+            ?? Self.userPromptFromTitleIfPromptEvent(event)
+            ?? existing?.latestUserPrompt
         let latestResponseUpdatedAt = Self.latestResponseUpdatedAt(
             existing: existing,
             eventText: event.latestResponseText,
@@ -115,6 +118,7 @@ public final class AgentStateStore: ObservableObject {
             subagentRole: event.subagentRole ?? existing?.subagentRole,
             subagentDepth: event.subagentDepth ?? existing?.subagentDepth,
             transcriptPath: event.transcriptPath ?? existing?.transcriptPath,
+            latestUserPrompt: latestUserPrompt,
             latestResponseText: latestResponseText,
             latestResponsePhase: latestResponsePhase,
             latestResponseUpdatedAt: latestResponseUpdatedAt,
@@ -620,6 +624,18 @@ public final class AgentStateStore: ObservableObject {
         }
 
         return existing?.latestResponseUpdatedAt ?? existing?.updatedAt ?? now
+    }
+
+    private static func userPromptFromTitleIfPromptEvent(_ event: AgentEvent) -> String? {
+        guard event.event == "UserPromptSubmit" || event.event == "user_message" else {
+            return nil
+        }
+
+        guard !AgentCompactionStatus.hasMatchingDisplayTitle(event: event.event, title: event.title) else {
+            return nil
+        }
+
+        return AgentTextSanitizer.userPromptText(event.title)
     }
 
     private static func stateChangedAt(

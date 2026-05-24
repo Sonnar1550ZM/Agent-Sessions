@@ -322,6 +322,10 @@ private enum AgentSubagentDetector {
 }
 
 public enum AgentTextSanitizer {
+    public static func userPromptText(_ value: String?, limit: Int = 500) -> String? {
+        AgentSessionTitleSanitizer.optional(value, limit: limit)
+    }
+
     public static func latestResponseText(
         _ value: String?,
         limit: Int = 1_000,
@@ -503,6 +507,7 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     public var subagentRole: String?
     public var subagentDepth: Int?
     public var transcriptPath: String?
+    public var latestUserPrompt: String?
     public var latestResponseText: String?
     public var latestResponsePhase: String?
     public var latestResponseUpdatedAt: Date?
@@ -535,6 +540,7 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
         subagentRole: String? = nil,
         subagentDepth: Int? = nil,
         transcriptPath: String? = nil,
+        latestUserPrompt: String? = nil,
         latestResponseText: String? = nil,
         latestResponsePhase: String? = nil,
         latestResponseUpdatedAt: Date? = nil,
@@ -554,6 +560,7 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
         self.subagentRole = subagentRole
         self.subagentDepth = subagentDepth
         self.transcriptPath = transcriptPath
+        self.latestUserPrompt = AgentTextSanitizer.userPromptText(latestUserPrompt)
         self.latestResponseText = latestResponseText
         self.latestResponsePhase = latestResponsePhase
         self.latestResponseUpdatedAt = latestResponseUpdatedAt
@@ -693,6 +700,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
     public var subagentRole: String?
     public var subagentDepth: Int?
     public var transcriptPath: String?
+    public var latestUserPrompt: String?
     public var latestResponseText: String?
     public var latestResponsePhase: String?
 
@@ -727,6 +735,10 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         case subagent_depth
         case transcriptPath
         case transcript_path
+        case latestUserPrompt
+        case latest_user_prompt
+        case userPrompt
+        case user_prompt
         case latestResponseText
         case latest_response_text
         case latestResponsePhase
@@ -748,6 +760,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         subagentRole: String? = nil,
         subagentDepth: Int? = nil,
         transcriptPath: String? = nil,
+        latestUserPrompt: String? = nil,
         latestResponseText: String? = nil,
         latestResponsePhase: String? = nil
     ) {
@@ -765,6 +778,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         self.subagentRole = subagentRole
         self.subagentDepth = subagentDepth
         self.transcriptPath = transcriptPath
+        self.latestUserPrompt = AgentTextSanitizer.userPromptText(latestUserPrompt)
         self.latestResponseText = latestResponseText
         self.latestResponsePhase = latestResponsePhase
     }
@@ -823,6 +837,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         subagentDepth = try container.decodeIfPresent(Int.self, forKey: .subagentDepth)
             ?? container.decodeIfPresent(Int.self, forKey: .subagent_depth)
         transcriptPath = rawTranscriptPath
+        latestUserPrompt = try Self.decodeUserPromptText(from: container, limit: 500)
         latestResponseText = try Self.decodeLatestResponseText(
             from: container,
             primaryKey: .latestResponseText,
@@ -865,6 +880,7 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         try container.encodeIfPresent(subagentRole, forKey: .subagentRole)
         try container.encodeIfPresent(subagentDepth, forKey: .subagentDepth)
         try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
+        try container.encodeIfPresent(latestUserPrompt, forKey: .latestUserPrompt)
         try container.encodeIfPresent(latestResponseText, forKey: .latestResponseText)
         try container.encodeIfPresent(latestResponsePhase, forKey: .latestResponsePhase)
     }
@@ -891,6 +907,17 @@ public struct AgentEvent: Codable, Equatable, Sendable {
         let value = try container.decodeIfPresent(String.self, forKey: primaryKey)
             ?? container.decodeIfPresent(String.self, forKey: fallbackKey)
         return AgentTextSanitizer.latestResponseText(value, limit: limit)
+    }
+
+    private static func decodeUserPromptText(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        limit: Int
+    ) throws -> String? {
+        let value = try container.decodeIfPresent(String.self, forKey: .latestUserPrompt)
+            ?? container.decodeIfPresent(String.self, forKey: .latest_user_prompt)
+            ?? container.decodeIfPresent(String.self, forKey: .userPrompt)
+            ?? container.decodeIfPresent(String.self, forKey: .user_prompt)
+        return AgentTextSanitizer.userPromptText(value, limit: limit)
     }
 
     private static func sessionId(fromTranscriptPath transcriptPath: String?) -> String? {
