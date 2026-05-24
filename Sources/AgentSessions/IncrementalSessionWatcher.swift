@@ -302,7 +302,7 @@ final class IncrementalSessionWatcher<Parsed> {
         guard let snapshot else { return nil }
 
         let age = Date().timeIntervalSince(modifiedAt)
-        guard age > 120, snapshot.event.state != .idle else {
+        guard age > 600, snapshot.event.state != .idle else {
             return snapshot
         }
 

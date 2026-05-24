@@ -10,7 +10,7 @@ final class ClaudeSubagentWatcher {
             watchRoot: Self.watchRoot,
             latestFiles: Self.latestSubagentFiles,
             isRelevantPath: Self.isRelevantSubagentPath,
-            fallbackPollInterval: 300,
+            fallbackPollInterval: 5,
             fallbackPollLeeway: .seconds(5),
             loadFull: Self.loadFull(file:modifiedAt:),
             applyDelta: Self.applyDelta(file:modifiedAt:text:base:)
@@ -57,7 +57,7 @@ final class ClaudeSubagentWatcher {
         parsed: ClaudeParsedSubagent
     ) -> IncrementalSessionWatcher<ClaudeParsedSubagent>.Snapshot {
         let age = Date().timeIntervalSince(modifiedAt)
-        let state: AgentState = age > 120 ? .idle : parsed.state
+        let state: AgentState = age > 600 ? .idle : parsed.state
         let metadata = parsed.metadata
 
         let event = AgentEvent(

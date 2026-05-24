@@ -158,7 +158,7 @@ final class CodexSessionWatcher {
         parsed: CodexParsedSession
     ) -> IncrementalSessionWatcher<CodexParsedSession>.Snapshot {
         let age = Date().timeIntervalSince(modifiedAt)
-        let state: AgentState = age > 120 ? .idle : parsed.state
+        let state: AgentState = age > 600 ? .idle : parsed.state
         let title = threadTitle(for: parsed.sessionId)
             ?? parsed.title
 

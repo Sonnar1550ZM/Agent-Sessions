@@ -509,6 +509,31 @@ enum PopupWindowPosition: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+fileprivate enum PopupVisualStyle: String, CaseIterable, Identifiable {
+    case liquidGlass
+    case textDropShadow
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .liquidGlass:
+            "Liquid Glass"
+        case .textDropShadow:
+            "Text Drop Shadow"
+        }
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .liquidGlass:
+            "sparkles"
+        case .textDropShadow:
+            "textformat"
+        }
+    }
+}
+
 private enum ProviderPreferenceDefaults {
     static let sessionDisplayCount = 5
     static let latestResponseLineLimit = 3
@@ -1366,6 +1391,10 @@ final class ProviderVisibilityStore: ObservableObject {
         popupTextShadowEnabled ? ProviderPreferenceDefaults.popupTextShadowRadius : 0
     }
 
+    fileprivate var popupVisualStyle: PopupVisualStyle {
+        popupGlassEnabled ? .liquidGlass : .textDropShadow
+    }
+
     func setPopupEnabled(_ isEnabled: Bool) {
         popupEnabled = isEnabled
         save()
@@ -1391,6 +1420,15 @@ final class ProviderVisibilityStore: ObservableObject {
         popupGlassEnabled = style.glassEnabled
         popupTextShadowEnabled = style.textShadowEnabled
         save()
+    }
+
+    fileprivate func setPopupVisualStyle(_ visualStyle: PopupVisualStyle) {
+        switch visualStyle {
+        case .liquidGlass:
+            setPopupGlassEnabled(true)
+        case .textDropShadow:
+            setPopupTextShadowEnabled(true)
+        }
     }
 
     func setPopupUsesClearGlass(_ usesClearGlass: Bool) {
@@ -2562,26 +2600,20 @@ private struct PopupStyleSettingsGroup: View {
             subtitle: "Choose one popup visual treatment."
         ) {
             HStack(spacing: 10) {
-                SettingsStyleChoiceButton(
-                    title: "Liquid Glass",
-                    systemImage: "sparkles",
-                    isSelected: providerVisibility.popupGlassEnabled
-                ) {
-                    providerVisibility.setPopupGlassEnabled(true)
-                }
-
-                SettingsStyleChoiceButton(
-                    title: "Text Drop Shadow",
-                    systemImage: "textformat",
-                    isSelected: providerVisibility.popupTextShadowEnabled
-                ) {
-                    providerVisibility.setPopupTextShadowEnabled(true)
+                ForEach(PopupVisualStyle.allCases) { style in
+                    SettingsStyleChoiceButton(
+                        title: style.title,
+                        systemImage: style.systemImageName,
+                        isSelected: providerVisibility.popupVisualStyle == style
+                    ) {
+                        providerVisibility.setPopupVisualStyle(style)
+                    }
                 }
             }
             .disabled(!providerVisibility.popupEnabled)
             .opacity(providerVisibility.popupEnabled ? 1 : 0.55)
 
-            if providerVisibility.popupGlassEnabled {
+            if providerVisibility.popupVisualStyle == .liquidGlass {
                 SettingsDivider()
 
                 SettingsToggleRow(
@@ -6291,6 +6323,20 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             }
             .store(in: &cancellables)
 
+        providerVisibility.$popupGlassEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.setNeedsMenuRebuild()
+            }
+            .store(in: &cancellables)
+
+        providerVisibility.$popupTextShadowEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.setNeedsMenuRebuild()
+            }
+            .store(in: &cancellables)
+
         providerVisibility.$popupWindowPosition
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -6662,6 +6708,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(popupToggleMenuItem())
+        menu.addItem(popupStyleMenuItem())
         menu.addItem(popupPositionMenuItem())
         menu.addItem(actionItem(title: "Settings", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
@@ -6673,6 +6720,29 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         item.image = menuSymbol(named: "bubble.left", accessibilityDescription: "Popup")
         item.state = providerVisibility.popupEnabled ? .on : .off
         applyPopupToggleShortcut(to: item)
+        return item
+    }
+
+    private func popupStyleMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Popup Style", action: nil, keyEquivalent: "")
+        item.image = menuSymbol(named: "paintbrush", accessibilityDescription: "Popup Style")
+        item.isEnabled = providerVisibility.popupEnabled
+        let submenu = NSMenu()
+
+        for style in PopupVisualStyle.allCases {
+            let styleItem = NSMenuItem(
+                title: style.title,
+                action: #selector(setPopupVisualStyle(_:)),
+                keyEquivalent: ""
+            )
+            styleItem.target = self
+            styleItem.representedObject = style.rawValue
+            styleItem.image = menuSymbol(named: style.systemImageName, accessibilityDescription: style.title)
+            styleItem.state = providerVisibility.popupVisualStyle == style ? .on : .off
+            submenu.addItem(styleItem)
+        }
+
+        item.submenu = submenu
         return item
     }
 
@@ -6758,6 +6828,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func togglePopup() {
         providerVisibility.setPopupEnabled(!providerVisibility.popupEnabled)
+        setNeedsMenuRebuild()
+    }
+
+    @objc private func setPopupVisualStyle(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let visualStyle = PopupVisualStyle(rawValue: rawValue) else {
+            return
+        }
+
+        providerVisibility.setPopupVisualStyle(visualStyle)
         setNeedsMenuRebuild()
     }
 
