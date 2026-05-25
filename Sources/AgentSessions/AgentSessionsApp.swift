@@ -5769,7 +5769,8 @@ private struct PopupSessionRow: View {
             agent: session.agent,
             state: session.state,
             iconSize: metrics.iconSize,
-            animatesWorkingIcon: true
+            animatesWorkingIcon: true,
+            usesMonochromeIdleIcon: false
         )
         .frame(width: metrics.iconSize, height: metrics.iconSize)
         .padding(.top, metrics.titleVerticalPadding)
@@ -5924,6 +5925,7 @@ private struct AnimatedAgentIconView: NSViewRepresentable {
     let state: AgentState
     let iconSize: CGFloat
     let animatesWorkingIcon: Bool
+    let usesMonochromeIdleIcon: Bool
 
     func makeNSView(context: Context) -> AnimatedAgentIconImageView {
         let imageView = AnimatedAgentIconImageView()
@@ -5939,7 +5941,8 @@ private struct AnimatedAgentIconView: NSViewRepresentable {
             agent: agent,
             state: state,
             iconSize: iconSize,
-            animatesWorkingIcon: animatesWorkingIcon
+            animatesWorkingIcon: animatesWorkingIcon,
+            usesMonochromeIdleIcon: usesMonochromeIdleIcon
         )
         return imageView
     }
@@ -5949,7 +5952,8 @@ private struct AnimatedAgentIconView: NSViewRepresentable {
             agent: agent,
             state: state,
             iconSize: iconSize,
-            animatesWorkingIcon: animatesWorkingIcon
+            animatesWorkingIcon: animatesWorkingIcon,
+            usesMonochromeIdleIcon: usesMonochromeIdleIcon
         )
     }
 
@@ -5963,6 +5967,7 @@ private final class AnimatedAgentIconImageView: NSImageView {
     private var renderedState: AgentState?
     private var renderedIconSize: CGFloat = 0
     private var renderedAnimatesWorkingIcon = false
+    private var renderedUsesMonochromeIdleIcon = false
 
     override var intrinsicContentSize: NSSize {
         guard renderedIconSize > 0 else {
@@ -5987,15 +5992,23 @@ private final class AnimatedAgentIconImageView: NSImageView {
         }
     }
 
-    func configure(agent: AgentKind, state: AgentState, iconSize: CGFloat, animatesWorkingIcon: Bool) {
+    func configure(
+        agent: AgentKind,
+        state: AgentState,
+        iconSize: CGFloat,
+        animatesWorkingIcon: Bool,
+        usesMonochromeIdleIcon: Bool
+    ) {
         let sizeChanged = abs(renderedIconSize - iconSize) > 0.001
         let identityChanged = renderedAgent != agent
             || renderedState != state
             || renderedAnimatesWorkingIcon != animatesWorkingIcon
+            || renderedUsesMonochromeIdleIcon != usesMonochromeIdleIcon
 
         renderedAgent = agent
         renderedState = state
         renderedAnimatesWorkingIcon = animatesWorkingIcon
+        renderedUsesMonochromeIdleIcon = usesMonochromeIdleIcon
 
         if sizeChanged {
             renderedIconSize = iconSize
@@ -6005,11 +6018,21 @@ private final class AnimatedAgentIconImageView: NSImageView {
 
         guard state == .working, animatesWorkingIcon else {
             stopAnimating()
-            renderStaticIcon(agent: agent, state: state, force: identityChanged)
+            renderStaticIcon(
+                agent: agent,
+                state: state,
+                usesMonochromeIdleIcon: usesMonochromeIdleIcon,
+                force: identityChanged
+            )
             return
         }
 
-        renderStaticIcon(agent: agent, state: state, force: identityChanged || image == nil)
+        renderStaticIcon(
+            agent: agent,
+            state: state,
+            usesMonochromeIdleIcon: usesMonochromeIdleIcon,
+            force: identityChanged || image == nil
+        )
         startAnimating(agent: agent)
     }
 
@@ -6035,13 +6058,18 @@ private final class AnimatedAgentIconImageView: NSImageView {
         )
     }
 
-    private func renderStaticIcon(agent: AgentKind, state: AgentState, force: Bool) {
+    private func renderStaticIcon(
+        agent: AgentKind,
+        state: AgentState,
+        usesMonochromeIdleIcon: Bool,
+        force: Bool
+    ) {
         guard force || image == nil else {
             return
         }
         image = AgentImages.menuHeaderIcon(
             for: agent,
-            color: true,
+            color: !(usesMonochromeIdleIcon && state == .idle),
             state: state
         )
     }
@@ -6057,7 +6085,8 @@ private struct MenuBarAgentIconView: View {
             agent: agent,
             state: state,
             iconSize: max(iconSize.width, iconSize.height),
-            animatesWorkingIcon: true
+            animatesWorkingIcon: true,
+            usesMonochromeIdleIcon: true
         )
         .frame(width: iconSize.width, height: iconSize.height)
         .accessibilityHidden(true)
@@ -7458,7 +7487,6 @@ private struct AgentHeaderView: View {
     let agent: AgentKind
     let state: AgentState
     let workingSessionCounts: AgentWorkingSessionCounts
-    let animatesWorkingIcon: Bool
 
     var body: some View {
         HStack(spacing: 7) {
@@ -7489,7 +7517,8 @@ private struct AgentHeaderView: View {
             agent: agent,
             state: state,
             iconSize: 16,
-            animatesWorkingIcon: animatesWorkingIcon
+            animatesWorkingIcon: false,
+            usesMonochromeIdleIcon: false
         )
         .frame(width: 16, height: 16)
         .accessibilityHidden(true)
@@ -7531,8 +7560,7 @@ private struct AgentSectionView: View {
             AgentHeaderView(
                 agent: agent,
                 state: state,
-                workingSessionCounts: workingSessionCounts,
-                animatesWorkingIcon: true
+                workingSessionCounts: workingSessionCounts
             )
 
             if rows.isEmpty {
@@ -8203,11 +8231,14 @@ enum AgentImages {
     static func menuHeaderIcon(for agent: AgentKind, color: Bool = false) -> NSImage {
         renderedImageCache.image(for: "menuHeader|\(agent.rawValue)|color:\(color)|state:base") {
             let icons = iconSet(for: agent)
-            let source = color ? icons.color : icons.mono
-            guard let image = source.copy() as? NSImage else {
-                return source
+            if color {
+                return renderedColorIcon(icons.color)
             }
-            image.isTemplate = !color
+
+            guard let image = icons.mono.copy() as? NSImage else {
+                return icons.mono
+            }
+            image.isTemplate = true
             return image
         }
     }
@@ -8217,6 +8248,10 @@ enum AgentImages {
         color: Bool = false,
         state: AgentState
     ) -> NSImage {
+        if color, state != .waiting {
+            return menuHeaderIcon(for: agent, color: true)
+        }
+
         guard state == .working || state == .waiting else {
             return menuHeaderIcon(for: agent, color: color)
         }
@@ -8322,6 +8357,18 @@ enum AgentImages {
             width: logo.size.width * menuBarLogoDisplayScale,
             height: logo.size.height * menuBarLogoDisplayScale
         )
+    }
+
+    private static func renderedColorIcon(_ logo: NSImage) -> NSImage {
+        let size = logo.size
+        return renderImage(size: size, isTemplate: false) {
+            logo.draw(
+                in: NSRect(origin: .zero, size: size),
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1.0
+            )
+        }
     }
 
     private static func drawAgentLogo(
