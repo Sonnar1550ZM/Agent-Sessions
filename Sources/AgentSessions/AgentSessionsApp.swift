@@ -4493,6 +4493,13 @@ final class SessionPopupController {
         .rightMouseDragged,
         .otherMouseDragged
     ]
+    private static let minimumCompactPopupWidth: CGFloat = 200
+    private static let pendingLatestResponseText = "Thinking..."
+    private static let compactWidthRelativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
 
     private enum PopupVisibilityState {
         case hidden
@@ -4850,9 +4857,16 @@ final class SessionPopupController {
             return
         }
 
+        let alignsTextTrailing = providerVisibility.popupRightAlignsTextOnRightSide
+            && providerVisibility.popupWindowPosition.isRightSide
+        let frameWidth = effectivePopupFrameWidth(
+            for: sessions,
+            alignsTextTrailing: alignsTextTrailing
+        )
+        let viewPopupWidth = frameWidth / CGFloat(providerVisibility.popupScale)
         let rootView = LatestParentSessionsPopupView(
             sessions: sessions,
-            popupWidth: CGFloat(providerVisibility.popupWindowWidth),
+            popupWidth: viewPopupWidth,
             popupScale: CGFloat(providerVisibility.popupScale),
             glassEnabled: providerVisibility.popupGlassEnabled,
             usesClearGlass: providerVisibility.popupUsesClearGlass,
@@ -4861,8 +4875,7 @@ final class SessionPopupController {
             textShadowStrength: providerVisibility.effectivePopupTextShadowStrength,
             textShadowDistance: CGFloat(providerVisibility.effectivePopupTextShadowDistance),
             textShadowRadius: CGFloat(providerVisibility.effectivePopupTextShadowRadius),
-            alignsTextTrailing: providerVisibility.popupRightAlignsTextOnRightSide
-                && providerVisibility.popupWindowPosition.isRightSide,
+            alignsTextTrailing: alignsTextTrailing,
             placesNewestSessionAtBottom: providerVisibility.popupWindowPosition.placesNewestPopupSessionAtBottom,
             showsUserPrompt: providerVisibility.popupShowsUserPrompt,
             showsResponseBody: providerVisibility.popupShowsResponseBody,
@@ -4873,13 +4886,17 @@ final class SessionPopupController {
         )
         let hostingController = ensureHostingController(rootView: rootView)
         hostingController.rootView = rootView
-        hostingController.view.frame.size.width = popupFrameWidth
+        hostingController.view.frame.size.width = frameWidth
         hostingController.view.invalidateIntrinsicContentSize()
         hostingController.view.layoutSubtreeIfNeeded()
 
         let fittingSize = hostingController.view.fittingSize
         let panel = ensurePanel(hostingController: hostingController)
-        let frame = positionedFrame(for: fittingSize, position: providerVisibility.popupWindowPosition)
+        let frame = positionedFrame(
+            for: fittingSize,
+            position: providerVisibility.popupWindowPosition,
+            width: frameWidth
+        )
         hostingController.view.frame.size = frame.size
 
         if popupVisibilityState == .disappearing {
@@ -5137,8 +5154,11 @@ final class SessionPopupController {
             && abs(lhs.size.height - rhs.size.height) < 0.5
     }
 
-    private func positionedFrame(for fittingSize: NSSize, position: PopupWindowPosition) -> NSRect {
-        let width = popupFrameWidth
+    private func positionedFrame(
+        for fittingSize: NSSize,
+        position: PopupWindowPosition,
+        width: CGFloat
+    ) -> NSRect {
         let scale = CGFloat(providerVisibility.popupScale)
         let height = max(fittingSize.height, 44 * scale)
         let screenFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
@@ -5315,8 +5335,199 @@ final class SessionPopupController {
         )
     }
 
-    private var popupFrameWidth: CGFloat {
+    private var maximumPopupFrameWidth: CGFloat {
         CGFloat(providerVisibility.popupWindowWidth) * CGFloat(providerVisibility.popupScale)
+    }
+
+    private func effectivePopupFrameWidth(
+        for sessions: [AgentSession],
+        alignsTextTrailing: Bool
+    ) -> CGFloat {
+        let maximumWidth = maximumPopupFrameWidth
+        guard providerVisibility.popupWindowPosition.isRightSide, !alignsTextTrailing else {
+            return maximumWidth
+        }
+
+        let metrics = popupScaleMetrics()
+        let outerHorizontalPadding = metrics.horizontalPadding + metrics.shadowBleedPadding
+        let maxRowContentWidth = max(maximumWidth - (2 * outerHorizontalPadding), 1)
+        let displayedSessions = sessions.filter { !$0.isSubagent }
+        let measuredRowWidth = displayedSessions
+            .map { compactRowContentWidth(for: $0, metrics: metrics, maxWidth: maxRowContentWidth) }
+            .max() ?? maxRowContentWidth
+        let minimumWidth = min(Self.minimumCompactPopupWidth * metrics.scale, maximumWidth)
+        let compactWidth = measuredRowWidth + (2 * outerHorizontalPadding)
+        return ceil(min(max(compactWidth, minimumWidth), maximumWidth))
+    }
+
+    private func compactRowContentWidth(
+        for session: AgentSession,
+        metrics: PopupScaleMetrics,
+        maxWidth: CGFloat
+    ) -> CGFloat {
+        let responseTextWidthLimit = max(maxWidth - (2 * metrics.responseHorizontalPadding), 1)
+        var measuredWidths: [CGFloat] = [
+            compactTitleRowWidth(for: session, metrics: metrics, maxWidth: maxWidth),
+            compactStateTimeRowWidth(for: session, metrics: metrics, maxWidth: maxWidth)
+        ]
+
+        if let userPromptText = compactUserPromptText(for: session) {
+            measuredWidths.append(
+                min(
+                    measuredSingleLineWidth(
+                        userPromptText,
+                        font: .systemFont(ofSize: metrics.metadataFontSize, weight: .semibold),
+                        maxWidth: responseTextWidthLimit
+                    ) + (2 * metrics.responseHorizontalPadding),
+                    maxWidth
+                )
+            )
+        }
+
+        if let responseText = compactResponseText(for: session) {
+            measuredWidths.append(
+                min(
+                    measuredWrappedTextWidth(
+                        responseText,
+                        font: .systemFont(ofSize: metrics.responseFontSize),
+                        maxWidth: responseTextWidthLimit
+                    ) + (2 * metrics.responseHorizontalPadding),
+                    maxWidth
+                )
+            )
+        }
+
+        return min(max(measuredWidths.max() ?? 1, 1), maxWidth)
+    }
+
+    private func compactTitleRowWidth(
+        for session: AgentSession,
+        metrics: PopupScaleMetrics,
+        maxWidth: CGFloat
+    ) -> CGFloat {
+        let titleRowInnerWidth = max(maxWidth - (2 * metrics.responseHorizontalPadding), 1)
+        let titleTextLimit = max(
+            titleRowInnerWidth
+                - metrics.iconSize
+                - metrics.titleSpacing
+                - (2 * metrics.titleHorizontalPadding),
+            1
+        )
+        let titleWidth = measuredWrappedTextWidth(
+            compactTitleText(for: session),
+            font: .systemFont(ofSize: metrics.titleFontSize, weight: .semibold),
+            maxWidth: titleTextLimit
+        ) + (2 * metrics.titleHorizontalPadding)
+        return min(
+            metrics.iconSize
+                + metrics.titleSpacing
+                + titleWidth
+                + (2 * metrics.responseHorizontalPadding),
+            maxWidth
+        )
+    }
+
+    private func compactStateTimeRowWidth(
+        for session: AgentSession,
+        metrics: PopupScaleMetrics,
+        maxWidth: CGFloat
+    ) -> CGFloat {
+        min(
+            measuredSingleLineWidth(
+                compactStateTimeText(for: session),
+                font: .systemFont(ofSize: metrics.metadataFontSize, weight: .semibold),
+                maxWidth: max(maxWidth - (2 * metrics.responseHorizontalPadding), 1)
+            ) + (2 * metrics.responseHorizontalPadding),
+            maxWidth
+        )
+    }
+
+    private func compactTitleText(for session: AgentSession) -> String {
+        if session.state == .working,
+           session.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Thinking..."
+        }
+
+        return session.displayTitle
+    }
+
+    private func compactUserPromptText(for session: AgentSession) -> String? {
+        guard providerVisibility.popupShowsUserPrompt,
+              let prompt = AgentTextSanitizer.userPromptText(session.latestUserPrompt),
+              !prompt.isEmpty,
+              AgentSessionTitleSanitizer.normalized(prompt) != AgentSessionTitleSanitizer.normalized(compactTitleText(for: session)) else {
+            return nil
+        }
+
+        return prompt
+    }
+
+    private func compactResponseText(for session: AgentSession) -> String? {
+        guard providerVisibility.popupShowsResponseBody,
+              providerVisibility.popupResponseLineLimit > 0 else {
+            return nil
+        }
+
+        if let text = AgentTextSanitizer.latestResponseText(
+            session.latestResponseText,
+            compactsBlankLines: providerVisibility.popupResponseCompactsBlankLines
+        ) {
+            return Self.truncatedCompactText(text, to: providerVisibility.popupResponseCharacterLimit)
+        }
+
+        if session.isAwaitingLatestResponseText {
+            return Self.pendingLatestResponseText
+        }
+
+        return nil
+    }
+
+    private func compactStateTimeText(for session: AgentSession) -> String {
+        "\(session.state.displayName) · \(compactRelativeTimeText(for: session.updatedAt))"
+    }
+
+    private func compactRelativeTimeText(for date: Date) -> String {
+        let elapsed = Date().timeIntervalSince(date)
+        if elapsed < 1 {
+            return "0s ago"
+        }
+
+        return Self.compactWidthRelativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func measuredSingleLineWidth(_ text: String, font: NSFont, maxWidth: CGFloat) -> CGFloat {
+        let measuredWidth = (text as NSString).size(withAttributes: [.font: font]).width
+        return ceil(min(max(measuredWidth, 1), maxWidth))
+    }
+
+    private func measuredWrappedTextWidth(_ text: String, font: NSFont, maxWidth: CGFloat) -> CGFloat {
+        let measuredWidth = (text as NSString).boundingRect(
+            with: NSSize(width: maxWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        ).width
+        return ceil(min(max(measuredWidth, 1), maxWidth))
+    }
+
+    private func popupScaleMetrics() -> PopupScaleMetrics {
+        PopupScaleMetrics(
+            scale: CGFloat(providerVisibility.popupScale),
+            textOpacity: 1,
+            textShadowStrength: providerVisibility.effectivePopupTextShadowStrength,
+            textShadowDistance: CGFloat(providerVisibility.effectivePopupTextShadowDistance),
+            textShadowRadius: CGFloat(providerVisibility.effectivePopupTextShadowRadius)
+        )
+    }
+
+    private static func truncatedCompactText(_ text: String, to limit: Int) -> String {
+        guard text.count > limit else {
+            return text
+        }
+
+        let truncatedLimit = max(limit - 3, 1)
+        let truncatedText = String(text.prefix(truncatedLimit))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return truncatedText + "..."
     }
 }
 
@@ -7556,7 +7767,7 @@ private struct SessionMenuRow: View {
     }
 
     private var detailFontSize: CGFloat {
-        8.5
+        9
     }
 
     private var latestResponseFontSize: CGFloat {
