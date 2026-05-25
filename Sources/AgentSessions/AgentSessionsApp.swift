@@ -8167,7 +8167,7 @@ private enum AgentColors {
 }
 
 private enum AgentIconAnimation {
-    static let highlightDuration: TimeInterval = 1.15
+    static let highlightDuration: TimeInterval = 1.75
 }
 
 struct AgentMenuBarStatus {
