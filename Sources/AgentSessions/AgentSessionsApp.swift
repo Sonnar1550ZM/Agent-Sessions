@@ -6042,11 +6042,32 @@ private final class AnimatedAgentIconImageView: NSImageView {
         image = AgentImages.menuHeaderIcon(
             for: agent,
             color: true,
-            state: state,
-            highlightPhase: nil
+            state: state
         )
     }
+}
 
+private struct MenuBarAgentIconView: View {
+    let agent: AgentKind
+    let state: AgentState
+    let iconSize: NSSize
+
+    var body: some View {
+        AnimatedAgentIconView(
+            agent: agent,
+            state: state,
+            iconSize: max(iconSize.width, iconSize.height),
+            animatesWorkingIcon: true
+        )
+        .frame(width: iconSize.width, height: iconSize.height)
+        .accessibilityHidden(true)
+    }
+}
+
+private final class MenuBarAgentIconHostingView: NSHostingView<MenuBarAgentIconView> {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
 }
 
 private struct PopupAlignedText: NSViewRepresentable {
@@ -6614,6 +6635,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let menuRefreshClock = DropdownMenuRefreshClock(interval: 1)
     private let menu = NSMenu()
     private var statusItems: [AgentKind: NSStatusItem] = [:]
+    private var statusIconHostingViews: [AgentKind: MenuBarAgentIconHostingView] = [:]
     private var fallbackStatusItem: NSStatusItem?
     private var statusIconRefreshTimer: Timer?
     private var statusIconRefreshInterval: TimeInterval?
@@ -6840,6 +6862,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             if let statusItem = statusItems.removeValue(forKey: agent) {
                 NSStatusBar.system.removeStatusItem(statusItem)
             }
+            statusIconHostingViews[agent]?.removeFromSuperview()
+            statusIconHostingViews[agent] = nil
             statusIconDisplayStates[agent] = nil
             statusIconRenderKeys[agent] = nil
         }
@@ -6867,6 +6891,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             NSStatusBar.system.removeStatusItem(statusItem)
         }
         statusItems.removeAll()
+        statusIconHostingViews.values.forEach { $0.removeFromSuperview() }
+        statusIconHostingViews.removeAll()
         removeFallbackStatusItem()
         statusIconDisplayStates.removeAll()
         statusIconRenderKeys.removeAll()
@@ -6911,24 +6937,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             let displayState = statusIconDisplayState(for: agent, now: now, refreshDisplayState: refreshDisplayStates)
             hasAnimatedIcon = hasAnimatedIcon || displayState == .working
             let renderKey = StatusIconRenderKey(
-                state: displayState,
-                highlightFrame: nil
+                state: displayState
             )
-            if statusIconRenderKeys[agent] != renderKey {
-                let status = AgentMenuBarStatus(
-                    agent: agent,
-                    state: displayState
+            if statusIconRenderKeys[agent] != renderKey || statusIconHostingViews[agent] == nil {
+                updateMenuBarIconView(
+                    for: agent,
+                    state: displayState,
+                    statusItem: statusItem
                 )
-                let image = AgentImages.menuBarStatus([status])
-                statusItem.button?.image = image
-                statusItem.length = image.size.width + Self.statusItemHorizontalPadding
                 statusIconRenderKeys[agent] = renderKey
             }
-            updateStatusButtonWorkingAnimation(
-                active: displayState == .working,
-                button: statusItem.button,
-                agent: agent
-            )
         }
 
         if let fallbackStatusItem {
@@ -7056,54 +7074,39 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         return displayState
     }
 
-    private func updateStatusButtonWorkingAnimation(active: Bool, button: NSStatusBarButton?, agent: AgentKind) {
-        guard let button else {
-            return
-        }
-
-        if active {
-            startStatusButtonWorkingAnimation(button, agent: agent)
-        } else {
-            stopStatusButtonWorkingAnimation(button)
-        }
-    }
-
-    private func startStatusButtonWorkingAnimation(_ button: NSStatusBarButton, agent: AgentKind) {
-        guard let maskImage = AgentImages.menuBarStatusMaskImage(for: agent) else {
-            return
-        }
-
-        let imageRect = statusButtonImageRect(in: button)
-        guard imageRect.width > 0, imageRect.height > 0 else {
-            return
-        }
-
-        AgentIconHighlightLayer.start(
-            in: button,
-            imageRect: imageRect,
-            maskImage: maskImage,
-            duration: AgentIconAnimation.highlightDuration
-        )
-    }
-
-    private func stopStatusButtonWorkingAnimation(_ button: NSStatusBarButton) {
-        AgentIconHighlightLayer.stop(in: button)
-    }
-
-    private func statusButtonImageRect(in button: NSStatusBarButton) -> CGRect {
-        let bounds = button.bounds
-        let imageSize = button.image?.size ?? NSSize(width: 15, height: 15)
-        return CGRect(
-            x: (bounds.width - imageSize.width) / 2,
-            y: (bounds.height - imageSize.height) / 2,
-            width: imageSize.width,
-            height: imageSize.height
-        )
-    }
-
     private struct StatusIconRenderKey: Equatable {
         let state: AgentState
-        let highlightFrame: Int?
+    }
+
+    private func updateMenuBarIconView(for agent: AgentKind, state: AgentState, statusItem: NSStatusItem) {
+        guard let button = statusItem.button else {
+            return
+        }
+
+        let iconSize = AgentImages.menuBarIconSize(for: agent)
+        statusItem.length = iconSize.width + Self.statusItemHorizontalPadding
+        button.image = nil
+
+        let iconView = MenuBarAgentIconView(agent: agent, state: state, iconSize: iconSize)
+        if let hostingView = statusIconHostingViews[agent] {
+            hostingView.rootView = iconView
+            return
+        }
+
+        let hostingView = MenuBarAgentIconHostingView(rootView: iconView)
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        hostingView.setContentHuggingPriority(.required, for: .horizontal)
+        hostingView.setContentHuggingPriority(.required, for: .vertical)
+        hostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        hostingView.setContentCompressionResistancePriority(.required, for: .vertical)
+        button.addSubview(hostingView)
+        NSLayoutConstraint.activate([
+            hostingView.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+            hostingView.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            hostingView.widthAnchor.constraint(equalToConstant: iconSize.width),
+            hostingView.heightAnchor.constraint(equalToConstant: iconSize.height)
+        ])
+        statusIconHostingViews[agent] = hostingView
     }
 
     private func setNeedsMenuRebuild() {
@@ -7376,19 +7379,21 @@ private enum AgentIconHighlightLayer {
         gradientLayer.name = gradientLayerName
         gradientLayer.colors = [
             NSColor.clear.cgColor,
-            NSColor.white.withAlphaComponent(0.18).cgColor,
-            NSColor.white.withAlphaComponent(0.58).cgColor,
-            NSColor.white.withAlphaComponent(0.18).cgColor,
+            NSColor.white.withAlphaComponent(0.08).cgColor,
+            NSColor.white.withAlphaComponent(0.28).cgColor,
+            NSColor.white.withAlphaComponent(0.82).cgColor,
+            NSColor.white.withAlphaComponent(0.28).cgColor,
+            NSColor.white.withAlphaComponent(0.08).cgColor,
             NSColor.clear.cgColor
         ]
-        gradientLayer.locations = [0, 0.34, 0.5, 0.66, 1]
+        gradientLayer.locations = [0, 0.2, 0.39, 0.5, 0.61, 0.8, 1]
         gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
         gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
         gradientLayer.bounds = CGRect(
             x: 0,
             y: 0,
-            width: max(imageRect.width * 1.2, 7),
-            height: max(imageRect.height * 2.5, 14)
+            width: max(imageRect.width * 0.95, 8),
+            height: max(imageRect.height * 2.7, 16)
         )
         gradientLayer.position = startPosition(in: highlightLayer.bounds, stripeSize: gradientLayer.bounds.size)
         gradientLayer.transform = CATransform3DMakeRotation(CGFloat.pi / 4, 0, 0, 1)
@@ -7527,7 +7532,7 @@ private struct AgentSectionView: View {
                 agent: agent,
                 state: state,
                 workingSessionCounts: workingSessionCounts,
-                animatesWorkingIcon: refreshClock.isRunning
+                animatesWorkingIcon: true
             )
 
             if rows.isEmpty {
@@ -8134,48 +8139,7 @@ private enum AgentColors {
 }
 
 private enum AgentIconAnimation {
-    static let framesPerSecond = 24
-    static let animatedRefreshInterval: TimeInterval = 1.0 / Double(framesPerSecond)
     static let highlightDuration: TimeInterval = 1.15
-    static let highlightFrameCount = max(
-        1,
-        Int((highlightDuration * Double(framesPerSecond)).rounded(.toNearestOrAwayFromZero))
-    )
-
-    static func highlightPhase(at date: Date, startDate: Date) -> CGFloat {
-        highlightPhase(forFrame: highlightFrameIndex(at: date, startDate: startDate))
-    }
-
-    static func highlightPhase(at date: Date) -> CGFloat {
-        highlightPhase(forFrame: highlightFrameIndex(at: date))
-    }
-
-    static func highlightFrameIndex(at date: Date, startDate: Date) -> Int {
-        highlightFrameIndex(elapsed: date.timeIntervalSince(startDate))
-    }
-
-    static func highlightFrameIndex(at date: Date) -> Int {
-        highlightFrameIndex(elapsed: date.timeIntervalSinceReferenceDate)
-    }
-
-    static func highlightFrameIndex(forPhase phase: CGFloat) -> Int {
-        let clampedPhase = min(max(phase, 0), 1)
-        let frame = Int((clampedPhase * CGFloat(max(highlightFrameCount - 1, 1))).rounded())
-        return min(max(frame, 0), highlightFrameCount - 1)
-    }
-
-    static func highlightPhase(forFrame frame: Int) -> CGFloat {
-        guard highlightFrameCount > 1 else {
-            return 0
-        }
-        return CGFloat(frame) / CGFloat(highlightFrameCount - 1)
-    }
-
-    private static func highlightFrameIndex(elapsed: TimeInterval) -> Int {
-        let normalizedElapsed = elapsed.truncatingRemainder(dividingBy: highlightDuration)
-        let rawFrame = Int((normalizedElapsed / highlightDuration) * Double(highlightFrameCount))
-        return min(max(rawFrame, 0), highlightFrameCount - 1)
-    }
 }
 
 struct AgentMenuBarStatus {
@@ -8198,14 +8162,13 @@ enum AgentImages {
         color: loadMenuBarIcon(name: "Claude Color@3x")
     )
 
-    static func menuBarStatus(_ statuses: [AgentMenuBarStatus], highlightPhase: CGFloat? = nil) -> NSImage {
+    static func menuBarStatus(_ statuses: [AgentMenuBarStatus]) -> NSImage {
         guard !statuses.isEmpty else {
             return fallbackMenuBarStatus()
         }
 
         let size = menuBarStatusSize(for: statuses)
-        let highlightFrame = highlightPhase.map(AgentIconAnimation.highlightFrameIndex(forPhase:))
-        let cacheKey = menuBarStatusCacheKey(statuses: statuses, highlightFrame: highlightFrame)
+        let cacheKey = menuBarStatusCacheKey(statuses: statuses)
 
         return renderedImageCache.image(for: cacheKey) {
             renderImage(size: size, isTemplate: false) {
@@ -8219,8 +8182,7 @@ enum AgentImages {
                     state: status.state,
                     size: displaySize,
                     x: x,
-                    canvasHeight: size.height,
-                        highlightPhase: status.state == .working ? phase(forHighlightFrame: highlightFrame) : nil
+                    canvasHeight: size.height
                 )
                 x += displaySize.width + menuBarLogoGap
             }
@@ -8228,16 +8190,14 @@ enum AgentImages {
         }
     }
 
-    static func menuBarStatusMaskImage(for agent: AgentKind) -> CGImage? {
-        let image = menuBarStatus([AgentMenuBarStatus(agent: agent, state: .working)])
+    static func menuHeaderIconMaskImage(for agent: AgentKind, color: Bool = true) -> CGImage? {
+        let image = menuHeaderIcon(for: agent, color: color, state: .working)
         var rect = NSRect(origin: .zero, size: image.size)
         return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
 
-    static func menuHeaderIconMaskImage(for agent: AgentKind, color: Bool = true) -> CGImage? {
-        let image = menuHeaderIcon(for: agent, color: color, state: .working, highlightPhase: nil)
-        var rect = NSRect(origin: .zero, size: image.size)
-        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+    static func menuBarIconSize(for agent: AgentKind) -> NSSize {
+        displaySize(for: iconSet(for: agent).mono)
     }
 
     static func menuHeaderIcon(for agent: AgentKind, color: Bool = false) -> NSImage {
@@ -8255,8 +8215,7 @@ enum AgentImages {
     static func menuHeaderIcon(
         for agent: AgentKind,
         color: Bool = false,
-        state: AgentState,
-        highlightPhase: CGFloat? = nil
+        state: AgentState
     ) -> NSImage {
         guard state == .working || state == .waiting else {
             return menuHeaderIcon(for: agent, color: color)
@@ -8264,8 +8223,7 @@ enum AgentImages {
 
         let icons = iconSet(for: agent)
         let size = icons.mono.size
-        let highlightFrame = highlightPhase.map(AgentIconAnimation.highlightFrameIndex(forPhase:))
-        let cacheKey = "menuHeader|\(agent.rawValue)|color:\(color)|state:\(state.rawValue)|frame:\(highlightFrame ?? -1)"
+        let cacheKey = "menuHeader|\(agent.rawValue)|color:\(color)|state:\(state.rawValue)"
 
         return renderedImageCache.image(for: cacheKey) {
             renderImage(size: size, isTemplate: false) {
@@ -8274,8 +8232,7 @@ enum AgentImages {
                     state: state,
                     size: size,
                     x: 0,
-                    canvasHeight: size.height,
-                    highlightPhase: phase(forHighlightFrame: highlightFrame)
+                    canvasHeight: size.height
                 )
             }
         }
@@ -8317,18 +8274,11 @@ enum AgentImages {
         }
     }
 
-    private static func menuBarStatusCacheKey(statuses: [AgentMenuBarStatus], highlightFrame: Int?) -> String {
+    private static func menuBarStatusCacheKey(statuses: [AgentMenuBarStatus]) -> String {
         let statusKey = statuses
             .map { "\($0.agent.rawValue):\($0.state.rawValue)" }
             .joined(separator: ",")
-        return "menuBarStatus|\(statusKey)|frame:\(highlightFrame ?? -1)"
-    }
-
-    private static func phase(forHighlightFrame frame: Int?) -> CGFloat? {
-        guard let frame else {
-            return nil
-        }
-        return AgentIconAnimation.highlightPhase(forFrame: frame)
+        return "menuBarStatus|\(statusKey)"
     }
 
     private static func renderImage(size: NSSize, isTemplate: Bool, draw: () -> Void) -> NSImage {
@@ -8379,8 +8329,7 @@ enum AgentImages {
         state: AgentState,
         size: NSSize,
         x: CGFloat,
-        canvasHeight: CGFloat,
-        highlightPhase: CGFloat?
+        canvasHeight: CGFloat
     ) {
         let logoRect = NSRect(
             x: x,
@@ -8392,52 +8341,11 @@ enum AgentImages {
         switch state {
         case .working:
             icons.color.draw(in: logoRect, from: .zero, operation: .sourceOver, fraction: 1.0)
-            if let highlightPhase {
-                drawWorkingHighlight(icons.color, in: logoRect, phase: highlightPhase)
-            }
         case .waiting:
             drawTemplateLogo(icons.mono, in: logoRect, color: AgentColors.waiting)
         case .idle, .ended:
             drawTemplateLogo(icons.mono, in: logoRect, color: .labelColor)
         }
-    }
-
-    private static func drawWorkingHighlight(_ logo: NSImage, in rect: NSRect, phase: CGFloat) {
-        var proposedRect = NSRect(origin: .zero, size: logo.size)
-        guard let cgImage = logo.cgImage(forProposedRect: &proposedRect, context: NSGraphicsContext.current, hints: nil),
-              let context = NSGraphicsContext.current?.cgContext,
-              let gradient = NSGradient(colors: [
-                .clear,
-                NSColor.white.withAlphaComponent(0.18),
-                NSColor.white.withAlphaComponent(0.58),
-                NSColor.white.withAlphaComponent(0.18),
-                .clear
-              ]) else {
-            return
-        }
-
-        let clampedPhase = min(max(phase, 0), 1)
-        let stripeWidth = max(rect.width * 0.84, 7)
-        let slant = rect.height * 0.5
-        let travelWidth = rect.width + stripeWidth + (slant * 2)
-        let leadingX = rect.minX - stripeWidth - slant + (travelWidth * clampedPhase)
-        let stripePath = NSBezierPath()
-        stripePath.move(to: NSPoint(x: leadingX - slant, y: rect.minY))
-        stripePath.line(to: NSPoint(x: leadingX + stripeWidth - slant, y: rect.minY))
-        stripePath.line(to: NSPoint(x: leadingX + stripeWidth + slant, y: rect.maxY))
-        stripePath.line(to: NSPoint(x: leadingX + slant, y: rect.maxY))
-        stripePath.close()
-
-        context.saveGState()
-        context.clip(to: rect, mask: cgImage)
-        context.setBlendMode(.screen)
-        stripePath.addClip()
-        gradient.draw(
-            from: NSPoint(x: leadingX - slant, y: rect.midY),
-            to: NSPoint(x: leadingX + stripeWidth + slant, y: rect.midY),
-            options: []
-        )
-        context.restoreGState()
     }
 
     private static func drawTemplateLogo(_ logo: NSImage, in rect: NSRect, color: NSColor) {
