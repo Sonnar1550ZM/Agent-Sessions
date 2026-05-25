@@ -4425,7 +4425,7 @@ final class SessionPopupController {
     private static let frameUpdateAnimationDuration: TimeInterval = 0.18
     private static let emptySessionCloseDelay: TimeInterval = 0.35
     private static let appearanceAnimationOffset: CGFloat = 14
-    private static let mouseProximityMargin: CGFloat = 30
+    private static let mouseProximityMargin: CGFloat = 60
     private static let mouseProximityAnimationDuration: TimeInterval = 0.08
     private static let mouseProximityEventMask: NSEvent.EventTypeMask = [
         .mouseMoved,

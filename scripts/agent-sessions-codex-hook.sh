@@ -91,6 +91,23 @@ def uses_auto_review_approvals(value):
         )
     return False
 
+def configured_auto_review_approvals():
+    path = os.environ.get("AGENT_SESSIONS_CODEX_CONFIG")
+    if not path:
+        path = os.path.expanduser("~/.codex/config.toml")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                body = line.split("#", 1)[0].strip()
+                if not body or "=" not in body:
+                    continue
+                key, value = body.split("=", 1)
+                if is_approval_reviewer_key(key) and is_auto_review_approver_value(value):
+                    return True
+    except Exception:
+        return False
+    return False
+
 def notification_type(event):
     candidates = [
         event.get("notification_type"),
@@ -126,16 +143,18 @@ def notification_is_permission_dialog(event):
         "permission_request",
     )
 
+auto_review_approvals = uses_auto_review_approvals(event) or configured_auto_review_approvals()
+
 if hook_event == "PreCompact":
     state = "Working"
 elif hook_event == "PostCompact":
     state = "Idle"
 elif hook_event == "PermissionRequest":
-    state = "Working" if uses_auto_review_approvals(event) else "Waiting"
+    state = "Working" if auto_review_approvals else "Waiting"
 elif hook_event == "AskUserQuestion":
     state = "Waiting"
 elif hook_event == "Notification":
-    if uses_auto_review_approvals(event) and notification_is_permission_dialog(event):
+    if auto_review_approvals and notification_is_permission_dialog(event):
         state = "Working"
     else:
         state = "Waiting" if notification_is_waiting_dialog(event) else "Working"
