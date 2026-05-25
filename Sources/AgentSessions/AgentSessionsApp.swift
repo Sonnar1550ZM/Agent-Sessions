@@ -2754,15 +2754,6 @@ private struct ProviderSettingsRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(nsImage: AgentImages.menuHeaderIcon(
-                for: agent,
-                color: true
-            ))
-                .resizable()
-                .renderingMode(.original)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 22, height: 22)
-
             VStack(alignment: .leading, spacing: 2) {
                 Text(agent.providerSettingsTitle)
                     .font(.body)
