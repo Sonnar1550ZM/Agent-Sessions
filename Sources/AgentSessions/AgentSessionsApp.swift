@@ -3786,11 +3786,12 @@ final class AppController: ObservableObject {
     private var serverRetryWorkItem: DispatchWorkItem?
     private var serverGeneration = 0
     private let eventEnrichmentQueue = DispatchQueue(label: "app.agentsessions.event-enrichment", qos: .utility)
+    private var codexResponseRefreshWorkItems: [String: [DispatchWorkItem]] = [:]
     private var claudeResponseRefreshWorkItems: [String: [DispatchWorkItem]] = [:]
     private var cancellables: Set<AnyCancellable> = []
     private static let serverRetryDelay: TimeInterval = 5
-    private static let claudeResponseRetryDelays: [TimeInterval] = [0.5, 2.0]
-    private static let claudeResponseRefreshFreshnessWindow: TimeInterval = 5 * 60
+    private static let responseRetryDelays: [TimeInterval] = [0.15, 0.5, 1.0, 2.0, 4.0]
+    private static let responseRefreshFreshnessWindow: TimeInterval = 5 * 60
 
     init() {
         applyDisplayPreferences()
@@ -3953,7 +3954,7 @@ final class AppController: ObservableObject {
         }
 
         let session = store.apply(immediateEvent)
-        scheduleClaudeResponseRefreshes(for: session)
+        scheduleResponseRefreshes(for: session)
         enrichEventAfterInitialApply(immediateEvent)
     }
 
@@ -4010,7 +4011,7 @@ final class AppController: ObservableObject {
                 }
 
                 let session = self.store.apply(resolvedEvent)
-                self.scheduleClaudeResponseRefreshes(for: session)
+                self.scheduleResponseRefreshes(for: session)
             }
         }
     }
@@ -4027,20 +4028,48 @@ final class AppController: ObservableObject {
         return updatedAt >= existingStateReferenceDate
     }
 
-    private func scheduleClaudeResponseRefreshes(for session: AgentSession) {
-        guard session.agent == .claudeCode else {
-            return
+    private func scheduleResponseRefreshes(for session: AgentSession) {
+        switch session.agent {
+        case .codex:
+            scheduleCodexResponseRefreshes(for: session)
+        case .claudeCode:
+            scheduleClaudeResponseRefreshes(for: session)
         }
+    }
+
+    private func scheduleCodexResponseRefreshes(for session: AgentSession) {
+        guard session.agent == .codex else { return }
+
+        let sessionId = session.sessionId
+        codexResponseRefreshWorkItems[sessionId]?.forEach { $0.cancel() }
+
+        var workItems: [DispatchWorkItem] = []
+        for (index, delay) in Self.responseRetryDelays.enumerated() {
+            let item = DispatchWorkItem { [weak self] in
+                self?.refreshResponse(sessionId: sessionId, agent: .codex, transcriptPath: nil)
+                if index == Self.responseRetryDelays.count - 1 {
+                    self?.codexResponseRefreshWorkItems[sessionId] = nil
+                }
+            }
+            workItems.append(item)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+        }
+
+        codexResponseRefreshWorkItems[sessionId] = workItems
+    }
+
+    private func scheduleClaudeResponseRefreshes(for session: AgentSession) {
+        guard session.agent == .claudeCode else { return }
 
         let sessionId = session.sessionId
         let transcriptPath = session.transcriptPath
         claudeResponseRefreshWorkItems[sessionId]?.forEach { $0.cancel() }
 
         var workItems: [DispatchWorkItem] = []
-        for (index, delay) in Self.claudeResponseRetryDelays.enumerated() {
+        for (index, delay) in Self.responseRetryDelays.enumerated() {
             let item = DispatchWorkItem { [weak self] in
-                self?.refreshClaudeResponse(sessionId: sessionId, transcriptPath: transcriptPath)
-                if index == Self.claudeResponseRetryDelays.count - 1 {
+                self?.refreshResponse(sessionId: sessionId, agent: .claudeCode, transcriptPath: transcriptPath)
+                if index == Self.responseRetryDelays.count - 1 {
                     self?.claudeResponseRefreshWorkItems[sessionId] = nil
                 }
             }
@@ -4051,32 +4080,31 @@ final class AppController: ObservableObject {
         claudeResponseRefreshWorkItems[sessionId] = workItems
     }
 
-    private func refreshClaudeResponse(sessionId: String, transcriptPath: String?) {
+    private func refreshResponse(sessionId: String, agent: AgentKind, transcriptPath: String?) {
         guard let session = store.sessions.first(where: {
-            $0.agent == .claudeCode && $0.sessionId == sessionId
+            $0.agent == agent && $0.sessionId == sessionId
         }) else {
             return
         }
 
         let title = resolvedTitle(for: session) ?? fallbackTitle(for: session)
-        guard let latestClaudeResponse = ClaudeLatestResponseResolver.latestResponse(
-            for: session.sessionId,
-            transcriptPath: transcriptPath ?? session.transcriptPath,
-            afterUserPrompt: pendingResponseUserPrompt(for: session)
+        guard let latestResponse = latestResponse(
+            for: session,
+            transcriptPathOverride: transcriptPath
         ) else {
             return
         }
 
-        let responseTextChanged = latestClaudeResponse.text != session.latestResponseText
+        let responseTextChanged = latestResponse.text != session.latestResponseText
         guard title != session.title
             || responseTextChanged
-            || latestClaudeResponse.transcriptPath != session.transcriptPath
-            || session.latestResponsePhase != "assistant" else {
+            || latestResponse.transcriptPath != session.transcriptPath
+            || session.latestResponsePhase != latestResponse.phase else {
             return
         }
 
         let refreshedAt = Date()
-        store.apply(AgentEvent(
+        let refreshedEvent = AgentEvent(
             agent: session.agent,
             sessionId: session.sessionId,
             state: session.state,
@@ -4085,7 +4113,7 @@ final class AppController: ObservableObject {
             event: session.event,
             terminal: session.terminal,
             pid: session.pid,
-            updatedAt: updatedAtForClaudeResponseRefresh(
+            updatedAt: updatedAtForResponseRefresh(
                 session: session,
                 responseTextChanged: responseTextChanged,
                 now: refreshedAt
@@ -4094,11 +4122,16 @@ final class AppController: ObservableObject {
             subagentNickname: session.subagentNickname,
             subagentRole: session.subagentRole,
             subagentDepth: session.subagentDepth,
-            transcriptPath: latestClaudeResponse.transcriptPath,
+            transcriptPath: latestResponse.transcriptPath,
             latestUserPrompt: session.latestUserPrompt,
-            latestResponseText: latestClaudeResponse.text,
-            latestResponsePhase: "assistant"
-        ))
+            latestResponseText: latestResponse.text,
+            latestResponsePhase: latestResponse.phase
+        )
+
+        let applied = store.apply(refreshedEvent)
+        if shouldHideSession(applied) {
+            store.removeSession(agent: applied.agent, sessionId: applied.sessionId)
+        }
     }
 
     private func refreshSessionTitles() {
@@ -4107,17 +4140,11 @@ final class AppController: ObservableObject {
 
         for session in store.sessions {
             let title = resolvedTitle(for: session) ?? fallbackTitle(for: session)
-            let latestClaudeResponse = session.agent == .claudeCode
-                ? ClaudeLatestResponseResolver.latestResponse(
-                    for: session.sessionId,
-                    transcriptPath: session.transcriptPath,
-                    afterUserPrompt: pendingResponseUserPrompt(for: session)
-                )
-                : nil
-            let latestResponseText = latestClaudeResponse?.text ?? session.latestResponseText
-            let latestResponsePhase = latestClaudeResponse == nil ? session.latestResponsePhase : "assistant"
-            let transcriptPath = latestClaudeResponse?.transcriptPath ?? session.transcriptPath
-            let responseTextChanged = latestClaudeResponse != nil
+            let latestResponse = latestResponse(for: session)
+            let latestResponseText = latestResponse?.text ?? session.latestResponseText
+            let latestResponsePhase = latestResponse?.phase ?? session.latestResponsePhase
+            let transcriptPath = latestResponse?.transcriptPath ?? session.transcriptPath
+            let responseTextChanged = latestResponse != nil
                 && latestResponseText != session.latestResponseText
 
             guard title != session.title
@@ -4137,7 +4164,7 @@ final class AppController: ObservableObject {
                 event: session.event,
                 terminal: session.terminal,
                 pid: session.pid,
-                updatedAt: updatedAtForClaudeResponseRefresh(
+                updatedAt: updatedAtForResponseRefresh(
                     session: session,
                     responseTextChanged: responseTextChanged,
                     now: refreshedAt
@@ -4154,7 +4181,40 @@ final class AppController: ObservableObject {
         }
     }
 
-    private func updatedAtForClaudeResponseRefresh(
+    private func latestResponse(
+        for session: AgentSession,
+        transcriptPathOverride: String? = nil
+    ) -> (text: String, phase: String?, transcriptPath: String?)? {
+        switch session.agent {
+        case .codex:
+            guard let latestCodexResponse = CodexSessionWatcher.latestResponse(
+                for: session.sessionId,
+                afterUserPrompt: pendingResponseUserPrompt(for: session)
+            ) else {
+                return nil
+            }
+            return (
+                text: latestCodexResponse.text,
+                phase: latestCodexResponse.phase,
+                transcriptPath: session.transcriptPath
+            )
+        case .claudeCode:
+            guard let latestClaudeResponse = ClaudeLatestResponseResolver.latestResponse(
+                for: session.sessionId,
+                transcriptPath: transcriptPathOverride ?? session.transcriptPath,
+                afterUserPrompt: pendingResponseUserPrompt(for: session)
+            ) else {
+                return nil
+            }
+            return (
+                text: latestClaudeResponse.text,
+                phase: "assistant",
+                transcriptPath: latestClaudeResponse.transcriptPath
+            )
+        }
+    }
+
+    private func updatedAtForResponseRefresh(
         session: AgentSession,
         responseTextChanged: Bool,
         now: Date
@@ -4169,7 +4229,7 @@ final class AppController: ObservableObject {
 
         let elapsed = now.timeIntervalSince(session.updatedAt)
         guard elapsed >= 0,
-              elapsed <= Self.claudeResponseRefreshFreshnessWindow else {
+              elapsed <= Self.responseRefreshFreshnessWindow else {
             return session.updatedAt
         }
 
