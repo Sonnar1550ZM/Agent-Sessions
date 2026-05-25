@@ -227,6 +227,37 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.event, "permission_request")
     }
 
+    func testAutoReviewEscalatedExecCommandKeepsWorking() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"`approvals_reviewer` is `auto_review`: Sandbox escalations with require_escalated will be reviewed automatically."}]}}
+        {"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\\"cmd\\":\\"open -a Safari\\",\\"sandbox_permissions\\":\\"require_escalated\\",\\"justification\\":\\"Open Safari\\"}"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.state, .working)
+        XCTAssertEqual(parsed.event, "function_call")
+        XCTAssertTrue(parsed.usesAutoReviewApprovals)
+    }
+
+    func testAutoReviewApprovalModeSurvivesDeltaParsing() {
+        let baseText = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"The current `approvals_reviewer` value is `guardian_subagent`."}]}}
+        """
+        let deltaText = """
+        {"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\\"cmd\\":\\"open -a Safari\\",\\"sandbox_permissions\\":\\"require_escalated\\",\\"justification\\":\\"Open Safari\\"}"}}
+        """
+
+        let base = CodexSessionParser.parse(baseText, fallbackSessionId: "fallback")
+        let parsed = CodexSessionParser.parseDelta(deltaText, base: base)
+
+        XCTAssertEqual(parsed.state, .working)
+        XCTAssertEqual(parsed.event, "function_call")
+        XCTAssertTrue(parsed.usesAutoReviewApprovals)
+    }
+
     func testMcpElicitationFunctionCallDoesNotWait() {
         let text = """
         {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}

@@ -62,6 +62,35 @@ def requires_user_input_tool(name):
         or "askuserquestion" in compact
     )
 
+def compact_identifier(value):
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+def is_approval_reviewer_key(value):
+    compact = compact_identifier(value)
+    return compact in ("approvalsreviewer", "approvalreviewer")
+
+def is_auto_review_approver_value(value):
+    compact = compact_identifier(value)
+    return "autoreview" in compact or "guardiansubagent" in compact
+
+def uses_auto_review_approvals(value):
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if is_approval_reviewer_key(key) and is_auto_review_approver_value(nested):
+                return True
+            if uses_auto_review_approvals(nested):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(uses_auto_review_approvals(item) for item in value)
+    if isinstance(value, str):
+        compact = compact_identifier(value)
+        return (
+            ("approvalsreviewer" in compact or "approvalreviewer" in compact)
+            and ("autoreview" in compact or "guardiansubagent" in compact)
+        )
+    return False
+
 def notification_type(event):
     candidates = [
         event.get("notification_type"),
@@ -91,14 +120,25 @@ def notification_is_waiting_dialog(event):
         "question_prompt",
     )
 
+def notification_is_permission_dialog(event):
+    return notification_type(event) in (
+        "permission_prompt",
+        "permission_request",
+    )
+
 if hook_event == "PreCompact":
     state = "Working"
 elif hook_event == "PostCompact":
     state = "Idle"
-elif hook_event in ("PermissionRequest", "AskUserQuestion"):
+elif hook_event == "PermissionRequest":
+    state = "Working" if uses_auto_review_approvals(event) else "Waiting"
+elif hook_event == "AskUserQuestion":
     state = "Waiting"
 elif hook_event == "Notification":
-    state = "Waiting" if notification_is_waiting_dialog(event) else "Working"
+    if uses_auto_review_approvals(event) and notification_is_permission_dialog(event):
+        state = "Working"
+    else:
+        state = "Waiting" if notification_is_waiting_dialog(event) else "Working"
 elif hook_event == "PreToolUse":
     state = "Waiting" if requires_user_input_tool(tool_name(event)) else "Working"
 elif hook_event == "UserPromptSubmit":
@@ -179,6 +219,11 @@ PY
 )"
 
 if [ -z "${payload:-}" ]; then
+  exit 0
+fi
+
+if [ "${AGENT_SESSIONS_DRY_RUN:-}" = "1" ]; then
+  printf '%s' "$payload"
   exit 0
 fi
 

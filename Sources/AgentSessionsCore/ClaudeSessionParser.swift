@@ -203,8 +203,12 @@ public enum ClaudeSessionParser {
         }
     }
 
-    public static func latestAssistantResponseText(fromTranscript text: String) -> String? {
+    public static func latestAssistantResponseText(
+        fromTranscript text: String,
+        afterUserPrompt expectedUserPrompt: String? = nil
+    ) -> String? {
         var latestResponseText: String?
+        var hasSeenExpectedPrompt = AgentTextSanitizer.userPromptText(expectedUserPrompt) == nil
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let data = line.data(using: .utf8),
@@ -218,10 +222,17 @@ public enum ClaudeSessionParser {
                       let responseText = assistantResponseText(from: message) else {
                     continue
                 }
+                guard hasSeenExpectedPrompt else {
+                    continue
+                }
                 latestResponseText = responseText
             case "user":
                 if isHumanUserMessage(object) {
                     latestResponseText = nil
+                    hasSeenExpectedPrompt = AgentTextSanitizer.userPromptTextMatches(
+                        promptTitle(from: object["message"]),
+                        expected: expectedUserPrompt
+                    )
                 }
             default:
                 continue

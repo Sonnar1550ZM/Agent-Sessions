@@ -16,6 +16,7 @@ public struct CodexParsedSession: Equatable, Sendable {
     public var latestResponsePhase: String?
     public var turnInterrupted: Bool
     public var interruptedTurnId: String?
+    public var usesAutoReviewApprovals: Bool
 
     public init(
         sessionId: String,
@@ -32,7 +33,8 @@ public struct CodexParsedSession: Equatable, Sendable {
         latestResponseText: String? = nil,
         latestResponsePhase: String? = nil,
         turnInterrupted: Bool = false,
-        interruptedTurnId: String? = nil
+        interruptedTurnId: String? = nil,
+        usesAutoReviewApprovals: Bool = false
     ) {
         self.sessionId = sessionId
         self.state = state
@@ -49,6 +51,7 @@ public struct CodexParsedSession: Equatable, Sendable {
         self.latestResponsePhase = latestResponsePhase
         self.turnInterrupted = turnInterrupted
         self.interruptedTurnId = interruptedTurnId
+        self.usesAutoReviewApprovals = usesAutoReviewApprovals
     }
 }
 
@@ -86,6 +89,7 @@ public enum CodexSessionParser {
         var latestResponsePhase: String?
         var turnInterrupted = false
         var interruptedTurnId: String?
+        var usesAutoReviewApprovals = false
 
         init(fallbackSessionId: String) {
             self.sessionId = fallbackSessionId
@@ -111,6 +115,7 @@ public enum CodexSessionParser {
             self.latestResponsePhase = base.latestResponsePhase
             self.turnInterrupted = base.turnInterrupted
             self.interruptedTurnId = base.interruptedTurnId
+            self.usesAutoReviewApprovals = base.usesAutoReviewApprovals
         }
 
         func toSession() -> CodexParsedSession {
@@ -135,7 +140,8 @@ public enum CodexSessionParser {
                 latestResponseText: latestResponseText,
                 latestResponsePhase: latestResponsePhase,
                 turnInterrupted: turnInterrupted,
-                interruptedTurnId: interruptedTurnId
+                interruptedTurnId: interruptedTurnId,
+                usesAutoReviewApprovals: usesAutoReviewApprovals
             )
         }
     }
@@ -177,6 +183,11 @@ public enum CodexSessionParser {
             }
 
             let payload = object["payload"] as? [String: Any] ?? [:]
+
+            if type == "turn_context",
+               containsAutoReviewApprovalConfiguration(payload) {
+                parserState.usesAutoReviewApprovals = true
+            }
             if let payloadTitle = extractTitle(fromPayloadFields: payload) {
                 parserState.title = payloadTitle
             }
@@ -207,6 +218,12 @@ public enum CodexSessionParser {
 
             if type == "response_item" {
                 let itemType = payload["type"] as? String ?? ""
+                if itemType == "message",
+                   let role = payload["role"] as? String,
+                   role == "developer" || role == "system",
+                   containsAutoReviewApprovalConfiguration(payload) {
+                    parserState.usesAutoReviewApprovals = true
+                }
                 if itemType == "message", let role = payload["role"] as? String, role == "user" {
                     switch syntheticUserNotification(payload) {
                     case .turnAborted:
@@ -240,7 +257,11 @@ public enum CodexSessionParser {
                 if parserState.turnInterrupted && isWorkingResponseItem(itemType) {
                     continue
                 }
-                if let waitingEvent = waitingEventForResponseItem(itemType: itemType, payload: payload) {
+                if let waitingEvent = waitingEventForResponseItem(
+                    itemType: itemType,
+                    payload: payload,
+                    usesAutoReviewApprovals: parserState.usesAutoReviewApprovals
+                ) {
                     parserState.statusTitle = nil
                     parserState.event = waitingEvent
                     parserState.state = .waiting
@@ -330,19 +351,77 @@ public enum CodexSessionParser {
             || itemType == "custom_tool_call_output"
     }
 
-    private static func waitingEventForResponseItem(itemType: String, payload: [String: Any]) -> String? {
+    private static func waitingEventForResponseItem(
+        itemType: String,
+        payload: [String: Any],
+        usesAutoReviewApprovals: Bool
+    ) -> String? {
         guard itemType == "function_call" else {
             return nil
         }
 
         let name = functionCallName(payload)
-        if requiresEscalatedSandboxPermission(payload) {
+        if requiresEscalatedSandboxPermission(payload), !usesAutoReviewApprovals {
             return "permission_request"
         }
         if requiresUserInputFunction(name) {
             return "request_user_input"
         }
         return nil
+    }
+
+    private static func containsAutoReviewApprovalConfiguration(_ value: Any) -> Bool {
+        if let dictionary = value as? [String: Any] {
+            for (key, nestedValue) in dictionary {
+                if isApprovalReviewerKey(key),
+                   isAutoReviewApproverValue(nestedValue) {
+                    return true
+                }
+                if containsAutoReviewApprovalConfiguration(nestedValue) {
+                    return true
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            return array.contains(where: containsAutoReviewApprovalConfiguration)
+        }
+
+        if let string = value as? String {
+            return stringMentionsAutoReviewApprovalConfiguration(string)
+        }
+
+        return false
+    }
+
+    private static func isApprovalReviewerKey(_ value: String) -> Bool {
+        let compact = compactIdentifier(value)
+        return compact == "approvalsreviewer" || compact == "approvalreviewer"
+    }
+
+    private static func isAutoReviewApproverValue(_ value: Any) -> Bool {
+        guard let string = trimmedString(value, limit: 160) else {
+            return false
+        }
+        let compact = compactIdentifier(string)
+        return compact.contains("autoreview")
+            || compact.contains("guardiansubagent")
+    }
+
+    private static func stringMentionsAutoReviewApprovalConfiguration(_ value: String) -> Bool {
+        let compact = compactIdentifier(value)
+        guard compact.contains("approvalsreviewer")
+            || compact.contains("approvalreviewer") else {
+            return false
+        }
+        return compact.contains("autoreview")
+            || compact.contains("guardiansubagent")
+    }
+
+    private static func compactIdentifier(_ value: String) -> String {
+        value
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
     }
 
     private static func functionCallName(_ payload: [String: Any]) -> String {

@@ -3387,11 +3387,15 @@ private extension AgentEvent {
 private enum ClaudeLatestResponseResolver {
     static func latestResponse(
         for sessionId: String,
-        transcriptPath: String?
+        transcriptPath: String?,
+        afterUserPrompt expectedUserPrompt: String? = nil
     ) -> (text: String, transcriptPath: String)? {
         guard let transcriptPath = resolvedTranscriptPath(sessionId: sessionId, transcriptPath: transcriptPath),
               let text = tailText(from: URL(fileURLWithPath: transcriptPath)),
-              let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(fromTranscript: text) else {
+              let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(
+                  fromTranscript: text,
+                  afterUserPrompt: expectedUserPrompt
+              ) else {
             return nil
         }
 
@@ -3488,9 +3492,11 @@ private enum AgentEventEnricher {
     }
 
     private static func eventWithCodexLatestResponse(_ event: AgentEvent) -> AgentEvent {
-        guard event.event != "UserPromptSubmit",
-              event.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
-              let latestResponse = CodexSessionWatcher.latestResponse(for: event.sessionId) else {
+        guard shouldBackfillLatestResponse(for: event),
+              let latestResponse = CodexSessionWatcher.latestResponse(
+                  for: event.sessionId,
+                  afterUserPrompt: event.latestUserPrompt
+              ) else {
             return event
         }
 
@@ -3498,10 +3504,11 @@ private enum AgentEventEnricher {
     }
 
     private static func eventWithClaudeLatestResponse(_ event: AgentEvent) -> AgentEvent {
-        guard event.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+        guard shouldBackfillLatestResponse(for: event),
               let latestResponse = ClaudeLatestResponseResolver.latestResponse(
                   for: event.sessionId,
-                  transcriptPath: event.transcriptPath
+                  transcriptPath: event.transcriptPath,
+                  afterUserPrompt: event.latestUserPrompt
               ) else {
             return event
         }
@@ -3511,6 +3518,13 @@ private enum AgentEventEnricher {
             phase: "assistant",
             transcriptPath: latestResponse.transcriptPath
         )
+    }
+
+    private static func shouldBackfillLatestResponse(for event: AgentEvent) -> Bool {
+        event.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+            && !event.state.isActive
+            && event.event != "UserPromptSubmit"
+            && event.event != "user_message"
     }
 
     private static func eventWithClaudeSubagentMetadata(_ event: AgentEvent) -> AgentEvent {
@@ -4047,7 +4061,8 @@ final class AppController: ObservableObject {
         let title = resolvedTitle(for: session) ?? fallbackTitle(for: session)
         guard let latestClaudeResponse = ClaudeLatestResponseResolver.latestResponse(
             for: session.sessionId,
-            transcriptPath: transcriptPath ?? session.transcriptPath
+            transcriptPath: transcriptPath ?? session.transcriptPath,
+            afterUserPrompt: pendingResponseUserPrompt(for: session)
         ) else {
             return
         }
@@ -4095,7 +4110,8 @@ final class AppController: ObservableObject {
             let latestClaudeResponse = session.agent == .claudeCode
                 ? ClaudeLatestResponseResolver.latestResponse(
                     for: session.sessionId,
-                    transcriptPath: session.transcriptPath
+                    transcriptPath: session.transcriptPath,
+                    afterUserPrompt: pendingResponseUserPrompt(for: session)
                 )
                 : nil
             let latestResponseText = latestClaudeResponse?.text ?? session.latestResponseText
@@ -4158,6 +4174,14 @@ final class AppController: ObservableObject {
         }
 
         return now
+    }
+
+    private func pendingResponseUserPrompt(for session: AgentSession) -> String? {
+        guard session.isAwaitingLatestResponseText else {
+            return nil
+        }
+
+        return session.latestUserPrompt
     }
 
     private func resolvedTitle(for session: AgentSession) -> String? {
@@ -5383,6 +5407,8 @@ private struct PopupSessionRow: View {
     let responseCompactsBlankLines: Bool
     let responseElidesShortFinalLine: Bool
 
+    private static let pendingLatestResponseText = "Thinking..."
+
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
             titleRow
@@ -5543,18 +5569,22 @@ private struct PopupSessionRow: View {
     }
 
     private var responseText: String? {
-        guard showsResponseBody else {
+        guard showsResponseBody, responseLineLimit > 0 else {
             return nil
         }
 
-        guard let text = AgentTextSanitizer.latestResponseText(
+        if let text = AgentTextSanitizer.latestResponseText(
             session.latestResponseText,
             compactsBlankLines: responseCompactsBlankLines
-        ) else {
-            return nil
+        ) {
+            return Self.truncated(text, to: responseCharacterLimit)
         }
 
-        return Self.truncated(text, to: responseCharacterLimit)
+        if session.isAwaitingLatestResponseText {
+            return Self.pendingLatestResponseText
+        }
+
+        return nil
     }
 
     private static func truncated(_ text: String, to limit: Int) -> String {
@@ -7075,6 +7105,8 @@ private struct AgentSectionView: View {
     let showsUserPrompt: Bool
     let onLayoutMayChange: () -> Void
 
+    private static let pendingLatestResponseText = "Thinking..."
+
     var body: some View {
         let now = refreshClock.now
         let rows = store.displayRows(for: agent, now: now)
@@ -7147,15 +7179,26 @@ private struct AgentSectionView: View {
             return nil
         }
 
-        guard shouldShowLatestResponseText(for: session, now: now),
-              let text = AgentTextSanitizer.latestResponseText(
-                session.latestResponseText,
-                compactsBlankLines: latestResponseCompactsBlankLines
-              ),
-              !text.isEmpty else {
-            return nil
+        if let text = AgentTextSanitizer.latestResponseText(
+            session.latestResponseText,
+            compactsBlankLines: latestResponseCompactsBlankLines
+        ), !text.isEmpty {
+            guard shouldShowLatestResponseText(for: session, now: now) else {
+                return nil
+            }
+            return text
         }
-        return text
+
+        if shouldShowPendingLatestResponseText(for: session, now: now) {
+            return Self.pendingLatestResponseText
+        }
+
+        return nil
+    }
+
+    private func shouldShowPendingLatestResponseText(for session: AgentSession, now: Date) -> Bool {
+        session.isAwaitingLatestResponseText
+            || AgentDisplayState.transientStartupExpirationDate(for: session, now: now) != nil
     }
 
     private func visibleUserPromptText(for session: AgentSession) -> String? {
@@ -7318,6 +7361,8 @@ private struct SessionMenuRow: View {
     let latestResponseCompactsBlankLines: Bool
     let showsUserPrompt: Bool
 
+    private static let pendingLatestResponseText = "Thinking..."
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: horizontalSpacing) {
@@ -7451,7 +7496,7 @@ private struct SessionMenuRow: View {
     }
 
     private var detailFontSize: CGFloat {
-        11
+        8.5
     }
 
     private var latestResponseFontSize: CGFloat {
@@ -7540,15 +7585,21 @@ private struct SessionMenuRow: View {
             return nil
         }
 
-        guard shouldShowLatestResponseText,
-              let text = AgentTextSanitizer.latestResponseText(
-                session.latestResponseText,
-                compactsBlankLines: latestResponseCompactsBlankLines
-              ),
-              !text.isEmpty else {
-            return nil
+        if let text = AgentTextSanitizer.latestResponseText(
+            session.latestResponseText,
+            compactsBlankLines: latestResponseCompactsBlankLines
+        ), !text.isEmpty {
+            guard shouldShowLatestResponseText else {
+                return nil
+            }
+            return text
         }
-        return text
+
+        if shouldShowPendingLatestResponseText {
+            return Self.pendingLatestResponseText
+        }
+
+        return nil
     }
 
     private var shouldShowLatestResponseText: Bool {
@@ -7558,6 +7609,11 @@ private struct SessionMenuRow: View {
 
     private var effectiveLatestResponseLineLimit: Int {
         session.isSubagent ? subagentLatestResponseLineLimit : latestResponseLineLimit
+    }
+
+    private var shouldShowPendingLatestResponseText: Bool {
+        session.isAwaitingLatestResponseText
+            || AgentDisplayState.transientStartupExpirationDate(for: session, now: now) != nil
     }
 
     private var helpText: String {

@@ -139,6 +139,34 @@ final class ClaudeSessionParserTests: XCTestCase {
         XCTAssertNil(response)
     }
 
+    func testLatestAssistantResponseRequiresExpectedPromptBeforeBackfill() {
+        let text = """
+        {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"前回の応答"}],"stop_reason":"end_turn"},"sessionId":"parent-session"}
+        """
+
+        let response = ClaudeSessionParser.latestAssistantResponseText(
+            fromTranscript: text,
+            afterUserPrompt: "次の依頼"
+        )
+
+        XCTAssertNil(response)
+    }
+
+    func testLatestAssistantResponseReturnsResponseAfterExpectedPrompt() {
+        let text = """
+        {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"前回の応答"}],"stop_reason":"end_turn"},"sessionId":"parent-session"}
+        {"type":"user","message":{"role":"user","content":"次の依頼"},"sessionId":"parent-session"}
+        {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"新しい応答"}],"stop_reason":"end_turn"},"sessionId":"parent-session"}
+        """
+
+        let response = ClaudeSessionParser.latestAssistantResponseText(
+            fromTranscript: text,
+            afterUserPrompt: "次の依頼"
+        )
+
+        XCTAssertEqual(response, "新しい応答")
+    }
+
     func testInterruptedSubagentTransitionsToIdle() {
         // Claude Code writes a synthetic "[Request interrupted by user]" user
         // message when the user presses Esc. The session must transition to

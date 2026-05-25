@@ -357,6 +357,23 @@ public enum AgentTextSanitizer {
         return String(text.prefix(limit))
     }
 
+    public static func userPromptTextMatches(_ value: String?, expected: String?) -> Bool {
+        guard let expected = userPromptText(expected),
+              !expected.isEmpty else {
+            return true
+        }
+        guard let value = userPromptText(value),
+              !value.isEmpty else {
+            return false
+        }
+
+        let normalizedValue = AgentSessionTitleSanitizer.normalized(value)
+        let normalizedExpected = AgentSessionTitleSanitizer.normalized(expected)
+        return normalizedValue == normalizedExpected
+            || normalizedValue.hasPrefix(normalizedExpected)
+            || normalizedExpected.hasPrefix(normalizedValue)
+    }
+
     private static func textByRemovingBlankLines(_ text: String) -> String {
         text
             .components(separatedBy: "\n")
@@ -523,6 +540,14 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
             sessionId: sessionId,
             transcriptPath: transcriptPath
         )
+    }
+
+    public var hasLatestResponseText: Bool {
+        AgentTextSanitizer.latestResponseText(latestResponseText)?.isEmpty == false
+    }
+
+    public var isAwaitingLatestResponseText: Bool {
+        state == .working && !hasLatestResponseText
     }
 
     public init(

@@ -593,16 +593,23 @@ public final class AgentStateStore: ObservableObject {
     }
 
     private static func clearsLatestResponse(existing: AgentSession?, event: AgentEvent) -> Bool {
-        guard event.latestResponseText == nil,
-              existing?.latestResponseText != nil else {
+        guard existing?.latestResponseText != nil else {
             return false
         }
 
-        if event.event == "UserPromptSubmit" || event.event == "user_message" {
+        if isUserPromptEvent(event.event) {
             return true
         }
 
+        guard event.latestResponseText == nil else {
+            return false
+        }
+
         return event.state == .working && existing?.state != .working
+    }
+
+    private static func isUserPromptEvent(_ event: String) -> Bool {
+        event == "UserPromptSubmit" || event == "user_message"
     }
 
     private static func latestResponseUpdatedAt(

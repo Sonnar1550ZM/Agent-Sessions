@@ -29,9 +29,13 @@ final class CodexSessionWatcher {
         parsedSession(for: sessionId)?.isInternalSubagent ?? false
     }
 
-    static func latestResponse(for sessionId: String) -> (text: String, phase: String?)? {
+    static func latestResponse(
+        for sessionId: String,
+        afterUserPrompt expectedUserPrompt: String? = nil
+    ) -> (text: String, phase: String?)? {
         guard let parsed = parsedSession(for: sessionId),
               !parsed.isInternalSubagent,
+              AgentTextSanitizer.userPromptTextMatches(parsed.latestUserPrompt, expected: expectedUserPrompt),
               let latestResponseText = parsed.latestResponseText else {
             return nil
         }
