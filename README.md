@@ -1,6 +1,6 @@
 # Agent Sessions
 
-Agent Sessions is a local macOS menu bar app for tracking multiple Codex and Claude Code sessions from one menu bar item.
+Agent Sessions is a local macOS menu bar app for tracking multiple Codex and Claude sessions from one menu bar item.
 
 ## MVP
 
@@ -9,11 +9,10 @@ Agent Sessions is a local macOS menu bar app for tracking multiple Codex and Cla
 - Sessions are keyed by `agent + sessionId`.
 - State persists to `~/Library/Application Support/Agent Sessions/state.json`.
 - Menu bar label shows Codex and Claude as separate status items that open the same shared menu.
-- Each icon uses the mono asset normally and switches to the color asset while Working.
-- Waiting sessions tint the mono icon yellow.
+- Each provider icon is a static color circle: Codex blue and Claude orange.
 - Menu state symbols use matching colors: Codex Working `#006EFE`, Claude Working `#cf8366`, and Waiting yellow.
 - Waiting takes precedence over Working in the menu bar aggregate state.
-- Menu groups sessions under custom `NSMenuItem.view` headers for `Codex` and `Claude Code`.
+- Menu groups sessions under custom `NSMenuItem.view` headers for `Codex` and `Claude`.
 - Long session titles wrap at about 30 characters in the menu.
 - The drop-down keeps the latest 5 visible sessions per agent across all states and hides inactive history after 24 hours.
 
@@ -43,7 +42,7 @@ curl -fsS -X POST http://127.0.0.1:7823/event \
 
 Accepted fields:
 
-- `agent`: `Codex`, `Claude`, or `Claude Code`.
+- `agent`: `Codex` or `Claude`.
 - `sessionId` or `session_id`: session identifier.
 - `state`: `Working`, `Waiting`, `Idle`, or `Ended`.
 - `title`
@@ -65,4 +64,4 @@ Hook scripts live in `scripts/`:
 - `scripts/agent-sessions-codex-hook.sh`
 - `scripts/agent-sessions-claude-hook.sh`
 
-They read hook JSON from stdin, post to `127.0.0.1:7823/event`, and always exit `0` so Codex or Claude Code continues normally when Agent Sessions is not running.
+They read hook JSON from stdin, post to `127.0.0.1:7823/event`, and always exit `0` so Codex or Claude continues normally when Agent Sessions is not running.

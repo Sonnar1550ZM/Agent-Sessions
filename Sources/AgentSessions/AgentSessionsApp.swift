@@ -4936,9 +4936,6 @@ final class SessionPopupController {
         stopMouseProximityTracking()
         renderedPopupSignature = nil
         guard let panel, panel.isVisible else {
-            if let view = hostingController?.view {
-                stopPopupIconAnimations(in: view)
-            }
             panel?.alphaValue = 1
             popupVisibilityState = .hidden
             return
@@ -4971,7 +4968,6 @@ final class SessionPopupController {
                 panel?.alphaValue = 1
                 if let view = self.hostingController?.view {
                     self.resetPopupContentAnimation(view)
-                    self.stopPopupIconAnimations(in: view)
                 }
                 self.renderedPopupSignature = nil
                 self.popupVisibilityState = .hidden
@@ -5215,16 +5211,6 @@ final class SessionPopupController {
         layer.opacity = 1
         layer.transform = CATransform3DIdentity
         CATransaction.commit()
-    }
-
-    private func stopPopupIconAnimations(in view: NSView) {
-        if let iconView = view as? AnimatedAgentIconImageView {
-            iconView.stopAnimating()
-        }
-
-        for subview in view.subviews {
-            stopPopupIconAnimations(in: subview)
-        }
     }
 
     private func animatePopupContentIn(
@@ -5765,12 +5751,9 @@ private struct PopupSessionRow: View {
 
     @ViewBuilder
     private var providerIcon: some View {
-        AnimatedAgentIconView(
+        AgentCircleIconView(
             agent: session.agent,
-            state: session.state,
-            iconSize: metrics.iconSize,
-            animatesWorkingIcon: true,
-            usesMonochromeIdleIcon: false
+            iconSize: metrics.iconSize
         )
         .frame(width: metrics.iconSize, height: metrics.iconSize)
         .padding(.top, metrics.titleVerticalPadding)
@@ -5920,173 +5903,25 @@ private struct PopupSessionStateTimeText: View {
     }()
 }
 
-private struct AnimatedAgentIconView: NSViewRepresentable {
+private struct AgentCircleIconView: View {
     let agent: AgentKind
-    let state: AgentState
     let iconSize: CGFloat
-    let animatesWorkingIcon: Bool
-    let usesMonochromeIdleIcon: Bool
 
-    func makeNSView(context: Context) -> AnimatedAgentIconImageView {
-        let imageView = AnimatedAgentIconImageView()
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.imageAlignment = .alignCenter
-        imageView.wantsLayer = true
-        imageView.layer?.contentsGravity = .resizeAspect
-        imageView.setContentHuggingPriority(.required, for: .horizontal)
-        imageView.setContentHuggingPriority(.required, for: .vertical)
-        imageView.setContentCompressionResistancePriority(.required, for: .horizontal)
-        imageView.setContentCompressionResistancePriority(.required, for: .vertical)
-        imageView.configure(
-            agent: agent,
-            state: state,
-            iconSize: iconSize,
-            animatesWorkingIcon: animatesWorkingIcon,
-            usesMonochromeIdleIcon: usesMonochromeIdleIcon
-        )
-        return imageView
-    }
-
-    func updateNSView(_ imageView: AnimatedAgentIconImageView, context: Context) {
-        imageView.configure(
-            agent: agent,
-            state: state,
-            iconSize: iconSize,
-            animatesWorkingIcon: animatesWorkingIcon,
-            usesMonochromeIdleIcon: usesMonochromeIdleIcon
-        )
-    }
-
-    static func dismantleNSView(_ imageView: AnimatedAgentIconImageView, coordinator: ()) {
-        imageView.stopAnimating()
-    }
-}
-
-private final class AnimatedAgentIconImageView: NSImageView {
-    private var renderedAgent: AgentKind?
-    private var renderedState: AgentState?
-    private var renderedIconSize: CGFloat = 0
-    private var renderedAnimatesWorkingIcon = false
-    private var renderedUsesMonochromeIdleIcon = false
-
-    override var intrinsicContentSize: NSSize {
-        guard renderedIconSize > 0 else {
-            return super.intrinsicContentSize
-        }
-        return NSSize(width: renderedIconSize, height: renderedIconSize)
-    }
-
-    override func viewWillMove(toWindow newWindow: NSWindow?) {
-        if newWindow == nil {
-            stopAnimating()
-        }
-        super.viewWillMove(toWindow: newWindow)
-    }
-
-    override func layout() {
-        super.layout()
-        if let renderedAgent,
-           renderedState == .working,
-           renderedAnimatesWorkingIcon {
-            startAnimating(agent: renderedAgent)
-        }
-    }
-
-    func configure(
-        agent: AgentKind,
-        state: AgentState,
-        iconSize: CGFloat,
-        animatesWorkingIcon: Bool,
-        usesMonochromeIdleIcon: Bool
-    ) {
-        let sizeChanged = abs(renderedIconSize - iconSize) > 0.001
-        let identityChanged = renderedAgent != agent
-            || renderedState != state
-            || renderedAnimatesWorkingIcon != animatesWorkingIcon
-            || renderedUsesMonochromeIdleIcon != usesMonochromeIdleIcon
-
-        renderedAgent = agent
-        renderedState = state
-        renderedAnimatesWorkingIcon = animatesWorkingIcon
-        renderedUsesMonochromeIdleIcon = usesMonochromeIdleIcon
-
-        if sizeChanged {
-            renderedIconSize = iconSize
-            setFrameSize(NSSize(width: iconSize, height: iconSize))
-            invalidateIntrinsicContentSize()
-        }
-
-        guard state == .working, animatesWorkingIcon else {
-            stopAnimating()
-            renderStaticIcon(
-                agent: agent,
-                state: state,
-                usesMonochromeIdleIcon: usesMonochromeIdleIcon,
-                force: identityChanged
-            )
-            return
-        }
-
-        renderStaticIcon(
-            agent: agent,
-            state: state,
-            usesMonochromeIdleIcon: usesMonochromeIdleIcon,
-            force: identityChanged || image == nil
-        )
-        startAnimating(agent: agent)
-    }
-
-    func stopAnimating() {
-        AgentIconHighlightLayer.stop(in: self)
-    }
-
-    private func startAnimating(agent: AgentKind) {
-        guard let maskImage = AgentImages.menuHeaderIconMaskImage(for: agent, color: true) else {
-            return
-        }
-
-        let imageSize = image?.size ?? NSSize(width: renderedIconSize, height: renderedIconSize)
-        let imageRect = AgentIconHighlightLayer.aspectFitRect(
-            contentSize: imageSize,
-            in: bounds
-        )
-        AgentIconHighlightLayer.start(
-            in: self,
-            imageRect: imageRect,
-            maskImage: maskImage,
-            duration: AgentIconAnimation.highlightDuration
-        )
-    }
-
-    private func renderStaticIcon(
-        agent: AgentKind,
-        state: AgentState,
-        usesMonochromeIdleIcon: Bool,
-        force: Bool
-    ) {
-        guard force || image == nil else {
-            return
-        }
-        image = AgentImages.menuHeaderIcon(
-            for: agent,
-            color: !(usesMonochromeIdleIcon && state == .idle),
-            state: state
-        )
+    var body: some View {
+        Circle()
+            .fill(Color(nsColor: AgentColors.working(for: agent)))
+            .frame(width: iconSize, height: iconSize)
     }
 }
 
 private struct MenuBarAgentIconView: View {
     let agent: AgentKind
-    let state: AgentState
     let iconSize: NSSize
 
     var body: some View {
-        AnimatedAgentIconView(
+        AgentCircleIconView(
             agent: agent,
-            state: state,
-            iconSize: max(iconSize.width, iconSize.height),
-            animatesWorkingIcon: true,
-            usesMonochromeIdleIcon: true
+            iconSize: max(iconSize.width, iconSize.height)
         )
         .frame(width: iconSize.width, height: iconSize.height)
         .accessibilityHidden(true)
@@ -6952,26 +6787,22 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let now = Date()
         let shouldRefreshDisplayStates = refreshDisplayStates
             || now.timeIntervalSince(lastStatusIconStateRefreshDate) >= Self.statusIconStateRefreshInterval
-        let hasAnimatedIcon = renderStatusIcons(now: now, refreshDisplayStates: shouldRefreshDisplayStates)
+        renderStatusIcons(now: now, refreshDisplayStates: shouldRefreshDisplayStates)
         if shouldRefreshDisplayStates {
             lastStatusIconStateRefreshDate = now
         }
-        updateStatusIconRefreshTimer(animated: hasAnimatedIcon, now: now)
+        updateStatusIconRefreshTimer(now: now)
     }
 
-    private func renderStatusIcons(now: Date, refreshDisplayStates: Bool) -> Bool {
-        var hasAnimatedIcon = false
-
+    private func renderStatusIcons(now: Date, refreshDisplayStates: Bool) {
         for (agent, statusItem) in statusItems {
             let displayState = statusIconDisplayState(for: agent, now: now, refreshDisplayState: refreshDisplayStates)
-            hasAnimatedIcon = hasAnimatedIcon || displayState == .working
             let renderKey = StatusIconRenderKey(
                 state: displayState
             )
             if statusIconRenderKeys[agent] != renderKey || statusIconHostingViews[agent] == nil {
                 updateMenuBarIconView(
                     for: agent,
-                    state: displayState,
                     statusItem: statusItem
                 )
                 statusIconRenderKeys[agent] = renderKey
@@ -6980,15 +6811,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         if let fallbackStatusItem {
             guard !fallbackStatusIconRendered else {
-                return hasAnimatedIcon
+                return
             }
             let image = AgentImages.menuBarStatus([])
             fallbackStatusItem.button?.image = image
             fallbackStatusItem.length = image.size.width + Self.statusItemHorizontalPadding
             fallbackStatusIconRendered = true
         }
-
-        return hasAnimatedIcon
     }
 
     private func startStatusIconRefreshTimer() {
@@ -6996,20 +6825,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             return
         }
 
-        updateStatusIconRefreshTimer(animated: false, now: Date())
+        updateStatusIconRefreshTimer(now: Date())
     }
 
-    private func updateStatusIconRefreshTimer(animated: Bool, now: Date) {
-        if animated {
-            scheduleStatusIconRefreshTimer(
-                interval: Self.statusIconStateRefreshInterval,
-                repeats: true,
-                targetDate: nil,
-                refreshDisplayStatesOnFire: true
-            )
-            return
-        }
-
+    private func updateStatusIconRefreshTimer(now: Date) {
         guard let delay = nextTransientStartupRefreshDelay(now: now) else {
             invalidateStatusIconRefreshTimer()
             return
@@ -7107,7 +6926,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let state: AgentState
     }
 
-    private func updateMenuBarIconView(for agent: AgentKind, state: AgentState, statusItem: NSStatusItem) {
+    private func updateMenuBarIconView(for agent: AgentKind, statusItem: NSStatusItem) {
         guard let button = statusItem.button else {
             return
         }
@@ -7116,7 +6935,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         statusItem.length = iconSize.width + Self.statusItemHorizontalPadding
         button.image = nil
 
-        let iconView = MenuBarAgentIconView(agent: agent, state: state, iconSize: iconSize)
+        let iconView = MenuBarAgentIconView(agent: agent, iconSize: iconSize)
         if let hostingView = statusIconHostingViews[agent] {
             hostingView.rootView = iconView
             return
@@ -7368,124 +7187,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 }
 
-private enum AgentIconHighlightLayer {
-    private static let layerName = "AgentSessionsWorkingHighlight"
-    private static let gradientLayerName = "AgentSessionsWorkingHighlightGradient"
-    private static let animationKey = "agentSessionsWorkingHighlightSweep"
-
-    @MainActor
-    static func start(in view: NSView, imageRect: CGRect, maskImage: CGImage, duration: TimeInterval) {
-        view.wantsLayer = true
-        guard let layer = view.layer else {
-            return
-        }
-
-        if let existingLayer = layer.sublayers?.first(where: { $0.name == layerName }) {
-            if abs(existingLayer.frame.width - imageRect.width) <= 0.5,
-               abs(existingLayer.frame.height - imageRect.height) <= 0.5 {
-                update(existingLayer, imageRect: imageRect)
-                return
-            }
-            existingLayer.removeFromSuperlayer()
-        }
-
-        let contentsScale = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        let highlightLayer = CALayer()
-        highlightLayer.name = layerName
-        highlightLayer.frame = imageRect
-        highlightLayer.masksToBounds = true
-        highlightLayer.contentsScale = contentsScale
-        highlightLayer.isGeometryFlipped = true
-
-        let maskLayer = CALayer()
-        maskLayer.frame = highlightLayer.bounds
-        maskLayer.contents = maskImage
-        maskLayer.contentsGravity = .resizeAspect
-        maskLayer.contentsScale = contentsScale
-        highlightLayer.mask = maskLayer
-
-        let gradientLayer = CAGradientLayer()
-        gradientLayer.name = gradientLayerName
-        gradientLayer.colors = [
-            NSColor.clear.cgColor,
-            NSColor.white.withAlphaComponent(0.08).cgColor,
-            NSColor.white.withAlphaComponent(0.28).cgColor,
-            NSColor.white.withAlphaComponent(0.82).cgColor,
-            NSColor.white.withAlphaComponent(0.28).cgColor,
-            NSColor.white.withAlphaComponent(0.08).cgColor,
-            NSColor.clear.cgColor
-        ]
-        gradientLayer.locations = [0, 0.2, 0.39, 0.5, 0.61, 0.8, 1]
-        gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
-        gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
-        gradientLayer.bounds = CGRect(
-            x: 0,
-            y: 0,
-            width: max(imageRect.width * 0.95, 8),
-            height: max(imageRect.height * 2.7, 16)
-        )
-        gradientLayer.position = startPosition(in: highlightLayer.bounds, stripeSize: gradientLayer.bounds.size)
-        gradientLayer.transform = CATransform3DMakeRotation(CGFloat.pi / 4, 0, 0, 1)
-
-        let animation = CABasicAnimation(keyPath: "position")
-        animation.fromValue = startPosition(in: highlightLayer.bounds, stripeSize: gradientLayer.bounds.size)
-        animation.toValue = endPosition(in: highlightLayer.bounds, stripeSize: gradientLayer.bounds.size)
-        animation.duration = duration
-        animation.repeatCount = .infinity
-        animation.timingFunction = CAMediaTimingFunction(name: .linear)
-        animation.isRemovedOnCompletion = false
-        gradientLayer.add(animation, forKey: animationKey)
-
-        highlightLayer.addSublayer(gradientLayer)
-        layer.addSublayer(highlightLayer)
-    }
-
-    @MainActor
-    static func stop(in view: NSView) {
-        view.layer?.sublayers?
-            .filter { $0.name == layerName }
-            .forEach { $0.removeFromSuperlayer() }
-    }
-
-    static func aspectFitRect(contentSize: NSSize, in bounds: CGRect) -> CGRect {
-        guard bounds.width > 0, bounds.height > 0, contentSize.width > 0, contentSize.height > 0 else {
-            return bounds
-        }
-
-        let scale = min(bounds.width / contentSize.width, bounds.height / contentSize.height)
-        let width = contentSize.width * scale
-        let height = contentSize.height * scale
-        return CGRect(
-            x: bounds.midX - width / 2,
-            y: bounds.midY - height / 2,
-            width: width,
-            height: height
-        )
-    }
-
-    private static func update(_ layer: CALayer, imageRect: CGRect) {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.frame = imageRect
-        layer.mask?.frame = layer.bounds
-        CATransaction.commit()
-    }
-
-    private static func startPosition(in bounds: CGRect, stripeSize: CGSize) -> CGPoint {
-        CGPoint(x: -stripeSize.width * 0.7, y: -stripeSize.height * 0.35)
-    }
-
-    private static func endPosition(in bounds: CGRect, stripeSize: CGSize) -> CGPoint {
-        CGPoint(
-            x: bounds.width + stripeSize.width * 0.7,
-            y: bounds.height + stripeSize.height * 0.35
-        )
-    }
-}
-
 private struct AgentHeaderView: View {
     let agent: AgentKind
-    let state: AgentState
     let workingSessionCounts: AgentWorkingSessionCounts
 
     var body: some View {
@@ -7513,12 +7216,9 @@ private struct AgentHeaderView: View {
 
     @ViewBuilder
     private var iconView: some View {
-        AnimatedAgentIconView(
+        AgentCircleIconView(
             agent: agent,
-            state: state,
-            iconSize: 16,
-            animatesWorkingIcon: false,
-            usesMonochromeIdleIcon: false
+            iconSize: 16
         )
         .frame(width: 16, height: 16)
         .accessibilityHidden(true)
@@ -7548,18 +7248,11 @@ private struct AgentSectionView: View {
         let rowGroups = Self.rowGroups(for: rows)
         let rowGroupAnimationIDs = rowGroups.map(\.animationID)
         let layoutSignature = layoutSignature(for: rows, now: now)
-        let state = AgentDisplayState.displayState(
-            for: agent,
-            aggregateState: store.aggregateState(for: agent, now: now),
-            store: store,
-            now: now
-        )
         let workingSessionCounts = store.workingSessionCounts(for: agent, now: now)
 
         VStack(alignment: .leading, spacing: 0) {
             AgentHeaderView(
                 agent: agent,
-                state: state,
                 workingSessionCounts: workingSessionCounts
             )
 
@@ -7726,7 +7419,7 @@ private extension AgentKind {
     var menuHeaderTitle: String {
         switch self {
         case .codex:
-            "ChatGPT Codex"
+            displayName
         case .claudeCode:
             displayName
         }
@@ -7735,7 +7428,7 @@ private extension AgentKind {
     var providerSettingsTitle: String {
         switch self {
         case .codex:
-            "ChatGPT Codex"
+            displayName
         case .claudeCode:
             displayName
         }
@@ -8166,29 +7859,16 @@ private enum AgentColors {
     }
 }
 
-private enum AgentIconAnimation {
-    static let highlightDuration: TimeInterval = 1.75
-}
-
 struct AgentMenuBarStatus {
     let agent: AgentKind
     let state: AgentState
 }
 
 enum AgentImages {
-    private static let menuBarLogoDisplayScale: CGFloat = 0.7
-    private static let menuBarLogoGap: CGFloat = 2
+    private static let providerCircleSize = NSSize(width: 16, height: 16)
+    private static let providerCircleGap: CGFloat = 3
     private static let fallbackMenuBarStatusSize = NSSize(width: 15, height: 15)
-    private static let assetScale: CGFloat = 3
     private static let renderedImageCache = RenderedImageCache()
-    private static let codexIcons = AgentIconSet(
-        mono: loadMenuBarIcon(name: "Codex Mono@3x"),
-        color: loadMenuBarIcon(name: "Codex Color@3x")
-    )
-    private static let claudeIcons = AgentIconSet(
-        mono: loadMenuBarIcon(name: "claude Mono@3x"),
-        color: loadMenuBarIcon(name: "Claude Color@3x")
-    )
 
     static func menuBarStatus(_ statuses: [AgentMenuBarStatus]) -> NSImage {
         guard !statuses.isEmpty else {
@@ -8200,86 +7880,31 @@ enum AgentImages {
 
         return renderedImageCache.image(for: cacheKey) {
             renderImage(size: size, isTemplate: false) {
-            var x: CGFloat = 0
+                var x: CGFloat = 0
 
-            for status in statuses {
-                let icons = iconSet(for: status.agent)
-                let displaySize = displaySize(for: icons.mono)
-                drawAgentLogo(
-                    icons,
-                    state: status.state,
-                    size: displaySize,
-                    x: x,
-                    canvasHeight: size.height
-                )
-                x += displaySize.width + menuBarLogoGap
-            }
+                for status in statuses {
+                    drawProviderCircle(
+                        agent: status.agent,
+                        size: providerCircleSize,
+                        x: x,
+                        canvasHeight: size.height
+                    )
+                    x += providerCircleSize.width + providerCircleGap
+                }
             }
         }
     }
 
-    static func menuHeaderIconMaskImage(for agent: AgentKind, color: Bool = true) -> CGImage? {
-        let image = menuHeaderIcon(for: agent, color: color, state: .working)
-        var rect = NSRect(origin: .zero, size: image.size)
-        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
-    }
-
-    static func menuBarIconSize(for agent: AgentKind) -> NSSize {
-        displaySize(for: iconSet(for: agent).mono)
-    }
-
-    static func menuHeaderIcon(for agent: AgentKind, color: Bool = false) -> NSImage {
-        renderedImageCache.image(for: "menuHeader|\(agent.rawValue)|color:\(color)|state:base") {
-            let icons = iconSet(for: agent)
-            if color {
-                return renderedColorIcon(icons.color)
-            }
-
-            guard let image = icons.mono.copy() as? NSImage else {
-                return icons.mono
-            }
-            image.isTemplate = true
-            return image
-        }
-    }
-
-    static func menuHeaderIcon(
-        for agent: AgentKind,
-        color: Bool = false,
-        state: AgentState
-    ) -> NSImage {
-        if color, state != .waiting {
-            return menuHeaderIcon(for: agent, color: true)
-        }
-
-        guard state == .working || state == .waiting else {
-            return menuHeaderIcon(for: agent, color: color)
-        }
-
-        let icons = iconSet(for: agent)
-        let size = icons.mono.size
-        let cacheKey = "menuHeader|\(agent.rawValue)|color:\(color)|state:\(state.rawValue)"
-
-        return renderedImageCache.image(for: cacheKey) {
-            renderImage(size: size, isTemplate: false) {
-                drawAgentLogo(
-                    icons,
-                    state: state,
-                    size: size,
-                    x: 0,
-                    canvasHeight: size.height
-                )
-            }
-        }
+    static func menuBarIconSize(for _: AgentKind) -> NSSize {
+        providerCircleSize
     }
 
     private static func menuBarStatusSize(for statuses: [AgentMenuBarStatus]) -> NSSize {
-        let displaySizes = statuses.map { displaySize(for: iconSet(for: $0.agent).mono) }
-        let totalLogoWidth = displaySizes.reduce(CGFloat(0)) { $0 + $1.width }
-        let totalGapWidth = CGFloat(max(statuses.count - 1, 0)) * menuBarLogoGap
+        let totalCircleWidth = CGFloat(statuses.count) * providerCircleSize.width
+        let totalGapWidth = CGFloat(max(statuses.count - 1, 0)) * providerCircleGap
         return NSSize(
-            width: totalLogoWidth + totalGapWidth,
-            height: displaySizes.map(\.height).max() ?? fallbackMenuBarStatusSize.height
+            width: totalCircleWidth + totalGapWidth,
+            height: providerCircleSize.height
         )
     }
 
@@ -8311,7 +7936,7 @@ enum AgentImages {
 
     private static func menuBarStatusCacheKey(statuses: [AgentMenuBarStatus]) -> String {
         let statusKey = statuses
-            .map { "\($0.agent.rawValue):\($0.state.rawValue)" }
+            .map(\.agent.rawValue)
             .joined(separator: ",")
         return "menuBarStatus|\(statusKey)"
     }
@@ -8326,93 +7951,21 @@ enum AgentImages {
         return image
     }
 
-    private static func iconSet(for agent: AgentKind) -> AgentIconSet {
-        switch agent {
-        case .codex:
-            codexIcons
-        case .claudeCode:
-            claudeIcons
-        }
-    }
-
-    private static func loadMenuBarIcon(name: String) -> NSImage {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png")
-            ?? Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "icon")
-            ?? Bundle.module.url(forResource: "icon/\(name)", withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
-            return NSImage(size: NSSize(width: 13, height: 13))
-        }
-
-        let pixelWidth = image.representations.map(\.pixelsWide).max() ?? Int(image.size.width)
-        let pixelHeight = image.representations.map(\.pixelsHigh).max() ?? Int(image.size.height)
-        if pixelWidth > 0, pixelHeight > 0 {
-            image.size = NSSize(width: CGFloat(pixelWidth) / assetScale, height: CGFloat(pixelHeight) / assetScale)
-        }
-        image.isTemplate = false
-        return image
-    }
-
-    private static func displaySize(for logo: NSImage) -> NSSize {
-        NSSize(
-            width: logo.size.width * menuBarLogoDisplayScale,
-            height: logo.size.height * menuBarLogoDisplayScale
-        )
-    }
-
-    private static func renderedColorIcon(_ logo: NSImage) -> NSImage {
-        let size = logo.size
-        return renderImage(size: size, isTemplate: false) {
-            logo.draw(
-                in: NSRect(origin: .zero, size: size),
-                from: .zero,
-                operation: .sourceOver,
-                fraction: 1.0
-            )
-        }
-    }
-
-    private static func drawAgentLogo(
-        _ icons: AgentIconSet,
-        state: AgentState,
+    private static func drawProviderCircle(
+        agent: AgentKind,
         size: NSSize,
         x: CGFloat,
         canvasHeight: CGFloat
     ) {
-        let logoRect = NSRect(
+        let circleRect = NSRect(
             x: x,
             y: (canvasHeight - size.height) / 2,
             width: size.width,
             height: size.height
         )
 
-        switch state {
-        case .working:
-            icons.color.draw(in: logoRect, from: .zero, operation: .sourceOver, fraction: 1.0)
-        case .waiting:
-            drawTemplateLogo(icons.mono, in: logoRect, color: AgentColors.waiting)
-        case .idle, .ended:
-            drawTemplateLogo(icons.mono, in: logoRect, color: .labelColor)
-        }
-    }
-
-    private static func drawTemplateLogo(_ logo: NSImage, in rect: NSRect, color: NSColor) {
-        var proposedRect = NSRect(origin: .zero, size: logo.size)
-        guard let cgImage = logo.cgImage(forProposedRect: &proposedRect, context: NSGraphicsContext.current, hints: nil),
-              let context = NSGraphicsContext.current?.cgContext else {
-            logo.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
-            return
-        }
-
-        context.saveGState()
-        context.clip(to: rect, mask: cgImage)
-        color.setFill()
-        rect.fill()
-        context.restoreGState()
-    }
-
-    private struct AgentIconSet {
-        let mono: NSImage
-        let color: NSImage
+        AgentColors.working(for: agent).setFill()
+        NSBezierPath(ovalIn: circleRect).fill()
     }
 
     private final class RenderedImageCache: @unchecked Sendable {

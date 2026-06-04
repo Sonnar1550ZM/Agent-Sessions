@@ -67,7 +67,7 @@ public enum AgentKind: String, Codable, CaseIterable, Sendable {
         case .codex:
             "Codex"
         case .claudeCode:
-            "Claude Code"
+            "Claude"
         }
     }
 

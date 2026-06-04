@@ -192,7 +192,7 @@ if not session_id or session_id == "default":
 
 title = prompt_title(event)
 payload = {
-    "agent": "Claude Code",
+    "agent": "Claude",
     "sessionId": session_id,
     "state": state,
     "title": title,
