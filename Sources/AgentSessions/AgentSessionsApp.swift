@@ -5755,7 +5755,7 @@ private struct PopupSessionRow: View {
             agent: session.agent,
             iconSize: providerIconSize
         )
-        .frame(width: providerIconSize, height: providerIconSize)
+        .frame(width: providerIconSlotSize, height: providerIconSlotSize)
         .padding(.top, metrics.titleVerticalPadding)
         .accessibilityHidden(true)
     }
@@ -5810,13 +5810,17 @@ private struct PopupSessionRow: View {
 
     private var titleColumnMaxWidth: CGFloat {
         let titleRowWidth = rowContentWidth - (2 * metrics.responseHorizontalPadding)
-        let fixedWidth = providerIconSize
+        let fixedWidth = providerIconSlotSize
             + metrics.titleSpacing
         return max(titleRowWidth - fixedWidth, 1)
     }
 
     private var providerIconSize: CGFloat {
-        max(metrics.iconSize * 0.5, 1)
+        max(providerIconSlotSize * 0.5, 1)
+    }
+
+    private var providerIconSlotSize: CGFloat {
+        metrics.iconSize
     }
 
     private var responseText: String? {
