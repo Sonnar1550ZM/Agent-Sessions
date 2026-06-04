@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible Agent Sessions problem.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Remove secrets, private paths, and private transcript text before submitting logs or hook payloads.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - Codex
+        - Claude Code
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the shortest path from a clean app launch to the problem.
+      placeholder: |
+        1. Start Agent Sessions
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include macOS version, Swift version if building locally, and Agent Sessions commit or release.
+      placeholder: |
+        macOS:
+        Swift:
+        Agent Sessions:
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add sanitized hook payloads, menu state, logs, or screenshots.
+      render: text
