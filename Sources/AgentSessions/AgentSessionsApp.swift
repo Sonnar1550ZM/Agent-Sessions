@@ -5753,9 +5753,9 @@ private struct PopupSessionRow: View {
     private var providerIcon: some View {
         AgentCircleIconView(
             agent: session.agent,
-            iconSize: metrics.iconSize
+            iconSize: providerIconSize
         )
-        .frame(width: metrics.iconSize, height: metrics.iconSize)
+        .frame(width: providerIconSize, height: providerIconSize)
         .padding(.top, metrics.titleVerticalPadding)
         .accessibilityHidden(true)
     }
@@ -5810,9 +5810,13 @@ private struct PopupSessionRow: View {
 
     private var titleColumnMaxWidth: CGFloat {
         let titleRowWidth = rowContentWidth - (2 * metrics.responseHorizontalPadding)
-        let fixedWidth = metrics.iconSize
+        let fixedWidth = providerIconSize
             + metrics.titleSpacing
         return max(titleRowWidth - fixedWidth, 1)
+    }
+
+    private var providerIconSize: CGFloat {
+        max(metrics.iconSize * 0.5, 1)
     }
 
     private var responseText: String? {
@@ -7218,9 +7222,9 @@ private struct AgentHeaderView: View {
     private var iconView: some View {
         AgentCircleIconView(
             agent: agent,
-            iconSize: 16
+            iconSize: 8
         )
-        .frame(width: 16, height: 16)
+        .frame(width: 8, height: 8)
         .accessibilityHidden(true)
     }
 
@@ -7865,8 +7869,8 @@ struct AgentMenuBarStatus {
 }
 
 enum AgentImages {
-    private static let providerCircleSize = NSSize(width: 16, height: 16)
-    private static let providerCircleGap: CGFloat = 3
+    private static let providerCircleSize = NSSize(width: 8, height: 8)
+    private static let providerCircleGap: CGFloat = 2
     private static let fallbackMenuBarStatusSize = NSSize(width: 15, height: 15)
     private static let renderedImageCache = RenderedImageCache()
 
