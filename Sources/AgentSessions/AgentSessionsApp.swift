@@ -5910,25 +5910,32 @@ private struct PopupSessionStateTimeText: View {
 private struct AgentCircleIconView: View {
     let agent: AgentKind
     let iconSize: CGFloat
+    var color: Color? = nil
 
     var body: some View {
         Circle()
-            .fill(Color(nsColor: AgentColors.working(for: agent)))
+            .fill(color ?? Color(nsColor: AgentColors.working(for: agent)))
             .frame(width: iconSize, height: iconSize)
     }
 }
 
 private struct MenuBarAgentIconView: View {
     let agent: AgentKind
+    let state: AgentState
     let iconSize: NSSize
 
     var body: some View {
         AgentCircleIconView(
             agent: agent,
-            iconSize: max(iconSize.width, iconSize.height)
+            iconSize: max(iconSize.width, iconSize.height),
+            color: iconColor
         )
         .frame(width: iconSize.width, height: iconSize.height)
         .accessibilityHidden(true)
+    }
+
+    private var iconColor: Color {
+        state == .idle ? Color(nsColor: .labelColor) : Color(nsColor: AgentColors.working(for: agent))
     }
 }
 
@@ -6807,6 +6814,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             if statusIconRenderKeys[agent] != renderKey || statusIconHostingViews[agent] == nil {
                 updateMenuBarIconView(
                     for: agent,
+                    state: displayState,
                     statusItem: statusItem
                 )
                 statusIconRenderKeys[agent] = renderKey
@@ -6930,7 +6938,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let state: AgentState
     }
 
-    private func updateMenuBarIconView(for agent: AgentKind, statusItem: NSStatusItem) {
+    private func updateMenuBarIconView(for agent: AgentKind, state: AgentState, statusItem: NSStatusItem) {
         guard let button = statusItem.button else {
             return
         }
@@ -6939,7 +6947,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         statusItem.length = iconSize.width + Self.statusItemHorizontalPadding
         button.image = nil
 
-        let iconView = MenuBarAgentIconView(agent: agent, iconSize: iconSize)
+        let iconView = MenuBarAgentIconView(agent: agent, state: state, iconSize: iconSize)
         if let hostingView = statusIconHostingViews[agent] {
             hostingView.rootView = iconView
             return
@@ -7889,6 +7897,7 @@ enum AgentImages {
                 for status in statuses {
                     drawProviderCircle(
                         agent: status.agent,
+                        state: status.state,
                         size: providerCircleSize,
                         x: x,
                         canvasHeight: size.height
@@ -7940,7 +7949,7 @@ enum AgentImages {
 
     private static func menuBarStatusCacheKey(statuses: [AgentMenuBarStatus]) -> String {
         let statusKey = statuses
-            .map(\.agent.rawValue)
+            .map { "\($0.agent.rawValue):\($0.state.rawValue)" }
             .joined(separator: ",")
         return "menuBarStatus|\(statusKey)"
     }
@@ -7957,6 +7966,7 @@ enum AgentImages {
 
     private static func drawProviderCircle(
         agent: AgentKind,
+        state: AgentState,
         size: NSSize,
         x: CGFloat,
         canvasHeight: CGFloat
@@ -7968,8 +7978,12 @@ enum AgentImages {
             height: size.height
         )
 
-        AgentColors.working(for: agent).setFill()
+        providerCircleColor(for: agent, state: state).setFill()
         NSBezierPath(ovalIn: circleRect).fill()
+    }
+
+    private static func providerCircleColor(for agent: AgentKind, state: AgentState) -> NSColor {
+        state == .idle ? .labelColor : AgentColors.working(for: agent)
     }
 
     private final class RenderedImageCache: @unchecked Sendable {
