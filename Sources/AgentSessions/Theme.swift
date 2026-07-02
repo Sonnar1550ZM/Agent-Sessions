@@ -7,8 +7,16 @@ import AgentSessionsCore
 enum Theme {
     // MARK: - Palette
 
-    private static let codexWorking = NSColor(srgbRed: 0x00 / 255, green: 0x6E / 255, blue: 0xFE / 255, alpha: 1)
-    private static let claudeWorking = NSColor(srgbRed: 0xCF / 255, green: 0x83 / 255, blue: 0x66 / 255, alpha: 1)
+    /// Brand hues stay recognizable in light mode; dark mode lifts lightness so the
+    /// colors read as neon against glass instead of sinking into the backdrop.
+    private static let codexWorking = dynamic(
+        light: NSColor(srgbRed: 0x00 / 255, green: 0x6E / 255, blue: 0xFE / 255, alpha: 1),
+        dark: NSColor(srgbRed: 0x4D / 255, green: 0xA3 / 255, blue: 0xFF / 255, alpha: 1)
+    )
+    private static let claudeWorking = dynamic(
+        light: NSColor(srgbRed: 0xCF / 255, green: 0x83 / 255, blue: 0x66 / 255, alpha: 1),
+        dark: NSColor(srgbRed: 0xF5 / 255, green: 0x9E / 255, blue: 0x80 / 255, alpha: 1)
+    )
     private static let codexGlow = NSColor(srgbRed: 0x66 / 255, green: 0xB2 / 255, blue: 0xFF / 255, alpha: 1)
     private static let claudeGlow = NSColor(srgbRed: 0xFF / 255, green: 0xB0 / 255, blue: 0x8A / 255, alpha: 1)
 
