@@ -4534,6 +4534,15 @@ final class SessionPopupController {
             }
             .store(in: &cancellables)
 
+        NSWorkspace.shared.notificationCenter.publisher(
+            for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification
+        )
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updatePopup()
+            }
+            .store(in: &cancellables)
+
         providerVisibility.$popupEnabled
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -6241,7 +6250,7 @@ private struct AgentIndicatorLampView: NSViewRepresentable {
             agent: agent,
             state: state,
             iconSize: iconSize,
-            animatesWorkingLamp: animatesWorkingLamp
+            animatesWorkingLamp: animatesWorkingLamp && !Theme.Motion.reduceMotion
         )
         return view
     }
@@ -6251,7 +6260,7 @@ private struct AgentIndicatorLampView: NSViewRepresentable {
             agent: agent,
             state: state,
             iconSize: iconSize,
-            animatesWorkingLamp: animatesWorkingLamp
+            animatesWorkingLamp: animatesWorkingLamp && !Theme.Motion.reduceMotion
         )
     }
 
@@ -7131,6 +7140,15 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         providerVisibility.$usesIndicatorLampStyle
             .receive(on: DispatchQueue.main)
             .dropFirst()
+            .sink { [weak self] _ in
+                self?.applyIndicatorLampStyleChange()
+            }
+            .store(in: &cancellables)
+
+        NSWorkspace.shared.notificationCenter.publisher(
+            for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification
+        )
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.applyIndicatorLampStyleChange()
             }
