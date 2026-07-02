@@ -1968,6 +1968,7 @@ private struct SettingsView: View {
             SettingsDetailView(section: selectedSection, providerVisibility: providerVisibility)
         }
         .navigationSplitViewStyle(.balanced)
+        .tint(Theme.accentColor)
         .frame(
             minWidth: 760,
             idealWidth: 820,
@@ -2012,6 +2013,19 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
             "menubar.rectangle"
         }
     }
+
+    var accent: Color {
+        switch self {
+        case .general:
+            Color(nsColor: .secondaryLabelColor)
+        case .dropdownMenu:
+            Theme.accentColor
+        case .popup:
+            Color(red: 0xBF / 255, green: 0x5A / 255, blue: 0xF2 / 255)
+        case .menuBar:
+            Color(red: 0x32 / 255, green: 0xD7 / 255, blue: 0x4B / 255)
+        }
+    }
 }
 
 private struct SettingsSidebarRow: View {
@@ -2023,11 +2037,15 @@ private struct SettingsSidebarRow: View {
                 .font(.system(size: 13, weight: .medium))
                 .lineLimit(1)
         } icon: {
-            Image(systemName: section.symbolName)
-                .font(.system(size: 14, weight: .medium))
-                .imageScale(.medium)
-                .symbolRenderingMode(.hierarchical)
-                .frame(width: 18, height: 18)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(section.accent.opacity(0.18))
+                .frame(width: 22, height: 22)
+                .overlay(
+                    Image(systemName: section.symbolName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(section.accent)
+                )
         }
         .padding(.vertical, 2)
     }
@@ -2767,15 +2785,25 @@ private struct SettingsStyleChoiceButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.body)
-                .frame(maxWidth: .infinity)
+        Group {
+            if isSelected {
+                Button(action: action) {
+                    Label(title, systemImage: systemImage)
+                        .font(.body)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button(action: action) {
+                    Label(title, systemImage: systemImage)
+                        .font(.body)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .foregroundStyle(.secondary)
+            }
         }
-        .buttonStyle(.bordered)
         .controlSize(.regular)
-        .tint(isSelected ? .accentColor : .secondary)
-        .foregroundStyle(isSelected ? .primary : .secondary)
         .frame(maxWidth: .infinity)
     }
 }
@@ -2792,6 +2820,15 @@ private struct ProviderSettingsRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            AgentIndicatorLampView(
+                agent: agent,
+                state: .working,
+                iconSize: 12,
+                animatesWorkingLamp: false
+            )
+            .frame(width: 12, height: 12)
+            .accessibilityHidden(true)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(providerVisibility.usesIndicatorLampStyle ? agent.shortDisplayName : agent.providerSettingsTitle)
                     .font(.body)
