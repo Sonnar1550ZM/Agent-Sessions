@@ -6061,7 +6061,7 @@ private final class AnimatedAgentIconImageView: NSImageView {
 
 private enum AgentIndicatorLamp {
     static let menuBarViewSize = NSSize(width: 18, height: 18)
-    static let pulseHalfPeriod: TimeInterval = 1.8
+    static let pulseHalfPeriod: TimeInterval = Theme.Motion.lampPulsePeriod
     static let pulseHaloFloorOpacity: Float = 0.12
     static let pulseHaloFloorScale: CGFloat = 0.8
     static let pulseCoreFloorOpacity: Float = 0.55
@@ -6075,16 +6075,7 @@ private enum AgentIndicatorLamp {
     }
 
     static func color(for agent: AgentKind, state: AgentState) -> NSColor {
-        switch state {
-        case .working:
-            AgentColors.working(for: agent)
-        case .waiting:
-            AgentColors.waiting
-        case .idle:
-            .secondaryLabelColor
-        case .ended:
-            .tertiaryLabelColor
-        }
+        Theme.state(state, agent: agent)
     }
 
     static func coreHighlightColor(for color: NSColor) -> NSColor {
@@ -8419,9 +8410,9 @@ private struct SessionStateIcon: View {
 private func agentStateSymbolColor(for state: AgentState, agent: AgentKind) -> Color {
     switch state {
     case .working:
-        return Color(nsColor: AgentColors.working(for: agent))
+        return Theme.providerColor(agent)
     case .waiting:
-        return Color(nsColor: AgentColors.waiting)
+        return Theme.waitingColor
     case .idle, .ended:
         return .secondary
     }
@@ -8460,22 +8451,15 @@ private struct IOSActivitySpinner: View {
 }
 
 private enum AgentColors {
-    static let codexWorking = NSColor(srgbRed: 0x00 / 255, green: 0x6E / 255, blue: 0xFE / 255, alpha: 1)
-    static let claudeWorking = NSColor(srgbRed: 0xCF / 255, green: 0x83 / 255, blue: 0x66 / 255, alpha: 1)
-    static let waiting = NSColor(srgbRed: 0xFF / 255, green: 0xD6 / 255, blue: 0x0A / 255, alpha: 1)
+    static var waiting: NSColor { Theme.waiting }
 
     static func working(for agent: AgentKind) -> NSColor {
-        switch agent {
-        case .codex:
-            codexWorking
-        case .claudeCode:
-            claudeWorking
-        }
+        Theme.provider(agent)
     }
 }
 
 private enum AgentIconAnimation {
-    static let highlightDuration: TimeInterval = 1.75
+    static let highlightDuration: TimeInterval = Theme.Motion.sweepDuration
 }
 
 struct AgentMenuBarStatus {
