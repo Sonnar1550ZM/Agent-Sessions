@@ -6241,7 +6241,7 @@ private final class AgentIndicatorLampNSView: NSView {
         haloLayer.type = .radial
         haloLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
         haloLayer.endPoint = CGPoint(x: 1, y: 1)
-        haloLayer.locations = [0, 0.5, 1]
+        haloLayer.locations = [0, 0.35, 0.72, 1]
 
         coreLayer.type = .radial
         coreLayer.startPoint = CGPoint(x: 0.5, y: 0.58)
@@ -6338,7 +6338,8 @@ private final class AgentIndicatorLampNSView: NSView {
             CATransaction.setDisableActions(true)
             haloLayer.colors = [
                 color.cgColor,
-                color.withAlphaComponent(0.65).cgColor,
+                color.withAlphaComponent(0.55).cgColor,
+                color.withAlphaComponent(0.18).cgColor,
                 color.withAlphaComponent(0).cgColor
             ]
             haloLayer.opacity = AgentIndicatorLamp.haloOpacity(for: renderedState)
@@ -6355,6 +6356,7 @@ private final class AgentIndicatorLampNSView: NSView {
         let shouldPulse = renderedState == .working
             && renderedAnimatesWorkingLamp
             && window != nil
+            && !Theme.Motion.reduceMotion
         guard shouldPulse else {
             stopAnimating()
             return
@@ -7761,6 +7763,11 @@ private enum AgentIconHighlightLayer {
 
     @MainActor
     static func start(in view: NSView, imageRect: CGRect, maskImage: CGImage, duration: TimeInterval) {
+        guard !Theme.Motion.reduceMotion else {
+            stop(in: view)
+            return
+        }
+
         view.wantsLayer = true
         guard let layer = view.layer else {
             return
@@ -7795,9 +7802,9 @@ private enum AgentIconHighlightLayer {
         gradientLayer.colors = [
             NSColor.clear.cgColor,
             NSColor.white.withAlphaComponent(0.08).cgColor,
-            NSColor.white.withAlphaComponent(0.28).cgColor,
-            NSColor.white.withAlphaComponent(0.82).cgColor,
-            NSColor.white.withAlphaComponent(0.28).cgColor,
+            NSColor.white.withAlphaComponent(0.26).cgColor,
+            NSColor.white.withAlphaComponent(0.65).cgColor,
+            NSColor.white.withAlphaComponent(0.26).cgColor,
             NSColor.white.withAlphaComponent(0.08).cgColor,
             NSColor.clear.cgColor
         ]
