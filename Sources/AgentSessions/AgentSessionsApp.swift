@@ -5514,6 +5514,8 @@ private struct LatestParentSessionsPopupView: View {
     let responseElidesShortFinalLine: Bool
     let usesIndicatorLampStyle: Bool
 
+    @Namespace private var glassNamespace
+
     var body: some View {
         let metrics = PopupScaleMetrics(
             scale: popupScale,
@@ -5523,33 +5525,37 @@ private struct LatestParentSessionsPopupView: View {
             textShadowRadius: textShadowRadius
         )
 
-        VStack(alignment: .leading, spacing: metrics.stackSpacing) {
-            ForEach(displayedSessions, id: \.id) { session in
-                PopupSessionRow(
-                    session: session,
-                    metrics: metrics,
-                    rowContentWidth: rowContentWidth,
-                    alignsTextTrailing: alignsTextTrailing,
-                    showsUserPrompt: showsUserPrompt,
-                    showsResponseBody: showsResponseBody,
-                    responseCharacterLimit: responseCharacterLimit,
-                    responseLineLimit: responseLineLimit,
-                    responseCompactsBlankLines: responseCompactsBlankLines,
-                    responseElidesShortFinalLine: responseElidesShortFinalLine,
-                    usesIndicatorLampStyle: usesIndicatorLampStyle
-                )
-                .padding(.horizontal, metrics.horizontalPadding + metrics.shadowBleedPadding)
-                .padding(.vertical, metrics.verticalPadding + metrics.shadowBleedPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background {
-                    if glassEnabled {
-                        PopupLiquidGlassBackground(
-                            metrics: metrics,
-                            usesClearGlass: usesClearGlass,
-                            opacity: glassOpacity,
-                            agent: session.agent,
-                            state: session.state
-                        )
+        GlassEffectContainer(spacing: metrics.stackSpacing) {
+            VStack(alignment: .leading, spacing: metrics.stackSpacing) {
+                ForEach(displayedSessions, id: \.id) { session in
+                    PopupSessionRow(
+                        session: session,
+                        metrics: metrics,
+                        rowContentWidth: rowContentWidth,
+                        alignsTextTrailing: alignsTextTrailing,
+                        showsUserPrompt: showsUserPrompt,
+                        showsResponseBody: showsResponseBody,
+                        responseCharacterLimit: responseCharacterLimit,
+                        responseLineLimit: responseLineLimit,
+                        responseCompactsBlankLines: responseCompactsBlankLines,
+                        responseElidesShortFinalLine: responseElidesShortFinalLine,
+                        usesIndicatorLampStyle: usesIndicatorLampStyle
+                    )
+                    .padding(.horizontal, metrics.horizontalPadding + metrics.shadowBleedPadding)
+                    .padding(.vertical, metrics.verticalPadding + metrics.shadowBleedPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background {
+                        if glassEnabled {
+                            PopupLiquidGlassBackground(
+                                metrics: metrics,
+                                usesClearGlass: usesClearGlass,
+                                opacity: glassOpacity,
+                                agent: session.agent,
+                                state: session.state,
+                                glassID: session.id,
+                                glassNamespace: glassNamespace
+                            )
+                        }
                     }
                 }
             }
@@ -5606,6 +5612,8 @@ private struct PopupLiquidGlassBackground: View {
     let opacity: Double
     let agent: AgentKind
     let state: AgentState
+    let glassID: String
+    let glassNamespace: Namespace.ID
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -5622,6 +5630,7 @@ private struct PopupLiquidGlassBackground: View {
                 shape
                     .fill(.clear)
                     .glassEffect(nativeGlass(opacity: opacity, usesClearGlass: usesClearGlass), in: shape)
+                    .glassEffectID(glassID, in: glassNamespace)
             }
         }
         .overlay(hairlineBorder(in: shape))
