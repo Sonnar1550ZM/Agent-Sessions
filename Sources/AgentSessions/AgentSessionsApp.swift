@@ -539,27 +539,27 @@ private enum ProviderPreferenceDefaults {
     static let latestResponseLineLimit = 3
     static let subagentLatestResponseLineLimit = 1
     static let latestResponseHideAfterInterval: TimeInterval = 24 * 60 * 60
-    static let latestResponseCompactsBlankLines = false
+    static let latestResponseCompactsBlankLines = true
     static let dropdownShowsUserPrompt = true
     static let showsSubagents = true
     static let subagentHideAfterInterval: TimeInterval = 3 * 60
     static let menuBarEnabled = true
     static let popupEnabled = true
     static let popupDisplayInterval: TimeInterval = 15
-    static let popupGlassEnabled = true
+    static let popupGlassEnabled = false
     static let popupUsesClearGlass = false
-    static let popupGlassOpacity = 0.905456164381205
-    static let popupOpacity = 1.0
+    static let popupGlassOpacity = 0.7027258211678832
+    static let popupOpacity = 0.8093635948905109
     static let popupWindowPosition = PopupWindowPosition.bottomRight
-    static let popupRightAlignsTextOnRightSide = true
+    static let popupRightAlignsTextOnRightSide = false
     static let popupWindowWidth = 400.0
     static let popupOffsetX = 0.0
     static let popupOffsetY = 0.0
-    static let popupScale = 1.0017411008233803
+    static let popupScale = 1.0076277687666928
     static let popupBackdropOpacity = 0.85
     static let popupTextOpacity = 1.0
-    static let popupMouseProximityOpacity = 0.20682624940060737
-    static let popupTextShadowEnabled = false
+    static let popupMouseProximityOpacity = 0.10462150483130862
+    static let popupTextShadowEnabled = true
     static let legacyPopupTextShadowStrength = 0.65
     static let popupTextShadowStrength = 2.0074120724332674
     static let popupTextShadowDistance = 0.0
@@ -567,10 +567,10 @@ private enum ProviderPreferenceDefaults {
     static let popupParentSessionCount = 5
     static let popupShowsUserPrompt = true
     static let popupShowsResponseBody = true
-    static let popupResponseCharacterLimit = 500
-    static let popupResponseLineLimit = 5
-    static let popupResponseCompactsBlankLines = false
-    static let popupResponseElidesShortFinalLine = false
+    static let popupResponseCharacterLimit = 1000
+    static let popupResponseLineLimit = 10
+    static let popupResponseCompactsBlankLines = true
+    static let popupResponseElidesShortFinalLine = true
     static let latestResponseHideAfterOptions: [TimeInterval] = [
         60,
         3 * 60,
@@ -3382,7 +3382,7 @@ private enum ClaudeLatestResponseResolver {
         afterUserPrompt expectedUserPrompt: String? = nil
     ) -> (text: String, transcriptPath: String)? {
         guard let transcriptPath = resolvedTranscriptPath(sessionId: sessionId, transcriptPath: transcriptPath),
-              let text = tailText(from: URL(fileURLWithPath: transcriptPath)),
+              let text = SessionFileTextReader.tailText(from: URL(fileURLWithPath: transcriptPath)),
               let latestResponseText = ClaudeSessionParser.latestAssistantResponseText(
                   fromTranscript: text,
                   afterUserPrompt: expectedUserPrompt
@@ -3400,26 +3400,6 @@ private enum ClaudeLatestResponseResolver {
         }
 
         return ClaudeSessionTitleResolver.transcriptPath(for: sessionId)
-    }
-
-    private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return nil
-        }
-        defer { try? handle.close() }
-
-        let size = (try? handle.seekToEnd()) ?? 0
-        let start = size > limit ? size - limit : 0
-        try? handle.seek(toOffset: start)
-        let data = (try? handle.readToEnd()) ?? Data()
-        guard var text = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-
-        if start > 0, let newline = text.firstIndex(of: "\n") {
-            text = String(text[text.index(after: newline)...])
-        }
-        return text
     }
 }
 
@@ -3587,7 +3567,7 @@ private enum AgentEventEnricher {
         }
     }
 
-    private static func shouldHideCodexSession(
+    static func shouldHideCodexSession(
         sessionId: String,
         state: AgentState,
         title: String,
@@ -3666,7 +3646,7 @@ private enum AgentEventEnricher {
         return state.isActive || event == "SessionStart"
     }
 
-    private static func shouldHideClaudeSession(
+    static func shouldHideClaudeSession(
         sessionId: String,
         state: AgentState,
         cwd: String,
@@ -3754,7 +3734,7 @@ private enum AgentEventEnricher {
         return fallbackTitle(cwd: event.cwd, sessionId: event.sessionId)
     }
 
-    private static func fallbackTitle(cwd: String, sessionId: String) -> String {
+    static func fallbackTitle(cwd: String, sessionId: String) -> String {
         let trimmedCWD = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCWD.isEmpty else {
             return sessionId
@@ -3762,6 +3742,119 @@ private enum AgentEventEnricher {
 
         let lastPathComponent = URL(fileURLWithPath: trimmedCWD).lastPathComponent
         return lastPathComponent.isEmpty ? sessionId : lastPathComponent
+    }
+}
+
+/// Resolves the slow parts of a session refresh — title lookup, latest
+/// response extraction, hide checks — all of which read and parse session
+/// files on disk. Everything here is static and isolation-free so
+/// AppController can run it on `eventEnrichmentQueue` and apply the outcome
+/// back on the main actor.
+private enum SessionRefreshResolver {
+    struct Outcome {
+        var title: String
+        var response: (text: String, phase: String?, transcriptPath: String?)?
+    }
+
+    static func resolve(for session: AgentSession, transcriptPathOverride: String?) -> Outcome {
+        Outcome(
+            title: resolvedTitle(for: session) ?? fallbackTitle(for: session),
+            response: latestResponse(for: session, transcriptPathOverride: transcriptPathOverride)
+        )
+    }
+
+    static func shouldHide(_ session: AgentSession) -> Bool {
+        switch session.agent {
+        case .codex:
+            AgentEventEnricher.shouldHideCodexSession(
+                sessionId: session.sessionId,
+                state: session.state,
+                title: session.title,
+                cwd: session.cwd,
+                event: session.event,
+                latestResponseText: session.latestResponseText,
+                allowsUnresolvedLiveSession: true
+            )
+        case .claudeCode:
+            AgentEventEnricher.shouldHideClaudeSession(
+                sessionId: session.sessionId,
+                state: session.state,
+                cwd: session.cwd,
+                event: session.event,
+                title: session.title,
+                isSubagent: session.isSubagent,
+                allowsUnresolvedLiveSession: false
+            )
+        }
+    }
+
+    private static func resolvedTitle(for session: AgentSession) -> String? {
+        if AgentCompactionStatus.hasMatchingDisplayTitle(event: session.event, title: session.title) {
+            return session.title
+        }
+
+        switch session.agent {
+        case .codex:
+            return CodexSessionWatcher.title(for: session.sessionId)
+        case .claudeCode:
+            return ClaudeSessionTitleResolver.title(for: session.sessionId, transcriptPath: session.transcriptPath)
+        }
+    }
+
+    private static func fallbackTitle(for session: AgentSession) -> String {
+        guard session.agent != .codex else {
+            return session.title
+        }
+        let title = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            return title
+        }
+        guard !session.isSubagent else {
+            return session.title
+        }
+
+        return AgentEventEnricher.fallbackTitle(cwd: session.cwd, sessionId: session.sessionId)
+    }
+
+    private static func latestResponse(
+        for session: AgentSession,
+        transcriptPathOverride: String?
+    ) -> (text: String, phase: String?, transcriptPath: String?)? {
+        switch session.agent {
+        case .codex:
+            guard let latestCodexResponse = CodexSessionWatcher.latestResponse(
+                for: session.sessionId,
+                afterUserPrompt: pendingResponseUserPrompt(for: session)
+            ) else {
+                return nil
+            }
+            return (
+                text: latestCodexResponse.text,
+                phase: latestCodexResponse.phase,
+                transcriptPath: session.transcriptPath
+            )
+        case .claudeCode:
+            guard let latestClaudeResponse = ClaudeLatestResponseResolver.latestResponse(
+                for: session.sessionId,
+                transcriptPath: transcriptPathOverride ?? session.transcriptPath,
+                afterUserPrompt: pendingResponseUserPrompt(for: session)
+            ) else {
+                return nil
+            }
+            return (
+                text: latestClaudeResponse.text,
+                phase: "assistant",
+                transcriptPath: latestClaudeResponse.transcriptPath
+            )
+        }
+    }
+
+    private static func pendingResponseUserPrompt(for session: AgentSession) -> String? {
+        guard session.isAwaitingLatestResponseText else {
+            return nil
+        }
+
+        return session.latestUserPrompt
     }
 }
 
@@ -3934,32 +4027,82 @@ final class AppController: ObservableObject {
     private func applyEvent(_ event: AgentEvent) {
         let immediateEvent = event.settingUpdatedAtIfMissing(Date())
 
-        if shouldDropUnresolvedCodexToolEvent(immediateEvent) {
-            removeHiddenSession(immediateEvent)
-            return
-        }
-
         guard !AgentEventEnricher.shouldHideImmediately(immediateEvent) else {
             removeHiddenSession(immediateEvent)
             return
         }
 
-        let session = store.apply(immediateEvent)
-        scheduleResponseRefreshes(for: session)
-        enrichEventAfterInitialApply(immediateEvent)
+        if AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: immediateEvent.agent,
+            title: immediateEvent.title,
+            event: immediateEvent.event,
+            latestResponseText: immediateEvent.latestResponseText
+        ), !hasResolvedExistingCodexSession(for: immediateEvent) {
+            resolveUnresolvedCodexToolEvent(immediateEvent)
+            return
+        }
+
+        applyEventToStore(immediateEvent)
     }
 
-    private func shouldDropUnresolvedCodexToolEvent(_ event: AgentEvent) -> Bool {
-        guard AgentSessionVisibility.isCodexUnresolvedToolEvent(
-            agent: event.agent,
-            title: event.title,
-            event: event.event,
-            latestResponseText: event.latestResponseText
-        ) else {
+    private func applyEventToStore(_ event: AgentEvent) {
+        let session = store.apply(event)
+        scheduleResponseRefreshes(for: session)
+        enrichEventAfterInitialApply(event)
+    }
+
+    /// Pre/PostToolUse hook events arrive with empty titles for the whole
+    /// session lifetime, but once the stored session has a title, a response,
+    /// or a non-tool event, the drop decision is "keep" regardless of the
+    /// thread title — so the event can apply synchronously, in arrival order,
+    /// without touching the disk. Only brand-new or still-unresolved sessions
+    /// take the asynchronous path below.
+    private func hasResolvedExistingCodexSession(for event: AgentEvent) -> Bool {
+        guard let existing = store.sessions.first(where: {
+            $0.agent == event.agent && $0.sessionId == event.sessionId
+        }) else {
             return false
         }
 
-        guard CodexSessionWatcher.title(for: event.sessionId) == nil else {
+        let existingHasTitle = !existing.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let existingHasResponse = existing.latestResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let existingIsUnresolvedToolEvent = AgentSessionVisibility.isCodexUnresolvedToolEvent(
+            agent: existing.agent,
+            title: existing.title,
+            event: existing.event,
+            latestResponseText: existing.latestResponseText
+        )
+        return existingHasTitle || existingHasResponse || !existingIsUnresolvedToolEvent
+    }
+
+    /// The drop decision needs the Codex thread title, which is read from
+    /// `session_index.jsonl` on disk — resolve it off the main thread and
+    /// finish the decision back on the main actor.
+    private func resolveUnresolvedCodexToolEvent(_ event: AgentEvent) {
+        let queue = eventEnrichmentQueue
+        queue.async {
+            let hasThreadTitle = CodexSessionWatcher.title(for: event.sessionId) != nil
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                if self.shouldDropUnresolvedCodexToolEvent(event, hasThreadTitle: hasThreadTitle) {
+                    self.removeHiddenSession(event)
+                    return
+                }
+
+                guard self.shouldApplyEnrichedEvent(event) else {
+                    return
+                }
+                self.applyEventToStore(event)
+            }
+        }
+    }
+
+    private func shouldDropUnresolvedCodexToolEvent(_ event: AgentEvent, hasThreadTitle: Bool) -> Bool {
+        guard !hasThreadTitle else {
             return false
         }
 
@@ -4072,136 +4215,153 @@ final class AppController: ObservableObject {
     }
 
     private func refreshResponse(sessionId: String, agent: AgentKind, transcriptPath: String?) {
-        guard let session = store.sessions.first(where: {
+        guard let snapshot = store.sessions.first(where: {
             $0.agent == agent && $0.sessionId == sessionId
         }) else {
             return
         }
 
-        let title = resolvedTitle(for: session) ?? fallbackTitle(for: session)
-        guard let latestResponse = latestResponse(
-            for: session,
-            transcriptPathOverride: transcriptPath
-        ) else {
+        let queue = eventEnrichmentQueue
+        queue.async { [weak self] in
+            let outcome = SessionRefreshResolver.resolve(for: snapshot, transcriptPathOverride: transcriptPath)
+            guard outcome.response != nil else {
+                return
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                self?.applyResponseRefresh(outcome, snapshot: snapshot, requiresResponse: true)
+            }
+        }
+    }
+
+    private func applyResponseRefresh(
+        _ outcome: SessionRefreshResolver.Outcome,
+        snapshot: AgentSession,
+        requiresResponse: Bool
+    ) {
+        guard let current = store.sessions.first(where: {
+            $0.agent == snapshot.agent && $0.sessionId == snapshot.sessionId
+        }) else {
             return
         }
 
-        let responseTextChanged = latestResponse.text != session.latestResponseText
-        guard title != session.title
-            || responseTextChanged
-            || latestResponse.transcriptPath != session.transcriptPath
-            || session.latestResponsePhase != latestResponse.phase else {
+        // The response was resolved against the prompt captured in the
+        // snapshot; a newer prompt makes it stale (the retry ladder and the
+        // maintenance pass will re-resolve).
+        guard current.latestUserPrompt == snapshot.latestUserPrompt else {
+            return
+        }
+
+        if requiresResponse, outcome.response == nil {
+            return
+        }
+
+        let response = outcome.response
+        let title = outcome.title
+        let latestResponseText = response.map(\.text) ?? current.latestResponseText
+        let latestResponsePhase = response != nil ? response?.phase : current.latestResponsePhase
+        let transcriptPath = response?.transcriptPath ?? current.transcriptPath
+        let responseTextChanged = response != nil && latestResponseText != current.latestResponseText
+
+        guard title != current.title
+            || latestResponseText != current.latestResponseText
+            || latestResponsePhase != current.latestResponsePhase
+            || transcriptPath != current.transcriptPath else {
             return
         }
 
         let refreshedAt = Date()
-        let refreshedEvent = AgentEvent(
-            agent: session.agent,
-            sessionId: session.sessionId,
-            state: session.state,
+        let applied = store.apply(AgentEvent(
+            agent: current.agent,
+            sessionId: current.sessionId,
+            state: current.state,
             title: title,
-            cwd: session.cwd,
-            event: session.event,
-            terminal: session.terminal,
-            pid: session.pid,
+            cwd: current.cwd,
+            event: current.event,
+            terminal: current.terminal,
+            pid: current.pid,
             updatedAt: updatedAtForResponseRefresh(
-                session: session,
+                session: current,
                 responseTextChanged: responseTextChanged,
                 now: refreshedAt
             ),
-            parentSessionId: session.parentSessionId,
-            subagentNickname: session.subagentNickname,
-            subagentRole: session.subagentRole,
-            subagentDepth: session.subagentDepth,
-            transcriptPath: latestResponse.transcriptPath,
-            latestUserPrompt: session.latestUserPrompt,
-            latestResponseText: latestResponse.text,
-            latestResponsePhase: latestResponse.phase
-        )
+            parentSessionId: current.parentSessionId,
+            subagentNickname: current.subagentNickname,
+            subagentRole: current.subagentRole,
+            subagentDepth: current.subagentDepth,
+            transcriptPath: transcriptPath,
+            latestUserPrompt: current.latestUserPrompt,
+            latestResponseText: latestResponseText,
+            latestResponsePhase: latestResponsePhase
+        ))
 
-        let applied = store.apply(refreshedEvent)
-        if shouldHideSession(applied) {
-            store.removeSession(agent: applied.agent, sessionId: applied.sessionId)
+        if requiresResponse {
+            scheduleHideCheck(for: applied)
+        }
+    }
+
+    /// Hide checks hit the disk (rollout files, app-session metadata), so the
+    /// predicate runs on the enrichment queue; removal happens back on the
+    /// main actor only if the session saw no new activity in the meantime.
+    private func scheduleHideCheck(for session: AgentSession) {
+        let queue = eventEnrichmentQueue
+        queue.async {
+            guard SessionRefreshResolver.shouldHide(session) else {
+                return
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+                guard let current = self.store.sessions.first(where: {
+                    $0.agent == session.agent && $0.sessionId == session.sessionId
+                }), current.updatedAt == session.updatedAt else {
+                    return
+                }
+                self.store.removeSession(agent: session.agent, sessionId: session.sessionId)
+            }
         }
     }
 
     private func refreshSessionTitles() {
-        pruneHiddenSessions()
         store.expireStaleActiveSessions()
 
-        for session in store.sessions {
-            let title = resolvedTitle(for: session) ?? fallbackTitle(for: session)
-            let latestResponse = latestResponse(for: session)
-            let latestResponseText = latestResponse?.text ?? session.latestResponseText
-            let latestResponsePhase = latestResponse?.phase ?? session.latestResponsePhase
-            let transcriptPath = latestResponse?.transcriptPath ?? session.transcriptPath
-            let responseTextChanged = latestResponse != nil
-                && latestResponseText != session.latestResponseText
-
-            guard title != session.title
-                || latestResponseText != session.latestResponseText
-                || latestResponsePhase != session.latestResponsePhase
-                || transcriptPath != session.transcriptPath else {
-                continue
-            }
-
-            let refreshedAt = Date()
-            store.apply(AgentEvent(
-                agent: session.agent,
-                sessionId: session.sessionId,
-                state: session.state,
-                title: title,
-                cwd: session.cwd,
-                event: session.event,
-                terminal: session.terminal,
-                pid: session.pid,
-                updatedAt: updatedAtForResponseRefresh(
-                    session: session,
-                    responseTextChanged: responseTextChanged,
-                    now: refreshedAt
-                ),
-                parentSessionId: session.parentSessionId,
-                subagentNickname: session.subagentNickname,
-                subagentRole: session.subagentRole,
-                subagentDepth: session.subagentDepth,
-                transcriptPath: transcriptPath,
-                latestUserPrompt: session.latestUserPrompt,
-                latestResponseText: latestResponseText,
-                latestResponsePhase: latestResponsePhase
-            ))
+        let sessions = store.sessions
+        guard !sessions.isEmpty else {
+            return
         }
-    }
 
-    private func latestResponse(
-        for session: AgentSession,
-        transcriptPathOverride: String? = nil
-    ) -> (text: String, phase: String?, transcriptPath: String?)? {
-        switch session.agent {
-        case .codex:
-            guard let latestCodexResponse = CodexSessionWatcher.latestResponse(
-                for: session.sessionId,
-                afterUserPrompt: pendingResponseUserPrompt(for: session)
-            ) else {
-                return nil
+        let queue = eventEnrichmentQueue
+        queue.async { [weak self] in
+            var hidden: [AgentSession] = []
+            var refreshes: [(snapshot: AgentSession, outcome: SessionRefreshResolver.Outcome)] = []
+            for session in sessions {
+                if SessionRefreshResolver.shouldHide(session) {
+                    hidden.append(session)
+                    continue
+                }
+                refreshes.append((session, SessionRefreshResolver.resolve(for: session, transcriptPathOverride: nil)))
             }
-            return (
-                text: latestCodexResponse.text,
-                phase: latestCodexResponse.phase,
-                transcriptPath: session.transcriptPath
-            )
-        case .claudeCode:
-            guard let latestClaudeResponse = ClaudeLatestResponseResolver.latestResponse(
-                for: session.sessionId,
-                transcriptPath: transcriptPathOverride ?? session.transcriptPath,
-                afterUserPrompt: pendingResponseUserPrompt(for: session)
-            ) else {
-                return nil
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                for session in hidden {
+                    guard let current = self.store.sessions.first(where: {
+                        $0.agent == session.agent && $0.sessionId == session.sessionId
+                    }), current.updatedAt == session.updatedAt else {
+                        continue
+                    }
+                    self.store.removeSession(agent: session.agent, sessionId: session.sessionId)
+                }
+
+                for (snapshot, outcome) in refreshes {
+                    self.applyResponseRefresh(outcome, snapshot: snapshot, requiresResponse: false)
+                }
             }
-            return (
-                text: latestClaudeResponse.text,
-                phase: "assistant",
-                transcriptPath: latestClaudeResponse.transcriptPath
-            )
         }
     }
 
@@ -4227,237 +4387,8 @@ final class AppController: ObservableObject {
         return now
     }
 
-    private func pendingResponseUserPrompt(for session: AgentSession) -> String? {
-        guard session.isAwaitingLatestResponseText else {
-            return nil
-        }
-
-        return session.latestUserPrompt
-    }
-
-    private func resolvedTitle(for session: AgentSession) -> String? {
-        if AgentCompactionStatus.hasMatchingDisplayTitle(event: session.event, title: session.title) {
-            return session.title
-        }
-
-        switch session.agent {
-        case .codex:
-            return CodexSessionWatcher.title(for: session.sessionId)
-        case .claudeCode:
-            return ClaudeSessionTitleResolver.title(for: session.sessionId, transcriptPath: session.transcriptPath)
-        }
-    }
-
-    private func fallbackTitle(for session: AgentSession) -> String {
-        guard session.agent != .codex else {
-            return session.title
-        }
-        let title = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !title.isEmpty {
-            return title
-        }
-        guard !session.isSubagent else {
-            return session.title
-        }
-
-        return fallbackTitle(cwd: session.cwd, sessionId: session.sessionId)
-    }
-
-    private func fallbackTitle(cwd: String, sessionId: String) -> String {
-        let trimmedCWD = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedCWD.isEmpty else {
-            return sessionId
-        }
-
-        let lastPathComponent = URL(fileURLWithPath: trimmedCWD).lastPathComponent
-        return lastPathComponent.isEmpty ? sessionId : lastPathComponent
-    }
-
-    private func pruneHiddenSessions() {
-        store.removeSessions { session in
-            shouldHideSession(session)
-        }
-    }
-
     private func removeHiddenSession(_ event: AgentEvent) {
         store.removeSession(agent: event.agent, sessionId: event.sessionId)
-    }
-
-    private func shouldHideSession(_ session: AgentSession) -> Bool {
-        switch session.agent {
-        case .codex:
-            shouldHideCodexSession(
-                sessionId: session.sessionId,
-                state: session.state,
-                title: session.title,
-                cwd: session.cwd,
-                event: session.event,
-                latestResponseText: session.latestResponseText,
-                allowsUnresolvedLiveSession: true
-            )
-        case .claudeCode:
-            shouldHideClaudeSession(
-                sessionId: session.sessionId,
-                state: session.state,
-                cwd: session.cwd,
-                event: session.event,
-                title: session.title,
-                isSubagent: session.isSubagent,
-                allowsUnresolvedLiveSession: false
-            )
-        }
-    }
-
-    private func shouldHideCodexSession(
-        sessionId: String,
-        state: AgentState,
-        title: String,
-        cwd: String,
-        event: String,
-        latestResponseText: String?,
-        allowsUnresolvedLiveSession: Bool
-    ) -> Bool {
-        if AgentSessionVisibility.isCodexInternalSuggestion(
-            agent: .codex,
-            title: title,
-            latestResponseText: latestResponseText
-        ) {
-            return true
-        }
-
-        if AgentSessionVisibility.isCodexUnresolvedToolEvent(
-            agent: .codex,
-            title: title,
-            event: event,
-            latestResponseText: latestResponseText
-        ),
-           CodexSessionWatcher.title(for: sessionId) == nil {
-            return true
-        }
-
-        switch CodexSessionWatcher.fileStatus(for: sessionId) {
-        case .active:
-            break
-        case .archived:
-            return true
-        case .missing:
-            return !(allowsUnresolvedLiveSession && shouldKeepUnresolvedCodexSession(
-                sessionId: sessionId,
-                state: state,
-                cwd: cwd,
-                event: event
-            ))
-        }
-
-        if CodexSessionWatcher.shouldHideSession(sessionId) {
-            return true
-        }
-
-        if AgentSessionVisibility.isCodexMemoryWorkspace(agent: .codex, cwd: cwd) {
-            return true
-        }
-
-        if shouldKeepUnresolvedCodexSession(sessionId: sessionId, state: state, cwd: cwd, event: event) {
-            return false
-        }
-
-        if CodexSessionWatcher.title(for: sessionId) != nil {
-            return false
-        }
-
-        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedTitle.isEmpty else {
-            return true
-        }
-
-        let fallback = fallbackTitle(cwd: cwd, sessionId: sessionId)
-        return normalizedTitle == fallback
-    }
-
-    private func shouldKeepUnresolvedCodexSession(
-        sessionId: String,
-        state: AgentState,
-        cwd: String,
-        event: String
-    ) -> Bool {
-        guard hasUsableSessionIdentity(sessionId: sessionId, cwd: cwd) else {
-            return false
-        }
-
-        return state.isActive || event == "SessionStart"
-    }
-
-    private func shouldHideClaudeSession(
-        sessionId: String,
-        state: AgentState,
-        cwd: String,
-        event: String,
-        title: String,
-        isSubagent: Bool,
-        allowsUnresolvedLiveSession: Bool
-    ) -> Bool {
-        if isClaudeProbeSession(cwd: cwd, title: title) {
-            return true
-        }
-
-        guard !isSubagent else {
-            return false
-        }
-
-        switch ClaudeSessionTitleResolver.appSessionStatus(sessionId: sessionId) {
-        case .active:
-            return false
-        case .archived:
-            return true
-        case .missing:
-            return !(allowsUnresolvedLiveSession && shouldKeepUnresolvedClaudeSession(
-                sessionId: sessionId,
-                state: state,
-                cwd: cwd,
-                event: event
-            ))
-        }
-    }
-
-    private func shouldKeepUnresolvedClaudeSession(
-        sessionId: String,
-        state: AgentState,
-        cwd: String,
-        event: String
-    ) -> Bool {
-        guard hasUsableSessionIdentity(sessionId: sessionId, cwd: cwd) else {
-            return false
-        }
-
-        return state.isActive || event == "SessionStart" || event == "Start"
-    }
-
-    private func hasUsableSessionIdentity(sessionId: String, cwd: String) -> Bool {
-        let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedSessionId.isEmpty else {
-            return false
-        }
-
-        if trimmedSessionId != "default" {
-            return true
-        }
-
-        return !cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func isClaudeProbeSession(cwd: String, title: String) -> Bool {
-        let normalizedCWD = cwd
-            .replacingOccurrences(of: "\\", with: "/")
-            .lowercased()
-        if normalizedCWD.contains("/application support/codexbar/claudeprobe") {
-            return true
-        }
-
-        let normalizedTitle = title
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "")
-        return normalizedTitle == "claudeprobe"
     }
 
     private func startMaintenanceTimer() {

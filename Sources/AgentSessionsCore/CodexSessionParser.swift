@@ -370,21 +370,27 @@ public enum CodexSessionParser {
         return nil
     }
 
-    private static func containsAutoReviewApprovalConfiguration(_ value: Any) -> Bool {
+    static let autoReviewApprovalSearchDepthLimit = 32
+
+    static func containsAutoReviewApprovalConfiguration(_ value: Any, depth: Int = 0) -> Bool {
+        guard depth < autoReviewApprovalSearchDepthLimit else {
+            return false
+        }
+
         if let dictionary = value as? [String: Any] {
             for (key, nestedValue) in dictionary {
                 if isApprovalReviewerKey(key),
                    isAutoReviewApproverValue(nestedValue) {
                     return true
                 }
-                if containsAutoReviewApprovalConfiguration(nestedValue) {
+                if containsAutoReviewApprovalConfiguration(nestedValue, depth: depth + 1) {
                     return true
                 }
             }
         }
 
         if let array = value as? [Any] {
-            return array.contains(where: containsAutoReviewApprovalConfiguration)
+            return array.contains { containsAutoReviewApprovalConfiguration($0, depth: depth + 1) }
         }
 
         if let string = value as? String {

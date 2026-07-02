@@ -17,12 +17,21 @@ public enum ClaudeSessionTitleResolver {
         private struct Snapshot {
             var rootPath: String
             var expiresAt: Date
+            var rootModifiedAt: Date?
             var metadataBySessionId: [String: AppSessionMetadata]
+        }
+
+        private struct FileCacheEntry {
+            var modifiedAt: Date
+            var size: Int
+            var cliSessionId: String?
+            var metadata: AppSessionMetadata?
         }
 
         private let lock = NSLock()
         private let ttl: TimeInterval
         private var snapshot: Snapshot?
+        private var fileCache: [String: FileCacheEntry] = [:]
 
         init(ttl: TimeInterval) {
             self.ttl = ttl
@@ -35,20 +44,34 @@ public enum ClaudeSessionTitleResolver {
 
             let rootPath = sessionsRoot.standardizedFileURL.path
             let now = Date()
+            // A single stat of the root catches top-level additions (new
+            // window directories, root creation) ahead of the TTL; changes
+            // deeper in the tree wait for the TTL, which is cheap to expire
+            // now that unchanged files are served from `fileCache`. Read via
+            // FileManager because URL.resourceValues caches per URL instance
+            // and would keep returning the stale mtime for a reused URL.
+            let rootModifiedAt = (try? FileManager.default.attributesOfItem(
+                atPath: rootPath
+            ))?[.modificationDate] as? Date
 
             lock.lock()
             defer { lock.unlock() }
 
             if let snapshot,
                snapshot.rootPath == rootPath,
-               snapshot.expiresAt > now {
+               snapshot.expiresAt > now,
+               snapshot.rootModifiedAt == rootModifiedAt {
                 return snapshot.metadataBySessionId[sessionId]
             }
 
-            let metadataBySessionId = Self.buildMetadataIndex(sessionsRoot: sessionsRoot)
+            if snapshot?.rootPath != rootPath {
+                fileCache.removeAll()
+            }
+            let metadataBySessionId = buildMetadataIndex(sessionsRoot: sessionsRoot)
             snapshot = Snapshot(
                 rootPath: rootPath,
                 expiresAt: now.addingTimeInterval(ttl),
+                rootModifiedAt: rootModifiedAt,
                 metadataBySessionId: metadataBySessionId
             )
             return metadataBySessionId[sessionId]
@@ -60,48 +83,88 @@ public enum ClaudeSessionTitleResolver {
             lock.unlock()
         }
 
-        private static func buildMetadataIndex(sessionsRoot: URL) -> [String: AppSessionMetadata] {
+        private func buildMetadataIndex(sessionsRoot: URL) -> [String: AppSessionMetadata] {
             guard let enumerator = FileManager.default.enumerator(
                 at: sessionsRoot,
-                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey, .fileSizeKey],
                 options: [.skipsHiddenFiles]
             ) else {
                 return [:]
             }
 
             var metadataBySessionId: [String: AppSessionMetadata] = [:]
+            var seenPaths: Set<String> = []
 
             for case let url as URL in enumerator {
                 guard url.pathExtension == "json",
-                      let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
-                      values.isRegularFile == true,
-                      let data = try? Data(contentsOf: url),
-                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let cliSessionId = object["cliSessionId"] as? String,
-                      !cliSessionId.isEmpty else {
+                      let values = try? url.resourceValues(
+                          forKeys: [.contentModificationDateKey, .isRegularFileKey, .fileSizeKey]
+                      ),
+                      values.isRegularFile == true else {
                     continue
                 }
 
-                let title = (object["title"] as? String).flatMap(ClaudeSessionTitleResolver.sanitizedTitle)
-                let score = ClaudeSessionTitleResolver.timestampScore(from: object)
-                    ?? values.contentModificationDate?.timeIntervalSince1970
-                    ?? 0
-                let metadata = AppSessionMetadata(
-                    title: title,
-                    isArchived: object["isArchived"] as? Bool == true,
-                    score: score
-                )
+                let path = url.path
+                seenPaths.insert(path)
+                let modifiedAt = values.contentModificationDate ?? .distantPast
+                let size = values.fileSize ?? -1
 
-                if metadataBySessionId[cliSessionId] == nil || score >= metadataBySessionId[cliSessionId]!.score {
+                let entry: FileCacheEntry
+                if let cached = fileCache[path],
+                   cached.modifiedAt == modifiedAt,
+                   cached.size == size {
+                    entry = cached
+                } else {
+                    entry = Self.parseMetadataFile(
+                        at: url,
+                        modifiedAt: modifiedAt,
+                        size: size,
+                        fallbackScore: values.contentModificationDate?.timeIntervalSince1970
+                    )
+                    fileCache[path] = entry
+                }
+
+                guard let cliSessionId = entry.cliSessionId,
+                      let metadata = entry.metadata else {
+                    continue
+                }
+
+                if metadataBySessionId[cliSessionId] == nil || metadata.score >= metadataBySessionId[cliSessionId]!.score {
                     metadataBySessionId[cliSessionId] = metadata
                 }
             }
 
+            fileCache = fileCache.filter { seenPaths.contains($0.key) }
             return metadataBySessionId
+        }
+
+        private static func parseMetadataFile(
+            at url: URL,
+            modifiedAt: Date,
+            size: Int,
+            fallbackScore: Double?
+        ) -> FileCacheEntry {
+            guard let data = try? Data(contentsOf: url),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let cliSessionId = object["cliSessionId"] as? String,
+                  !cliSessionId.isEmpty else {
+                return FileCacheEntry(modifiedAt: modifiedAt, size: size, cliSessionId: nil, metadata: nil)
+            }
+
+            let title = (object["title"] as? String).flatMap(ClaudeSessionTitleResolver.sanitizedTitle)
+            let score = ClaudeSessionTitleResolver.timestampScore(from: object)
+                ?? fallbackScore
+                ?? 0
+            let metadata = AppSessionMetadata(
+                title: title,
+                isArchived: object["isArchived"] as? Bool == true,
+                score: score
+            )
+            return FileCacheEntry(modifiedAt: modifiedAt, size: size, cliSessionId: cliSessionId, metadata: metadata)
         }
     }
 
-    private static let appSessionMetadataCache = AppSessionMetadataCache(ttl: 2)
+    private static let appSessionMetadataCache = AppSessionMetadataCache(ttl: 5)
 
     public static func title(for sessionId: String) -> String? {
         title(
@@ -284,7 +347,61 @@ public enum ClaudeSessionTitleResolver {
         appSessionMetadataCache.metadata(for: sessionId, sessionsRoot: sessionsRoot)
     }
 
+    /// Caches successful sessionId → transcript URL lookups so repeat callers
+    /// skip the full projects-tree enumeration. Misses are never cached: a
+    /// transcript that appears moments later (the response-refresh retry
+    /// ladder) must be found on the next attempt.
+    private final class TranscriptFileCache: @unchecked Sendable {
+        private struct Entry {
+            var url: URL
+            var cachedAt: Date
+        }
+
+        private let lock = NSLock()
+        private let limit: Int
+        private var entries: [String: Entry] = [:]
+
+        init(limit: Int) {
+            self.limit = limit
+        }
+
+        func url(forKey key: String) -> URL? {
+            lock.lock()
+            let entry = entries[key]
+            lock.unlock()
+            guard let entry else {
+                return nil
+            }
+
+            guard FileManager.default.fileExists(atPath: entry.url.path) else {
+                lock.lock()
+                entries[key] = nil
+                lock.unlock()
+                return nil
+            }
+            return entry.url
+        }
+
+        func store(_ url: URL, forKey key: String) {
+            lock.lock()
+            if entries[key] == nil,
+               entries.count >= limit,
+               let oldestKey = entries.min(by: { $0.value.cachedAt < $1.value.cachedAt })?.key {
+                entries.removeValue(forKey: oldestKey)
+            }
+            entries[key] = Entry(url: url, cachedAt: Date())
+            lock.unlock()
+        }
+    }
+
+    private static let transcriptFileCache = TranscriptFileCache(limit: 500)
+
     private static func transcriptFile(for sessionId: String, projectsRoot: URL) -> URL? {
+        let cacheKey = "\(projectsRoot.standardizedFileURL.path)|\(sessionId)"
+        if let cached = transcriptFileCache.url(forKey: cacheKey) {
+            return cached
+        }
+
         guard let enumerator = FileManager.default.enumerator(
             at: projectsRoot,
             includingPropertiesForKeys: [.isRegularFileKey],
@@ -299,6 +416,7 @@ public enum ClaudeSessionTitleResolver {
                   values.isRegularFile == true else {
                 continue
             }
+            transcriptFileCache.store(url, forKey: cacheKey)
             return url
         }
 

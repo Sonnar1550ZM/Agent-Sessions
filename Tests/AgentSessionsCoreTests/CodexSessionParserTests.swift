@@ -542,4 +542,34 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertNil(parsed.latestResponseText)
         XCTAssertNil(parsed.latestResponsePhase)
     }
+
+    func testAutoReviewApprovalSearchSurvivesDeeplyNestedValues() {
+        var value: Any = "leaf"
+        for _ in 0..<1_000 {
+            value = ["nested": value]
+        }
+
+        XCTAssertFalse(CodexSessionParser.containsAutoReviewApprovalConfiguration(value))
+    }
+
+    func testAutoReviewApprovalSearchFindsShallowConfiguration() {
+        let value: [String: Any] = [
+            "config": [
+                "review": [
+                    "approvals_reviewer": "auto_review_guardian"
+                ]
+            ]
+        ]
+
+        XCTAssertTrue(CodexSessionParser.containsAutoReviewApprovalConfiguration(value))
+    }
+
+    func testAutoReviewApprovalSearchIgnoresMatchesBeyondDepthLimit() {
+        var value: Any = ["approvals_reviewer": "auto_review_guardian"]
+        for _ in 0..<CodexSessionParser.autoReviewApprovalSearchDepthLimit {
+            value = ["nested": value]
+        }
+
+        XCTAssertFalse(CodexSessionParser.containsAutoReviewApprovalConfiguration(value))
+    }
 }

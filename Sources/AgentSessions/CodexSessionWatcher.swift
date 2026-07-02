@@ -109,22 +109,30 @@ final class CodexSessionWatcher {
         stats: (size: UInt64, mtime: Date)
     ) {
         parsedSessionCacheLock.lock()
+        if parsedSessionCache[sessionId] == nil,
+           parsedSessionCache.count >= parsedSessionCacheLimit,
+           let oldestKey = parsedSessionCache.min(by: { $0.value.storedAt < $1.value.storedAt })?.key {
+            parsedSessionCache.removeValue(forKey: oldestKey)
+        }
         parsedSessionCache[sessionId] = ParsedSessionCacheEntry(
             path: file.path,
             size: stats.size,
             mtime: stats.mtime,
+            storedAt: Date(),
             parsed: parsed
         )
         parsedSessionCacheLock.unlock()
     }
 
     private static let parsedSessionCacheLock = NSLock()
+    private static let parsedSessionCacheLimit = 200
     nonisolated(unsafe) private static var parsedSessionCache: [String: ParsedSessionCacheEntry] = [:]
 
     private struct ParsedSessionCacheEntry {
         let path: String
         let size: UInt64
         let mtime: Date
+        let storedAt: Date
         let parsed: CodexParsedSession
     }
 
@@ -323,6 +331,11 @@ final class CodexSessionWatcher {
         let lookup = SessionLookup(status: status, activeFile: activeFile)
 
         sessionLookupCacheLock.lock()
+        if sessionLookupCache[normalizedSessionId] == nil,
+           sessionLookupCache.count >= sessionLookupCacheLimit,
+           let oldestKey = sessionLookupCache.min(by: { $0.value.checkedAt < $1.value.checkedAt })?.key {
+            sessionLookupCache.removeValue(forKey: oldestKey)
+        }
         sessionLookupCache[normalizedSessionId] = SessionLookupCacheEntry(
             checkedAt: now,
             lookup: lookup
@@ -352,51 +365,15 @@ final class CodexSessionWatcher {
     }
 
     private static let sessionLookupCacheLock = NSLock()
+    private static let sessionLookupCacheLimit = 500
     nonisolated(unsafe) private static var sessionLookupCache: [String: SessionLookupCacheEntry] = [:]
 
-    private static func tailText(from url: URL, limit: UInt64 = 1_000_000) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return nil
-        }
-        defer { try? handle.close() }
-
-        let size = (try? handle.seekToEnd()) ?? 0
-        let start = size > limit ? size - limit : 0
-        try? handle.seek(toOffset: start)
-        let data = (try? handle.readToEnd()) ?? Data()
-        guard var text = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-
-        if start > 0, let newline = text.firstIndex(of: "\n") {
-            text = String(text[text.index(after: newline)...])
-        }
-        return text
-    }
-
-    private static func headText(from url: URL, limit: Int = 128_000) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return nil
-        }
-        defer { try? handle.close() }
-
-        let data = (try? handle.read(upToCount: limit)) ?? Data()
-        return String(data: data, encoding: .utf8)
-    }
-
     private static func contextText(from url: URL) -> String? {
-        guard let tail = tailText(from: url) else {
-            return nil
-        }
-
-        guard let head = headText(from: url), !head.isEmpty else {
-            return tail
-        }
-
-        return head + "\n" + tail
+        SessionFileTextReader.contextText(from: url)
     }
 
     private static let threadTitleCacheLock = NSLock()
+    private static let threadTitleCacheLimit = 1_000
     nonisolated(unsafe) private static var threadTitleCache: [String: String?] = [:]
     nonisolated(unsafe) private static var threadTitleCacheKey: (size: UInt64, mtime: Date)?
 
@@ -437,6 +414,9 @@ final class CodexSessionWatcher {
         threadTitleCacheLock.lock()
         if threadTitleCacheKey?.size == stats?.size,
            threadTitleCacheKey?.mtime == stats?.mtime {
+            if threadTitleCache.count >= threadTitleCacheLimit {
+                threadTitleCache.removeAll(keepingCapacity: true)
+            }
             threadTitleCache[sessionId] = title
         }
         threadTitleCacheLock.unlock()
@@ -449,7 +429,7 @@ final class CodexSessionWatcher {
         for sessionId: String,
         tailLimit: UInt64
     ) -> String? {
-        guard let text = tailText(from: url, limit: tailLimit) else {
+        guard let text = SessionFileTextReader.tailText(from: url, limit: tailLimit) else {
             return nil
         }
 

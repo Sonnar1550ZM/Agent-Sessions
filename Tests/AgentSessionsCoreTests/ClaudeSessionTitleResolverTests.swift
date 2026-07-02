@@ -171,6 +171,52 @@ final class ClaudeSessionTitleResolverTests: XCTestCase {
         XCTAssertEqual(ClaudeSessionTitleResolver.appSessionStatus(sessionId: "deleted", appSessionsRoot: appRoot), .missing)
     }
 
+    func testDetectsAppSessionAddedAfterSnapshotWasBuilt() throws {
+        let appRoot = try makeProjectsRoot()
+        let sessionId = "late-arrival"
+
+        // Prime the cache with an empty snapshot for this root.
+        XCTAssertEqual(ClaudeSessionTitleResolver.appSessionStatus(sessionId: sessionId, appSessionsRoot: appRoot), .missing)
+
+        // Writing the session creates a new top-level directory, which bumps
+        // the root mtime and must invalidate the snapshot ahead of the TTL.
+        try writeAppSession(
+            root: appRoot,
+            cliSessionId: sessionId,
+            title: "Late arrival",
+            lastActivityAt: 1
+        )
+
+        XCTAssertEqual(ClaudeSessionTitleResolver.appSessionStatus(sessionId: sessionId, appSessionsRoot: appRoot), .active)
+    }
+
+    func testTranscriptPathLookupSurvivesRepeatCallsAndDeletion() throws {
+        let root = try makeProjectsRoot()
+        let sessionId = "cached-path"
+        let file = try writeTranscript(
+            root: root,
+            sessionId: sessionId,
+            lines: [
+                #"{"type":"user","message":{"role":"user","content":"Prompt"},"sessionId":"cached-path"}"#
+            ]
+        )
+
+        let first = ClaudeSessionTitleResolver.transcriptPath(for: sessionId, projectsRoot: root)
+        let second = ClaudeSessionTitleResolver.transcriptPath(for: sessionId, projectsRoot: root)
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(
+            first.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            file.standardizedFileURL.path
+        )
+
+        try FileManager.default.removeItem(at: file)
+
+        XCTAssertNil(
+            ClaudeSessionTitleResolver.transcriptPath(for: sessionId, projectsRoot: root),
+            "deleted transcript must not be served from the cache"
+        )
+    }
+
     private func makeProjectsRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

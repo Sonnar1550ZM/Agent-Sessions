@@ -21,11 +21,14 @@ final class ClaudeMainSessionInterruptWatcher {
     )
     private let handler: (AgentEvent) -> Void
     private var activityMonitor: FileSystemActivityMonitor?
+    private var startRetryTimer: DispatchSourceTimer?
     private var fileTrackers: [String: FileTracker] = [:]
     private var pendingChangePoll: DispatchWorkItem?
     private var pendingChangedPaths: Set<String> = []
     private static let changePollDelay: TimeInterval = 0.05
     private static let tailReadLimit: UInt64 = 64_000
+    private static let fileTrackerLimit = 256
+    private static let startRetryInterval: TimeInterval = 30
 
     init(handler: @escaping (AgentEvent) -> Void) {
         self.handler = handler
@@ -39,16 +42,52 @@ final class ClaudeMainSessionInterruptWatcher {
         ) { [weak self] paths in
             self?.scheduleChangedPathPoll(paths)
         }
-        activityMonitor?.start()
+        // Starting fails while ~/.claude/projects does not exist yet; keep
+        // retrying so interrupt detection comes alive once it is created.
+        if activityMonitor?.start() == true {
+            cancelStartRetryTimer()
+        } else {
+            scheduleStartRetry()
+        }
     }
 
     func stop() {
         activityMonitor?.stop()
         activityMonitor = nil
+        cancelStartRetryTimer()
         pendingChangePoll?.cancel()
         pendingChangePoll = nil
         pendingChangedPaths.removeAll()
         fileTrackers.removeAll()
+    }
+
+    private func scheduleStartRetry() {
+        guard startRetryTimer == nil else {
+            return
+        }
+
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.setEventHandler { [weak self] in
+            guard let self else {
+                return
+            }
+            guard self.activityMonitor?.start() == true else {
+                return
+            }
+            self.cancelStartRetryTimer()
+        }
+        timer.schedule(
+            deadline: .now() + Self.startRetryInterval,
+            repeating: Self.startRetryInterval,
+            leeway: .seconds(5)
+        )
+        startRetryTimer = timer
+        timer.resume()
+    }
+
+    private func cancelStartRetryTimer() {
+        startRetryTimer?.cancel()
+        startRetryTimer = nil
     }
 
     private func scheduleChangedPathPoll(_ paths: [String]) {
@@ -76,6 +115,15 @@ final class ClaudeMainSessionInterruptWatcher {
     }
 
     private func check(_ file: URL) {
+        if fileTrackers.count > Self.fileTrackerLimit {
+            fileTrackers = WatcherCachePruning.prunedByAge(
+                fileTrackers,
+                lastSeenAt: { $0.modifiedAt },
+                maxAge: .infinity,
+                maxCount: Self.fileTrackerLimit
+            )
+        }
+
         let path = file.path
         let attrs = try? FileManager.default.attributesOfItem(atPath: path)
         guard let modifiedAt = attrs?[.modificationDate] as? Date,

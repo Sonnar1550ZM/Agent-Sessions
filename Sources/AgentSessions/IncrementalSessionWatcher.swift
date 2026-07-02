@@ -41,12 +41,16 @@ final class IncrementalSessionWatcher<Parsed> {
     private var pendingChangedPaths: Set<String> = []
     private var pendingFullPoll = false
     private var lastPollDate = Date.distantPast
-    private var lastFingerprints: [String: String] = [:]
+    private var lastMonitorSignalAt = Date.distantPast
+    private var isInFullPoll = false
+    private var fullPollEmittedChange = false
+    private var lastFingerprints: [String: (fingerprint: String, lastSeenAt: Date)] = [:]
     private var fileTrackers: [String: FileTracker] = [:]
     private static var changePollDelay: TimeInterval { 0.02 }
     private static var minimumChangePollInterval: TimeInterval { 0.05 }
     private static var activityMonitorUnavailablePollInterval: TimeInterval { 5 }
     private static var activityMonitorUnavailablePollLeeway: DispatchTimeInterval { .seconds(1) }
+    private static var activityMonitorStaleGrace: TimeInterval { 5 }
 
     init(adapter: Adapter, handler: @escaping (AgentEvent) -> Void) {
         self.adapter = adapter
@@ -64,6 +68,9 @@ final class IncrementalSessionWatcher<Parsed> {
         self.timer = timer
         createActivityMonitorIfNeeded()
         isActivityMonitorRunning = activityMonitor?.start() ?? false
+        if isActivityMonitorRunning {
+            lastMonitorSignalAt = Date()
+        }
         scheduleFallbackTimer(deadline: .now())
         timer.resume()
     }
@@ -83,12 +90,44 @@ final class IncrementalSessionWatcher<Parsed> {
     private func poll() {
         retryActivityMonitorIfNeeded()
         lastPollDate = Date()
+        isInFullPoll = true
+        fullPollEmittedChange = false
         var activePaths: Set<String> = []
         for file in adapter.latestFiles(50) {
             activePaths.insert(file.path)
             ingest(file)
         }
+        isInFullPoll = false
         fileTrackers = fileTrackers.filter { activePaths.contains($0.key) }
+        // Fingerprints embed the latest prompt/response text, so stale
+        // entries are too heavy to keep for the lifetime of the process.
+        lastFingerprints = WatcherCachePruning.prunedByAge(
+            lastFingerprints,
+            lastSeenAt: { $0.lastSeenAt }
+        )
+        restartActivityMonitorIfStale()
+    }
+
+    /// FSEventStreams have been observed to stop delivering after long
+    /// uptimes (sleep/wake cycles). When the fallback poll discovers changes
+    /// the monitor stayed silent about, recreate the stream so the fast path
+    /// comes back instead of degrading to poll-cadence latency for good.
+    private func restartActivityMonitorIfStale() {
+        guard isActivityMonitorRunning,
+              fullPollEmittedChange,
+              Date().timeIntervalSince(lastMonitorSignalAt) > Self.activityMonitorStaleGrace else {
+            return
+        }
+
+        activityMonitor?.stop()
+        activityMonitor = nil
+        createActivityMonitorIfNeeded()
+        isActivityMonitorRunning = activityMonitor?.start() ?? false
+        if isActivityMonitorRunning {
+            lastMonitorSignalAt = Date()
+        } else {
+            scheduleFallbackTimer(deadline: .now() + adapter.fallbackPollInterval)
+        }
     }
 
     private func createActivityMonitorIfNeeded() {
@@ -99,6 +138,7 @@ final class IncrementalSessionWatcher<Parsed> {
             latency: Self.changePollDelay,
             queue: queue
         ) { [weak self] paths in
+            self?.lastMonitorSignalAt = Date()
             self?.scheduleChangedPathPoll(paths)
         }
     }
@@ -110,6 +150,7 @@ final class IncrementalSessionWatcher<Parsed> {
         guard activityMonitor?.start() == true else { return }
 
         isActivityMonitorRunning = true
+        lastMonitorSignalAt = Date()
         scheduleFallbackTimer(deadline: .now() + adapter.fallbackPollInterval)
     }
 
@@ -117,6 +158,10 @@ final class IncrementalSessionWatcher<Parsed> {
         guard let timer else { return }
 
         if isActivityMonitorRunning {
+            // The fallback poll stays at the adapter's cadence even while
+            // FSEvents is healthy: streams have been observed to go silent
+            // after long uptimes (sleep/wake), and a slow safety net turns
+            // that silent failure into user-visible lag.
             timer.schedule(
                 deadline: deadline,
                 repeating: adapter.fallbackPollInterval,
@@ -198,6 +243,9 @@ final class IncrementalSessionWatcher<Parsed> {
         let needsFullLoad = tracker == nil
             || tracker!.inode != inode
             || size < tracker!.bytesRead
+        // Aged-idle refreshes also emit, but only byte-level changes indicate
+        // file activity the monitor should have reported.
+        let sawContentChange = needsFullLoad || size != tracker!.bytesRead
 
         let snapshot: Snapshot?
         if needsFullLoad {
@@ -240,9 +288,16 @@ final class IncrementalSessionWatcher<Parsed> {
         guard let snapshot else { return }
 
         let key = "\(file.path):\(snapshot.event.sessionId)"
-        guard snapshot.fingerprint != lastFingerprints[key] else { return }
+        guard snapshot.fingerprint != lastFingerprints[key]?.fingerprint else {
+            // Touch the entry so active-but-unchanged sessions survive pruning.
+            lastFingerprints[key]?.lastSeenAt = Date()
+            return
+        }
 
-        lastFingerprints[key] = snapshot.fingerprint
+        lastFingerprints[key] = (snapshot.fingerprint, Date())
+        if isInFullPoll, sawContentChange {
+            fullPollEmittedChange = true
+        }
         handler(snapshot.event)
     }
 

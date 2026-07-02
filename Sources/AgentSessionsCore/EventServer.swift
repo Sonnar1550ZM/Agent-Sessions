@@ -74,6 +74,8 @@ public final class EventServer: @unchecked Sendable {
         receive(on: connection, buffer: Data())
     }
 
+    private static let maxRequestBytes = 1_048_576
+
     private func receive(on connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
             guard let self else {
@@ -89,6 +91,11 @@ public final class EventServer: @unchecked Sendable {
             var nextBuffer = buffer
             if let data {
                 nextBuffer.append(data)
+            }
+
+            guard nextBuffer.count <= Self.maxRequestBytes else {
+                self.respond(status: "413 Content Too Large", connection: connection)
+                return
             }
 
             if let body = Self.extractBody(from: nextBuffer) {
