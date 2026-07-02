@@ -309,6 +309,11 @@ public enum CodexSessionParser {
                     parserState.latestResponseText = responseText
                     parserState.latestResponsePhase = trimmedString(payload["phase"], limit: 80)
                 }
+                if eventType == "task_complete",
+                   let responseText = sanitizedResponseText(payload["last_agent_message"] as? String) {
+                    parserState.latestResponseText = responseText
+                    parserState.latestResponsePhase = "final_answer"
+                }
                 if ["task_complete", "turn_complete", "shutdown_complete", "turn_aborted"].contains(eventType) {
                     parserState.state = .idle
                 }

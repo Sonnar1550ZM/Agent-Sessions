@@ -528,6 +528,21 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.latestResponsePhase, "commentary")
     }
 
+    func testTaskCompleteLastAgentMessageOverridesPriorCommentaryResponse() {
+        let text = """
+        {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"agent_message","message":"起動コマンドまで完了しました。最後に多重起動と git 差分を確認します。","phase":"commentary"}}
+        {"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"done"}}
+        {"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"変更しました。\\n\\n以降の詳細も表示されるべきです。"}}
+        """
+
+        let parsed = CodexSessionParser.parse(text, fallbackSessionId: "fallback")
+
+        XCTAssertEqual(parsed.latestResponseText, "変更しました。\n\n以降の詳細も表示されるべきです。")
+        XCTAssertEqual(parsed.latestResponsePhase, "final_answer")
+        XCTAssertEqual(parsed.state, .idle)
+    }
+
     func testClearsLatestResponseAfterNewUserMessage() {
         let text = """
         {"type":"session_meta","payload":{"id":"parent","cwd":"/tmp/project","thread_source":"user","source":"vscode"}}

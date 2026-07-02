@@ -549,7 +549,7 @@ private enum ProviderPreferenceDefaults {
     static let popupDisplayInterval: TimeInterval = 15
     static let popupGlassEnabled = false
     static let popupUsesClearGlass = false
-    static let popupUsesStatusTint = true
+    static let popupUsesColoredBorder = true
     static let popupGlassOpacity = 0.7027258211678832
     static let popupOpacity = 0.8093635948905109
     static let popupWindowPosition = PopupWindowPosition.bottomRight
@@ -865,7 +865,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var popupProviderVisibility: [String: Bool]
     var popupGlassEnabled: Bool
     var popupUsesClearGlass: Bool
-    var popupUsesStatusTint: Bool
+    var popupUsesColoredBorder: Bool
     var popupGlassOpacity: Double
     var popupOpacity: Double
     var popupWindowPosition: PopupWindowPosition
@@ -910,7 +910,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         popupProviderVisibility: [String: Bool] = ProviderPreferencesDocument.defaultPopupProviderVisibility,
         popupGlassEnabled: Bool = ProviderPreferenceDefaults.popupGlassEnabled,
         popupUsesClearGlass: Bool = ProviderPreferenceDefaults.popupUsesClearGlass,
-        popupUsesStatusTint: Bool = ProviderPreferenceDefaults.popupUsesStatusTint,
+        popupUsesColoredBorder: Bool = ProviderPreferenceDefaults.popupUsesColoredBorder,
         popupGlassOpacity: Double = ProviderPreferenceDefaults.popupGlassOpacity,
         popupOpacity: Double = ProviderPreferenceDefaults.popupOpacity,
         popupWindowPosition: PopupWindowPosition = ProviderPreferenceDefaults.popupWindowPosition,
@@ -958,7 +958,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         )
         self.popupGlassEnabled = popupStyle.glassEnabled
         self.popupUsesClearGlass = popupUsesClearGlass
-        self.popupUsesStatusTint = popupUsesStatusTint
+        self.popupUsesColoredBorder = popupUsesColoredBorder
         self.popupGlassOpacity = ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(popupGlassOpacity)
         self.popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(popupOpacity)
         self.popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(popupWindowPosition)
@@ -1005,6 +1005,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case popupProviderVisibility
         case popupGlassEnabled
         case popupUsesClearGlass
+        case popupUsesColoredBorder
         case popupUsesStatusTint
         case popupGlassOpacity
         case popupOpacity
@@ -1085,8 +1086,9 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
             ?? ProviderPreferenceDefaults.popupGlassEnabled
         popupUsesClearGlass = try container.decodeIfPresent(Bool.self, forKey: .popupUsesClearGlass)
             ?? ProviderPreferenceDefaults.popupUsesClearGlass
-        popupUsesStatusTint = try container.decodeIfPresent(Bool.self, forKey: .popupUsesStatusTint)
-            ?? ProviderPreferenceDefaults.popupUsesStatusTint
+        popupUsesColoredBorder = try container.decodeIfPresent(Bool.self, forKey: .popupUsesColoredBorder)
+            ?? container.decodeIfPresent(Bool.self, forKey: .popupUsesStatusTint)
+            ?? ProviderPreferenceDefaults.popupUsesColoredBorder
         popupGlassOpacity = ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(
             try container.decodeIfPresent(Double.self, forKey: .popupGlassOpacity)
         )
@@ -1187,7 +1189,7 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(popupProviderVisibility, forKey: .popupProviderVisibility)
         try container.encode(popupGlassEnabled, forKey: .popupGlassEnabled)
         try container.encode(popupUsesClearGlass, forKey: .popupUsesClearGlass)
-        try container.encode(popupUsesStatusTint, forKey: .popupUsesStatusTint)
+        try container.encode(popupUsesColoredBorder, forKey: .popupUsesColoredBorder)
         try container.encode(popupGlassOpacity, forKey: .popupGlassOpacity)
         try container.encode(popupOpacity, forKey: .popupOpacity)
         try container.encode(popupWindowPosition, forKey: .popupWindowPosition)
@@ -1252,7 +1254,7 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var popupProviderVisibility: [String: Bool]
     @Published private(set) var popupGlassEnabled: Bool
     @Published private(set) var popupUsesClearGlass: Bool
-    @Published private(set) var popupUsesStatusTint: Bool
+    @Published private(set) var popupUsesColoredBorder: Bool
     @Published private(set) var popupGlassOpacity: Double
     @Published private(set) var popupOpacity: Double
     @Published private(set) var popupWindowPosition: PopupWindowPosition
@@ -1313,7 +1315,7 @@ final class ProviderVisibilityStore: ObservableObject {
         popupProviderVisibility = ProviderPreferencesDocument.sanitizedPopupProviderVisibility(document.popupProviderVisibility)
         popupGlassEnabled = document.popupGlassEnabled
         popupUsesClearGlass = document.popupUsesClearGlass
-        popupUsesStatusTint = document.popupUsesStatusTint
+        popupUsesColoredBorder = document.popupUsesColoredBorder
         popupGlassOpacity = ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(document.popupGlassOpacity)
         popupOpacity = ProviderPreferenceDefaults.sanitizedPopupOpacity(document.popupOpacity)
         popupWindowPosition = ProviderPreferenceDefaults.sanitizedPopupWindowPosition(document.popupWindowPosition)
@@ -1486,8 +1488,8 @@ final class ProviderVisibilityStore: ObservableObject {
         save()
     }
 
-    func setPopupUsesStatusTint(_ usesStatusTint: Bool) {
-        popupUsesStatusTint = usesStatusTint
+    func setPopupUsesColoredBorder(_ usesColoredBorder: Bool) {
+        popupUsesColoredBorder = usesColoredBorder
         save()
     }
 
@@ -1618,7 +1620,7 @@ final class ProviderVisibilityStore: ObservableObject {
         )
         popupGlassEnabled = popupStyle.glassEnabled
         popupUsesClearGlass = ProviderPreferenceDefaults.popupUsesClearGlass
-        popupUsesStatusTint = ProviderPreferenceDefaults.popupUsesStatusTint
+        popupUsesColoredBorder = ProviderPreferenceDefaults.popupUsesColoredBorder
         popupGlassOpacity = ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(
             ProviderPreferenceDefaults.popupGlassOpacity
         )
@@ -1787,7 +1789,7 @@ final class ProviderVisibilityStore: ObservableObject {
             popupProviderVisibility: popupProviderVisibility,
             popupGlassEnabled: popupGlassEnabled,
             popupUsesClearGlass: popupUsesClearGlass,
-            popupUsesStatusTint: popupUsesStatusTint,
+            popupUsesColoredBorder: popupUsesColoredBorder,
             popupGlassOpacity: popupGlassOpacity,
             popupOpacity: popupOpacity,
             popupWindowPosition: popupWindowPosition,
@@ -1847,7 +1849,7 @@ final class ProviderVisibilityStore: ObservableObject {
                 popupProviderVisibility: ProviderPreferencesDocument.defaultPopupProviderVisibility,
                 popupGlassEnabled: ProviderPreferenceDefaults.popupGlassEnabled,
                 popupUsesClearGlass: ProviderPreferenceDefaults.popupUsesClearGlass,
-                popupUsesStatusTint: ProviderPreferenceDefaults.popupUsesStatusTint,
+                popupUsesColoredBorder: ProviderPreferenceDefaults.popupUsesColoredBorder,
                 popupGlassOpacity: ProviderPreferenceDefaults.popupGlassOpacity,
                 popupOpacity: ProviderPreferenceDefaults.popupOpacity,
                 popupWindowPosition: ProviderPreferenceDefaults.popupWindowPosition,
@@ -1898,7 +1900,7 @@ final class ProviderVisibilityStore: ObservableObject {
             popupProviderVisibility: ProviderPreferencesDocument.sanitizedPopupProviderVisibility(document.popupProviderVisibility),
             popupGlassEnabled: document.popupGlassEnabled,
             popupUsesClearGlass: document.popupUsesClearGlass,
-            popupUsesStatusTint: document.popupUsesStatusTint,
+            popupUsesColoredBorder: document.popupUsesColoredBorder,
             popupGlassOpacity: ProviderPreferenceDefaults.sanitizedPopupGlassOpacity(document.popupGlassOpacity),
             popupOpacity: ProviderPreferenceDefaults.sanitizedPopupOpacity(document.popupOpacity),
             popupWindowPosition: ProviderPreferenceDefaults.sanitizedPopupWindowPosition(document.popupWindowPosition),
@@ -2777,14 +2779,14 @@ private struct PopupStyleSettingsGroup: View {
                 SettingsDivider()
 
                 SettingsToggleRow(
-                    title: "Status Tint",
-                    subtitle: "Apply provider and status color to the Liquid Glass background and border.",
+                    title: "Colored Border",
+                    subtitle: "Show provider color on every Liquid Glass popup border.",
                     isOn: Binding(
                         get: {
-                            providerVisibility.popupUsesStatusTint
+                            providerVisibility.popupUsesColoredBorder
                         },
-                        set: { usesStatusTint in
-                            providerVisibility.setPopupUsesStatusTint(usesStatusTint)
+                        set: { usesColoredBorder in
+                            providerVisibility.setPopupUsesColoredBorder(usesColoredBorder)
                         }
                     )
                 )
@@ -4614,7 +4616,7 @@ final class SessionPopupController {
             }
             .store(in: &cancellables)
 
-        providerVisibility.$popupUsesStatusTint
+        providerVisibility.$popupUsesColoredBorder
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updatePopup()
@@ -4919,7 +4921,7 @@ final class SessionPopupController {
             popupScale: CGFloat(providerVisibility.popupScale),
             glassEnabled: providerVisibility.popupGlassEnabled,
             usesClearGlass: providerVisibility.popupUsesClearGlass,
-            usesStatusTint: providerVisibility.popupUsesStatusTint,
+            usesColoredBorder: providerVisibility.popupUsesColoredBorder,
             glassOpacity: providerVisibility.popupGlassOpacity,
             textOpacity: 1,
             textShadowStrength: providerVisibility.effectivePopupTextShadowStrength,
@@ -5048,7 +5050,7 @@ final class SessionPopupController {
             "\(providerVisibility.popupScale)",
             "\(providerVisibility.popupGlassEnabled)",
             "\(providerVisibility.popupUsesClearGlass)",
-            "\(providerVisibility.popupUsesStatusTint)",
+            "\(providerVisibility.popupUsesColoredBorder)",
             "\(providerVisibility.popupGlassOpacity)",
             "\(providerVisibility.popupRightAlignsTextOnRightSide)",
             "\(providerVisibility.popupWindowPosition.isRightSide)",
@@ -5590,7 +5592,7 @@ private struct LatestParentSessionsPopupView: View {
     let popupScale: CGFloat
     let glassEnabled: Bool
     let usesClearGlass: Bool
-    let usesStatusTint: Bool
+    let usesColoredBorder: Bool
     let glassOpacity: Double
     let textOpacity: Double
     let textShadowStrength: Double
@@ -5638,10 +5640,9 @@ private struct LatestParentSessionsPopupView: View {
                         PopupLiquidGlassBackground(
                             metrics: metrics,
                             usesClearGlass: usesClearGlass,
-                            usesStatusTint: usesStatusTint,
+                            usesColoredBorder: usesColoredBorder,
                             opacity: glassOpacity,
-                            agent: session.agent,
-                            state: session.state
+                            agent: session.agent
                         )
                     }
                 }
@@ -5696,10 +5697,9 @@ private struct LatestParentSessionsPopupView: View {
 private struct PopupLiquidGlassBackground: View {
     let metrics: PopupScaleMetrics
     let usesClearGlass: Bool
-    let usesStatusTint: Bool
+    let usesColoredBorder: Bool
     let opacity: Double
     let agent: AgentKind
-    let state: AgentState
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -5733,23 +5733,9 @@ private struct PopupLiquidGlassBackground: View {
             return .identity
         }
 
-        var glass = usesClearGlass ? Glass.clear : Glass.regular
-        if usesStatusTint, let tint = stateTint {
-            glass = glass.tint(tint)
-        }
+        let glass = usesClearGlass ? Glass.clear : Glass.regular
         return glass
             .interactive(false)
-    }
-
-    private var stateTint: Color? {
-        switch state {
-        case .working:
-            Theme.providerColor(agent).opacity(usesClearGlass ? 0.08 : 0.12)
-        case .waiting:
-            Theme.waitingColor.opacity(0.1)
-        case .idle, .ended:
-            nil
-        }
     }
 
     private func hairlineBorder(in shape: RoundedRectangle) -> some View {
@@ -5763,7 +5749,7 @@ private struct PopupLiquidGlassBackground: View {
                 lineWidth: metrics.glassBorderWidth
             )
 
-            if usesStatusTint, state == .working {
+            if usesColoredBorder {
                 shape.strokeBorder(
                     LinearGradient(
                         colors: [Theme.providerColor(agent).opacity(0.35), .clear],
