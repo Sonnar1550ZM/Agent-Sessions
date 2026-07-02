@@ -5546,7 +5546,9 @@ private struct LatestParentSessionsPopupView: View {
                         PopupLiquidGlassBackground(
                             metrics: metrics,
                             usesClearGlass: usesClearGlass,
-                            opacity: glassOpacity
+                            opacity: glassOpacity,
+                            agent: session.agent,
+                            state: session.state
                         )
                     }
                 }
@@ -5602,21 +5604,34 @@ private struct PopupLiquidGlassBackground: View {
     let metrics: PopupScaleMetrics
     let usesClearGlass: Bool
     let opacity: Double
+    let agent: AgentKind
+    let state: AgentState
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let opacity = min(max(opacity, 0), 1)
         let shape = RoundedRectangle(cornerRadius: metrics.glassCornerRadius, style: .continuous)
 
-        shape
-            .fill(.clear)
-            .glassEffect(nativeGlass(opacity: opacity, usesClearGlass: usesClearGlass), in: shape)
-            .shadow(
-                color: .black.opacity(0.025 * opacity),
-                radius: metrics.glassShadowRadius,
-                x: 0,
-                y: metrics.glassShadowYOffset
-            )
-            .opacity(opacity)
+        Group {
+            if reduceTransparency {
+                shape
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
+            } else {
+                shape
+                    .fill(.clear)
+                    .glassEffect(nativeGlass(opacity: opacity, usesClearGlass: usesClearGlass), in: shape)
+            }
+        }
+        .overlay(hairlineBorder(in: shape))
+        .shadow(
+            color: .black.opacity(0.025 * opacity),
+            radius: metrics.glassShadowRadius,
+            x: 0,
+            y: metrics.glassShadowYOffset
+        )
+        .opacity(opacity)
     }
 
     private func nativeGlass(opacity: Double, usesClearGlass: Bool) -> Glass {
@@ -5624,9 +5639,53 @@ private struct PopupLiquidGlassBackground: View {
             return .identity
         }
 
-        let glass = usesClearGlass ? Glass.clear : Glass.regular
+        var glass = usesClearGlass ? Glass.clear : Glass.regular
+        if let tint = stateTint {
+            glass = glass.tint(tint)
+        }
         return glass
             .interactive(false)
+    }
+
+    private var stateTint: Color? {
+        switch state {
+        case .working:
+            Theme.providerColor(agent).opacity(usesClearGlass ? 0.08 : 0.12)
+        case .waiting:
+            Theme.waitingColor.opacity(0.1)
+        case .idle, .ended:
+            nil
+        }
+    }
+
+    private func hairlineBorder(in shape: RoundedRectangle) -> some View {
+        ZStack {
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: baseHairlineColors,
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: metrics.glassBorderWidth
+            )
+
+            if state == .working {
+                shape.strokeBorder(
+                    LinearGradient(
+                        colors: [Theme.providerColor(agent).opacity(0.35), .clear],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: metrics.glassBorderWidth
+                )
+            }
+        }
+    }
+
+    private var baseHairlineColors: [Color] {
+        colorScheme == .dark
+            ? [.white.opacity(0.38), .white.opacity(0.06)]
+            : [.black.opacity(0.12), .black.opacity(0.03)]
     }
 }
 
@@ -5659,6 +5718,7 @@ private struct PopupSessionRow: View {
                 PopupAlignedText(
                     text: responseText,
                     fontSize: metrics.responseFontSize,
+                    fontDesign: .monospaced,
                     textOpacity: metrics.textOpacity,
                     lineLimit: responseLineLimit,
                     alignsTrailing: alignsTextTrailing,
@@ -5713,6 +5773,7 @@ private struct PopupSessionRow: View {
             text: titleText,
             fontSize: metrics.titleFontSize,
             fontWeight: .semibold,
+            fontDesign: .rounded,
             textOpacity: metrics.textOpacity,
             lineLimit: 2,
             alignsTrailing: alignsTextTrailing
@@ -5726,8 +5787,8 @@ private struct PopupSessionRow: View {
     }
 
     private func promptTextView(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: metrics.metadataFontSize, weight: .semibold))
+        Text("› " + text)
+            .font(Theme.Fonts.meta(metrics.metadataFontSize))
             .foregroundStyle(agentStateDetailTextColor(for: session.state).opacity(metrics.textOpacity))
             .lineLimit(1)
             .truncationMode(.tail)
@@ -5798,7 +5859,7 @@ private struct PopupSessionRow: View {
     }
 
     private var measuredTitleColumnWidth: CGFloat {
-        let font = NSFont.systemFont(ofSize: metrics.titleFontSize, weight: .semibold)
+        let font = Theme.Fonts.nsRounded(metrics.titleFontSize, weight: .semibold)
         let attributes: [NSAttributedString.Key: Any] = [.font: font]
         let textWidthLimit = max(titleColumnMaxWidth - metrics.titleHorizontalPadding, 1)
         let measuredWidth = (titleText as NSString).boundingRect(
@@ -5854,17 +5915,27 @@ private struct PopupSessionStateTimeText: View {
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { timeline in
-            Text(stateTimeText(relativeTo: timeline.date))
-                .monospacedDigit()
-                .lineLimit(1)
-                .font(.system(size: metrics.metadataFontSize, weight: .semibold))
-                .foregroundStyle(metadataColor.opacity(metrics.textOpacity))
-                .multilineTextAlignment(textAlignment)
-                .frame(maxWidth: .infinity, alignment: frameAlignment)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, metrics.metadataTopPadding)
-                .padding(.bottom, metrics.metadataBottomPadding)
-                .popupTextShadow(metrics)
+            HStack(spacing: 3) {
+                AgentIndicatorLampView(
+                    agent: session.agent,
+                    state: session.state,
+                    iconSize: metrics.lampSize
+                )
+                .frame(width: metrics.lampSize, height: metrics.lampSize)
+                .accessibilityHidden(true)
+
+                Text(stateTimeText(relativeTo: timeline.date))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .font(.system(size: metrics.metadataFontSize, weight: .semibold))
+                    .foregroundStyle(metadataColor.opacity(metrics.textOpacity))
+                    .multilineTextAlignment(textAlignment)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .popupTextShadow(metrics)
+            }
+            .frame(maxWidth: .infinity, alignment: frameAlignment)
+            .padding(.top, metrics.metadataTopPadding)
+            .padding(.bottom, metrics.metadataBottomPadding)
         }
         .accessibilityLabel(accessibilityText)
     }
@@ -5878,7 +5949,12 @@ private struct PopupSessionStateTimeText: View {
     }
 
     private var metadataColor: Color {
-        agentStateDetailTextColor(for: session.state)
+        switch session.state {
+        case .working, .waiting:
+            Theme.stateColor(session.state, agent: session.agent).opacity(0.95)
+        case .idle, .ended:
+            agentStateDetailTextColor(for: session.state)
+        }
     }
 
     private var accessibilityText: String {
@@ -6343,10 +6419,28 @@ private final class MenuBarAgentIconHostingView: NSHostingView<MenuBarAgentIconV
     }
 }
 
+private enum PopupTextFontDesign {
+    case standard
+    case rounded
+    case monospaced
+
+    func font(size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        switch self {
+        case .standard:
+            .systemFont(ofSize: size, weight: weight)
+        case .rounded:
+            Theme.Fonts.nsRounded(size, weight: weight)
+        case .monospaced:
+            Theme.Fonts.nsMono(size, weight: weight)
+        }
+    }
+}
+
 private struct PopupAlignedText: NSViewRepresentable {
     let text: String
     let fontSize: CGFloat
     var fontWeight: NSFont.Weight = .regular
+    var fontDesign: PopupTextFontDesign = .standard
     let textOpacity: Double
     let lineLimit: Int
     var alignsTrailing = false
@@ -6377,6 +6471,7 @@ private struct PopupAlignedText: NSViewRepresentable {
             text: text,
             fontSize: fontSize,
             fontWeight: fontWeight,
+            fontDesign: fontDesign,
             textOpacity: textOpacity,
             lineLimit: lineLimit,
             alignsTrailing: alignsTrailing,
@@ -6392,6 +6487,7 @@ private struct PopupAlignedText: NSViewRepresentable {
         private var renderedText = ""
         private var renderedFontSize: CGFloat = 0
         private var renderedFontWeight: NSFont.Weight = .regular
+        private var renderedFontDesign: PopupTextFontDesign = .standard
         private var renderedTextOpacity: Double = 1
         private var renderedLineLimit = 1
         private var renderedAlignsTrailing = false
@@ -6409,6 +6505,7 @@ private struct PopupAlignedText: NSViewRepresentable {
             text: String,
             fontSize: CGFloat,
             fontWeight: NSFont.Weight,
+            fontDesign: PopupTextFontDesign,
             textOpacity: Double,
             lineLimit: Int,
             alignsTrailing: Bool,
@@ -6420,6 +6517,7 @@ private struct PopupAlignedText: NSViewRepresentable {
             let layoutChanged = renderedText != text
                 || abs(renderedFontSize - fontSize) > 0.001
                 || renderedFontWeight != fontWeight
+                || renderedFontDesign != fontDesign
                 || renderedLineLimit != normalizedLineLimit
                 || renderedElidesShortFinalLine != elidesShortFinalLine
             let displayChanged = layoutChanged
@@ -6433,11 +6531,12 @@ private struct PopupAlignedText: NSViewRepresentable {
             renderedText = text
             renderedFontSize = fontSize
             renderedFontWeight = fontWeight
+            renderedFontDesign = fontDesign
             renderedTextOpacity = normalizedOpacity
             renderedLineLimit = normalizedLineLimit
             renderedAlignsTrailing = alignsTrailing
             renderedElidesShortFinalLine = elidesShortFinalLine
-            renderedFont = NSFont.systemFont(ofSize: fontSize, weight: fontWeight)
+            renderedFont = fontDesign.font(size: fontSize, weight: fontWeight)
 
             if layoutChanged {
                 invalidateLayoutCache()
@@ -6817,8 +6916,8 @@ private struct PopupScaleMetrics {
     var rowSpacing: CGFloat { 2 * scale }
     var titleSpacing: CGFloat { 1 * scale }
     var promptSpacing: CGFloat { 0.5 * scale }
-    var horizontalPadding: CGFloat { 4 * scale }
-    var verticalPadding: CGFloat { 3 * scale }
+    var horizontalPadding: CGFloat { 6 * scale }
+    var verticalPadding: CGFloat { 5 * scale }
     var titleHorizontalPadding: CGFloat { 2 * scale }
     var titleVerticalPadding: CGFloat { 2 * scale }
     var metadataTopPadding: CGFloat { 0.5 * scale }
@@ -6826,14 +6925,15 @@ private struct PopupScaleMetrics {
     var responseHorizontalPadding: CGFloat { 6 * scale }
     var responseVerticalPadding: CGFloat { 3 * scale }
     var shadowBleedPadding: CGFloat { textShadowRadius + textShadowDistance + 2 * scale }
-    var glassCornerRadius: CGFloat { 22 * scale }
+    var glassCornerRadius: CGFloat { 18 * scale }
     var glassBorderWidth: CGFloat { max(0.75, 0.85 * scale) }
     var glassShadowRadius: CGFloat { 14 * scale }
     var glassShadowYOffset: CGFloat { 5 * scale }
     var iconSize: CGFloat { 16 * scale }
+    var lampSize: CGFloat { 10 * scale }
     var titleFontSize: CGFloat { 12 * scale }
-    var metadataFontSize: CGFloat { 8 * scale }
-    var responseFontSize: CGFloat { 11 * scale }
+    var metadataFontSize: CGFloat { 8.5 * scale }
+    var responseFontSize: CGFloat { 10.5 * scale }
 
     func textShadowLayerOpacity(_ layer: Int) -> Double {
         min(max(textShadowStrength - Double(layer), 0), 1)
