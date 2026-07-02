@@ -7876,26 +7876,54 @@ private struct AgentHeaderView: View {
     let usesIndicatorLampStyle: Bool
 
     var body: some View {
-        HStack(spacing: 7) {
-            iconView
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 7) {
+                iconView
 
-            Text(usesIndicatorLampStyle ? agent.shortDisplayName : agent.menuHeaderTitle)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
+                Text(usesIndicatorLampStyle ? agent.shortDisplayName : agent.menuHeaderTitle)
+                    .font(Theme.Fonts.title(15))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
 
-            Spacer(minLength: 12)
+                Spacer(minLength: 12)
 
-            Text(workingCountText)
-                .font(.system(size: 11, weight: .semibold))
-                .monospacedDigit()
-                .foregroundColor(workingSessionCounts.total > 0 ? Color(nsColor: AgentColors.working(for: agent)) : .secondary)
-                .lineLimit(1)
+                workingCountBadge
+            }
+
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [Theme.providerColor(agent).opacity(0.55), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 1)
         }
         .frame(width: 320, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.top, 7)
         .padding(.bottom, 3)
+    }
+
+    private var workingCountBadge: some View {
+        let isActive = workingSessionCounts.total > 0
+
+        return Text(workingCountText)
+            .font(Theme.Fonts.meta(10.5))
+            .foregroundStyle(isActive ? Theme.providerColor(agent) : Color.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(Theme.providerColor(agent).opacity(isActive ? 0.14 : 0.06))
+            )
+            .neonGlow(
+                Theme.providerGlowColor(agent),
+                intensity: isActive ? 0.5 : 0,
+                radius: 3
+            )
     }
 
     @ViewBuilder
@@ -7963,7 +7991,7 @@ private struct AgentSectionView: View {
             )
 
             if rows.isEmpty {
-                EmptyAgentRow()
+                EmptyAgentRow(agent: agent)
             } else {
                 ForEach(rowGroups) { group in
                     VStack(alignment: .leading, spacing: 0) {
@@ -8183,13 +8211,26 @@ private enum AgentDisplayState {
 }
 
 private struct EmptyAgentRow: View {
+    let agent: AgentKind
+
     var body: some View {
-        Text("○ No sessions")
-            .font(.system(size: 13))
-            .foregroundStyle(.secondary)
-            .frame(width: 320, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 3)
+        HStack(spacing: 4) {
+            AgentIndicatorLampView(
+                agent: agent,
+                state: .ended,
+                iconSize: 12,
+                animatesWorkingLamp: false
+            )
+            .frame(width: 12, height: 12)
+            .accessibilityHidden(true)
+
+            Text("No sessions")
+                .font(Theme.Fonts.title(12, weight: .regular))
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: 320, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 3)
     }
 }
 
@@ -8209,14 +8250,13 @@ private struct SessionMenuRow: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: horizontalSpacing) {
                 SessionStateIcon(
+                    agent: session.agent,
                     state: session.state,
-                    color: symbolColor,
-                    symbol: session.state.symbol,
                     symbolFontSize: symbolFontSize,
                     symbolWidth: symbolWidth
                 )
                 Text(titleText)
-                    .font(.system(size: titleFontSize))
+                    .font(Theme.Fonts.title(titleFontSize, weight: .medium))
                     .foregroundStyle(titleColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -8241,8 +8281,8 @@ private struct SessionMenuRow: View {
                         .frame(width: titleTextLeadingOffset, height: 0)
 
                     Text(latestResponseText)
-                        .font(.system(size: latestResponseFontSize))
-                        .foregroundStyle(titleColor)
+                        .font(Theme.Fonts.mono(latestResponseFontSize))
+                        .foregroundStyle(.primary.opacity(0.82))
                         .lineLimit(effectiveLatestResponseLineLimit)
                         .truncationMode(.tail)
                         .fixedSize(horizontal: false, vertical: true)
@@ -8259,6 +8299,7 @@ private struct SessionMenuRow: View {
                         Text(Self.stateWidthReferenceText)
                             .hidden()
                         Text(stateText)
+                            .foregroundStyle(stateTextColor)
                     }
                     .fixedSize(horizontal: true, vertical: false)
                     .layoutPriority(1)
@@ -8298,6 +8339,15 @@ private struct SessionMenuRow: View {
         .padding(.trailing, trailingPadding)
         .padding(.vertical, verticalPadding)
         .frame(width: rowWidth, alignment: .leading)
+        .overlay(alignment: .leading) {
+            if indentLevel > 0 {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Theme.providerColor(session.agent).opacity(0.25))
+                    .frame(width: 2)
+                    .padding(.vertical, verticalPadding)
+                    .padding(.leading, leadingPadding - 8)
+            }
+        }
         .help(helpText)
     }
 
@@ -8349,16 +8399,21 @@ private struct SessionMenuRow: View {
         3
     }
 
-    private var symbolColor: Color {
-        agentStateSymbolColor(for: session.state, agent: session.agent)
-    }
-
     private var titleColor: Color {
         session.state == .idle ? .primary.opacity(0.88) : .primary
     }
 
     private var detailColor: Color {
         agentStateDetailTextColor(for: session.state)
+    }
+
+    private var stateTextColor: Color {
+        switch session.state {
+        case .working, .waiting:
+            Theme.stateColor(session.state, agent: session.agent)
+        case .idle, .ended:
+            detailColor
+        }
     }
 
     private var stateText: String {
@@ -8493,70 +8548,26 @@ private struct SessionMenuRow: View {
 }
 
 private struct SessionStateIcon: View {
+    let agent: AgentKind
     let state: AgentState
-    let color: Color
-    let symbol: String
     let symbolFontSize: CGFloat
     let symbolWidth: CGFloat
 
     var body: some View {
-        Group {
-            if state == .working {
-                IOSActivitySpinner(color: color)
-                    .frame(width: symbolWidth, height: symbolWidth)
-                    .padding(.top, 2)
-            } else {
-                Text(symbol)
-                    .font(.system(size: symbolFontSize, weight: .semibold))
-                    .foregroundStyle(color)
-                    .frame(width: symbolWidth, alignment: .leading)
-            }
-        }
+        AgentIndicatorLampView(
+            agent: agent,
+            state: state,
+            iconSize: symbolWidth
+        )
+        .frame(width: symbolWidth, height: symbolWidth)
+        .padding(.top, 2)
         .frame(width: symbolWidth, height: symbolFontSize + 3, alignment: .topLeading)
-    }
-}
-
-private func agentStateSymbolColor(for state: AgentState, agent: AgentKind) -> Color {
-    switch state {
-    case .working:
-        return Theme.providerColor(agent)
-    case .waiting:
-        return Theme.waitingColor
-    case .idle, .ended:
-        return .secondary
+        .accessibilityHidden(true)
     }
 }
 
 private func agentStateDetailTextColor(for state: AgentState) -> Color {
     state == .idle ? .primary.opacity(0.56) : .secondary
-}
-
-private struct IOSActivitySpinner: View {
-    let color: Color
-
-    private let size: CGFloat = 11
-    private let lineWidth: CGFloat = 1.7
-    private let cycleDuration: TimeInterval = 0.9
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            Circle()
-                .trim(from: 0.12, to: 0.78)
-                .stroke(
-                    color.opacity(0.78),
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .frame(width: size, height: size)
-                .rotationEffect(.degrees(rotationDegrees(at: timeline.date)))
-        }
-        .frame(width: size, height: size)
-    }
-
-    private func rotationDegrees(at date: Date) -> Double {
-        let progress = date.timeIntervalSinceReferenceDate
-            .truncatingRemainder(dividingBy: cycleDuration) / cycleDuration
-        return progress * 360 - 90
-    }
 }
 
 private enum AgentColors {
