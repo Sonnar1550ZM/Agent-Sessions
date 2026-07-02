@@ -5968,27 +5968,17 @@ private struct PopupSessionStateTimeText: View {
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { timeline in
-            HStack(spacing: 3) {
-                AgentIndicatorLampView(
-                    agent: session.agent,
-                    state: session.state,
-                    iconSize: metrics.lampSize
-                )
-                .frame(width: metrics.lampSize, height: metrics.lampSize)
-                .accessibilityHidden(true)
-
-                Text(stateTimeText(relativeTo: timeline.date))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .font(.system(size: metrics.metadataFontSize, weight: .semibold))
-                    .foregroundStyle(metadataColor.opacity(metrics.textOpacity))
-                    .multilineTextAlignment(textAlignment)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .popupTextShadow(metrics)
-            }
-            .frame(maxWidth: .infinity, alignment: frameAlignment)
-            .padding(.top, metrics.metadataTopPadding)
-            .padding(.bottom, metrics.metadataBottomPadding)
+            Text(stateTimeText(relativeTo: timeline.date))
+                .monospacedDigit()
+                .lineLimit(1)
+                .font(.system(size: metrics.metadataFontSize, weight: .semibold))
+                .foregroundStyle(metadataColor.opacity(metrics.textOpacity))
+                .multilineTextAlignment(textAlignment)
+                .frame(maxWidth: .infinity, alignment: frameAlignment)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, metrics.metadataTopPadding)
+                .padding(.bottom, metrics.metadataBottomPadding)
+                .popupTextShadow(metrics)
         }
         .accessibilityLabel(accessibilityText)
     }
@@ -6962,7 +6952,6 @@ private struct PopupScaleMetrics {
     var glassShadowRadius: CGFloat { 14 * scale }
     var glassShadowYOffset: CGFloat { 5 * scale }
     var iconSize: CGFloat { 16 * scale }
-    var lampSize: CGFloat { 10 * scale }
     var titleFontSize: CGFloat { 12 * scale }
     var metadataFontSize: CGFloat { 8.5 * scale }
     var responseFontSize: CGFloat { 10.5 * scale }
