@@ -100,31 +100,12 @@ enum Theme {
     }
 
     // MARK: - Typography
+    // UI text stays on the standard system font so Japanese and Latin glyphs
+    // share one family; only digit alignment is customized.
 
     enum Fonts {
-        static func title(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-            .system(size: size, weight: weight, design: .rounded)
-        }
-
-        static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-            .system(size: size, weight: weight, design: .monospaced)
-        }
-
         static func meta(_ size: CGFloat) -> Font {
             Font.system(size: size, weight: .medium).monospacedDigit()
-        }
-
-        static func nsRounded(_ size: CGFloat, weight: NSFont.Weight) -> NSFont {
-            let base = NSFont.systemFont(ofSize: size, weight: weight)
-            guard let descriptor = base.fontDescriptor.withDesign(.rounded),
-                  let rounded = NSFont(descriptor: descriptor, size: size) else {
-                return base
-            }
-            return rounded
-        }
-
-        static func nsMono(_ size: CGFloat, weight: NSFont.Weight) -> NSFont {
-            .monospacedSystemFont(ofSize: size, weight: weight)
         }
     }
 

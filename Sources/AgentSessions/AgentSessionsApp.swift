@@ -5773,7 +5773,6 @@ private struct PopupSessionRow: View {
                 PopupAlignedText(
                     text: responseText,
                     fontSize: metrics.responseFontSize,
-                    fontDesign: .monospaced,
                     textOpacity: metrics.textOpacity,
                     lineLimit: responseLineLimit,
                     alignsTrailing: alignsTextTrailing,
@@ -5828,7 +5827,6 @@ private struct PopupSessionRow: View {
             text: titleText,
             fontSize: metrics.titleFontSize,
             fontWeight: .semibold,
-            fontDesign: .rounded,
             textOpacity: metrics.textOpacity,
             lineLimit: 2,
             alignsTrailing: alignsTextTrailing
@@ -5843,7 +5841,7 @@ private struct PopupSessionRow: View {
 
     private func promptTextView(_ text: String) -> some View {
         Text("› " + text)
-            .font(Theme.Fonts.meta(metrics.metadataFontSize))
+            .font(.system(size: metrics.metadataFontSize, weight: .semibold))
             .foregroundStyle(agentStateDetailTextColor(for: session.state).opacity(metrics.textOpacity))
             .lineLimit(1)
             .truncationMode(.tail)
@@ -5914,7 +5912,7 @@ private struct PopupSessionRow: View {
     }
 
     private var measuredTitleColumnWidth: CGFloat {
-        let font = Theme.Fonts.nsRounded(metrics.titleFontSize, weight: .semibold)
+        let font = NSFont.systemFont(ofSize: metrics.titleFontSize, weight: .semibold)
         let attributes: [NSAttributedString.Key: Any] = [.font: font]
         let textWidthLimit = max(titleColumnMaxWidth - metrics.titleHorizontalPadding, 1)
         let measuredWidth = (titleText as NSString).boundingRect(
@@ -6476,28 +6474,10 @@ private final class MenuBarAgentIconHostingView: NSHostingView<MenuBarAgentIconV
     }
 }
 
-private enum PopupTextFontDesign {
-    case standard
-    case rounded
-    case monospaced
-
-    func font(size: CGFloat, weight: NSFont.Weight) -> NSFont {
-        switch self {
-        case .standard:
-            .systemFont(ofSize: size, weight: weight)
-        case .rounded:
-            Theme.Fonts.nsRounded(size, weight: weight)
-        case .monospaced:
-            Theme.Fonts.nsMono(size, weight: weight)
-        }
-    }
-}
-
 private struct PopupAlignedText: NSViewRepresentable {
     let text: String
     let fontSize: CGFloat
     var fontWeight: NSFont.Weight = .regular
-    var fontDesign: PopupTextFontDesign = .standard
     let textOpacity: Double
     let lineLimit: Int
     var alignsTrailing = false
@@ -6528,7 +6508,6 @@ private struct PopupAlignedText: NSViewRepresentable {
             text: text,
             fontSize: fontSize,
             fontWeight: fontWeight,
-            fontDesign: fontDesign,
             textOpacity: textOpacity,
             lineLimit: lineLimit,
             alignsTrailing: alignsTrailing,
@@ -6544,7 +6523,6 @@ private struct PopupAlignedText: NSViewRepresentable {
         private var renderedText = ""
         private var renderedFontSize: CGFloat = 0
         private var renderedFontWeight: NSFont.Weight = .regular
-        private var renderedFontDesign: PopupTextFontDesign = .standard
         private var renderedTextOpacity: Double = 1
         private var renderedLineLimit = 1
         private var renderedAlignsTrailing = false
@@ -6562,7 +6540,6 @@ private struct PopupAlignedText: NSViewRepresentable {
             text: String,
             fontSize: CGFloat,
             fontWeight: NSFont.Weight,
-            fontDesign: PopupTextFontDesign,
             textOpacity: Double,
             lineLimit: Int,
             alignsTrailing: Bool,
@@ -6574,7 +6551,6 @@ private struct PopupAlignedText: NSViewRepresentable {
             let layoutChanged = renderedText != text
                 || abs(renderedFontSize - fontSize) > 0.001
                 || renderedFontWeight != fontWeight
-                || renderedFontDesign != fontDesign
                 || renderedLineLimit != normalizedLineLimit
                 || renderedElidesShortFinalLine != elidesShortFinalLine
             let displayChanged = layoutChanged
@@ -6588,12 +6564,11 @@ private struct PopupAlignedText: NSViewRepresentable {
             renderedText = text
             renderedFontSize = fontSize
             renderedFontWeight = fontWeight
-            renderedFontDesign = fontDesign
             renderedTextOpacity = normalizedOpacity
             renderedLineLimit = normalizedLineLimit
             renderedAlignsTrailing = alignsTrailing
             renderedElidesShortFinalLine = elidesShortFinalLine
-            renderedFont = fontDesign.font(size: fontSize, weight: fontWeight)
+            renderedFont = NSFont.systemFont(ofSize: fontSize, weight: fontWeight)
 
             if layoutChanged {
                 invalidateLayoutCache()
@@ -7943,7 +7918,7 @@ private struct AgentHeaderView: View {
                 iconView
 
                 Text(usesIndicatorLampStyle ? agent.shortDisplayName : agent.menuHeaderTitle)
-                    .font(Theme.Fonts.title(15))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
@@ -8287,7 +8262,7 @@ private struct EmptyAgentRow: View {
             .accessibilityHidden(true)
 
             Text("No sessions")
-                .font(Theme.Fonts.title(12, weight: .regular))
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }
         .frame(width: 320, alignment: .leading)
@@ -8318,7 +8293,7 @@ private struct SessionMenuRow: View {
                     symbolWidth: symbolWidth
                 )
                 Text(titleText)
-                    .font(Theme.Fonts.title(titleFontSize, weight: .medium))
+                    .font(.system(size: titleFontSize))
                     .foregroundStyle(titleColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -8343,8 +8318,8 @@ private struct SessionMenuRow: View {
                         .frame(width: titleTextLeadingOffset, height: 0)
 
                     Text(latestResponseText)
-                        .font(Theme.Fonts.mono(latestResponseFontSize))
-                        .foregroundStyle(.primary.opacity(0.82))
+                        .font(.system(size: latestResponseFontSize))
+                        .foregroundStyle(titleColor)
                         .lineLimit(effectiveLatestResponseLineLimit)
                         .truncationMode(.tail)
                         .fixedSize(horizontal: false, vertical: true)
