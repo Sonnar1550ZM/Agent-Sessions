@@ -2,20 +2,29 @@
 
 Agent Sessions is a local macOS menu bar app for tracking multiple Codex and Claude Code sessions from one menu bar item.
 
-## MVP
+It is designed for maintainers and developers who run several coding-agent sessions at once and need a compact, local status surface for work in progress, waiting approvals, and recent session context.
+
+[![CI](https://github.com/Sonnar1550ZM/Agent-Sessions/actions/workflows/ci.yml/badge.svg)](https://github.com/Sonnar1550ZM/Agent-Sessions/actions/workflows/ci.yml)
+
+## Features
 
 - AppKit `NSStatusItem` menu bar app.
 - Local event receiver: `http://127.0.0.1:7823/event`.
 - Sessions are keyed by `agent + sessionId`.
 - State persists to `~/Library/Application Support/Agent Sessions/state.json`.
-- Menu bar label shows Codex and Claude as separate status items that open the same shared menu.
-- Each icon uses the mono asset normally and switches to the color asset while Working.
-- Waiting sessions tint the mono icon yellow.
-- Menu state symbols use matching colors: Codex Working `#006EFE`, Claude Working `#cf8366`, and Waiting yellow.
-- Waiting takes precedence over Working in the menu bar aggregate state.
-- Menu groups sessions under custom `NSMenuItem.view` headers for `Codex` and `Claude Code`.
+- Codex and Claude appear as separate status items that open the same shared menu.
+- Each provider renders as a brand-colored indicator lamp that pulses while working and honors Reduce Motion.
+- Waiting sessions turn the lamp yellow and take precedence over Working in the aggregate state.
+- Menu groups sessions under custom `NSMenuItem.view` headers for `Codex` and `Claude`.
 - Long session titles wrap at about 30 characters in the menu.
 - The drop-down keeps the latest 5 visible sessions per agent across all states and hides inactive history after 24 hours.
+- Optional liquid-glass popup that surfaces the latest parent sessions with prompt and response context.
+
+## Requirements
+
+- macOS 26 or newer.
+- Swift 6.2 or newer.
+- Codex and/or Claude Code hook events posted to the local receiver.
 
 ## Build
 
@@ -31,7 +40,7 @@ To build the menu-bar-only `.app` bundle and install it to `/Applications`:
 open "/Applications/Agent Sessions.app"
 ```
 
-The app is assembled and ad-hoc signed on local disk, then installed to `/Applications` (override with `AGENT_SESSIONS_INSTALL_DIR`). Running it from local disk keeps Launch at Login working even before the Google Drive volume mounts.
+The app is assembled and ad-hoc signed on local disk, then installed to `/Applications` (override with `AGENT_SESSIONS_INSTALL_DIR`).
 
 ## Event API
 
@@ -75,3 +84,17 @@ Install them either way:
 - CLI: `./scripts/install-hooks.sh` (add `AGENT_SESSIONS_TRUST_PROJECT=1` to also trust this checkout in Codex).
 
 Both copy the scripts to `~/Library/Application Support/Agent Sessions/hooks/` and register those copies in `~/.codex/hooks.json`, `~/.codex/config.toml` (`codex_hooks = true`), and `~/.claude/settings.json`, backing up each existing file as `<name>.bak.<timestamp>` first.
+
+## Privacy and Security
+
+Agent Sessions is local-first. The app listens on loopback, stores state under the current user's Application Support directory, and does not require API keys. Hook scripts post local status events to the receiver and are written to fail open so agent workflows continue if the menu bar app is not running.
+
+Report vulnerabilities using the process in [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, test, and review expectations.
+
+## License
+
+Agent Sessions is licensed under the [MIT License](LICENSE).

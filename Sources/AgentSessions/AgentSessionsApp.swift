@@ -539,7 +539,6 @@ fileprivate enum PopupVisualStyle: String, CaseIterable, Identifiable {
 }
 
 private enum ProviderPreferenceDefaults {
-    static let usesIndicatorLampStyle = false
     static let sessionDisplayCount = 5
     static let latestResponseLineLimit = 3
     static let subagentLatestResponseLineLimit = 1
@@ -853,7 +852,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
     var menuBarOrder: [String]
     var dropdownMenuOrder: [String]
     var usesColorDropdownIcons: Bool
-    var usesIndicatorLampStyle: Bool
     var sessionDisplayCount: Int
     var latestResponseLineLimit: Int
     var subagentLatestResponseLineLimit: Int
@@ -898,7 +896,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         menuBarOrder: [String],
         dropdownMenuOrder: [String],
         usesColorDropdownIcons: Bool = false,
-        usesIndicatorLampStyle: Bool = ProviderPreferenceDefaults.usesIndicatorLampStyle,
         sessionDisplayCount: Int = ProviderPreferenceDefaults.sessionDisplayCount,
         latestResponseLineLimit: Int = ProviderPreferenceDefaults.latestResponseLineLimit,
         subagentLatestResponseLineLimit: Int = ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
@@ -942,7 +939,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         self.menuBarOrder = menuBarOrder
         self.dropdownMenuOrder = dropdownMenuOrder
         self.usesColorDropdownIcons = usesColorDropdownIcons
-        self.usesIndicatorLampStyle = usesIndicatorLampStyle
         self.sessionDisplayCount = sessionDisplayCount
         self.latestResponseLineLimit = latestResponseLineLimit
         self.subagentLatestResponseLineLimit = subagentLatestResponseLineLimit
@@ -992,7 +988,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         case menuBarOrder
         case dropdownMenuOrder
         case usesColorDropdownIcons
-        case usesIndicatorLampStyle
         case sessionDisplayCount
         case latestResponseLineLimit
         case subagentLatestResponseLineLimit
@@ -1043,8 +1038,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         dropdownMenuOrder = try container.decodeIfPresent([String].self, forKey: .dropdownMenuOrder) ?? []
         usesColorDropdownIcons = try container.decodeIfPresent(Bool.self, forKey: .usesColorDropdownIcons)
             ?? values.values.contains { $0.usesColorDropdownIcon }
-        usesIndicatorLampStyle = try container.decodeIfPresent(Bool.self, forKey: .usesIndicatorLampStyle)
-            ?? ProviderPreferenceDefaults.usesIndicatorLampStyle
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(
             try container.decodeIfPresent(Int.self, forKey: .sessionDisplayCount)
         )
@@ -1177,7 +1170,6 @@ private struct ProviderPreferencesDocument: Codable, Equatable {
         try container.encode(menuBarOrder, forKey: .menuBarOrder)
         try container.encode(dropdownMenuOrder, forKey: .dropdownMenuOrder)
         try container.encode(usesColorDropdownIcons, forKey: .usesColorDropdownIcons)
-        try container.encode(usesIndicatorLampStyle, forKey: .usesIndicatorLampStyle)
         try container.encode(sessionDisplayCount, forKey: .sessionDisplayCount)
         try container.encode(latestResponseLineLimit, forKey: .latestResponseLineLimit)
         try container.encode(subagentLatestResponseLineLimit, forKey: .subagentLatestResponseLineLimit)
@@ -1242,7 +1234,6 @@ final class ProviderVisibilityStore: ObservableObject {
     @Published private(set) var menuBarOrder: [String]
     @Published private(set) var dropdownMenuOrder: [String]
     @Published private(set) var usesColorDropdownIcons: Bool
-    @Published private(set) var usesIndicatorLampStyle: Bool
     @Published private(set) var sessionDisplayCount: Int
     @Published private(set) var latestResponseLineLimit: Int
     @Published private(set) var subagentLatestResponseLineLimit: Int
@@ -1299,7 +1290,6 @@ final class ProviderVisibilityStore: ObservableObject {
         menuBarOrder = Self.sanitizedOrder(document.menuBarOrder)
         dropdownMenuOrder = Self.sanitizedOrder(document.dropdownMenuOrder)
         usesColorDropdownIcons = document.usesColorDropdownIcons
-        usesIndicatorLampStyle = document.usesIndicatorLampStyle
         sessionDisplayCount = ProviderPreferenceDefaults.sanitizedSessionDisplayCount(document.sessionDisplayCount)
         latestResponseLineLimit = ProviderPreferenceDefaults.sanitizedLatestResponseLineLimit(document.latestResponseLineLimit)
         subagentLatestResponseLineLimit = ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(
@@ -1373,11 +1363,6 @@ final class ProviderVisibilityStore: ObservableObject {
 
     func setUsesColorDropdownIcons(_ usesColor: Bool) {
         usesColorDropdownIcons = usesColor
-        save()
-    }
-
-    func setUsesIndicatorLampStyle(_ usesIndicatorLamp: Bool) {
-        usesIndicatorLampStyle = usesIndicatorLamp
         save()
     }
 
@@ -1777,7 +1762,6 @@ final class ProviderVisibilityStore: ObservableObject {
             menuBarOrder: menuBarOrder,
             dropdownMenuOrder: dropdownMenuOrder,
             usesColorDropdownIcons: usesColorDropdownIcons,
-            usesIndicatorLampStyle: usesIndicatorLampStyle,
             sessionDisplayCount: sessionDisplayCount,
             latestResponseLineLimit: latestResponseLineLimit,
             subagentLatestResponseLineLimit: subagentLatestResponseLineLimit,
@@ -1837,7 +1821,6 @@ final class ProviderVisibilityStore: ObservableObject {
                 menuBarOrder: defaultOrder,
                 dropdownMenuOrder: defaultOrder,
                 usesColorDropdownIcons: values.values.contains { $0.usesColorDropdownIcon },
-                usesIndicatorLampStyle: ProviderPreferenceDefaults.usesIndicatorLampStyle,
                 sessionDisplayCount: ProviderPreferenceDefaults.sessionDisplayCount,
                 latestResponseLineLimit: ProviderPreferenceDefaults.latestResponseLineLimit,
                 subagentLatestResponseLineLimit: ProviderPreferenceDefaults.subagentLatestResponseLineLimit,
@@ -1884,7 +1867,6 @@ final class ProviderVisibilityStore: ObservableObject {
             menuBarOrder: sanitizedOrder(document.menuBarOrder),
             dropdownMenuOrder: sanitizedOrder(document.dropdownMenuOrder),
             usesColorDropdownIcons: document.usesColorDropdownIcons,
-            usesIndicatorLampStyle: document.usesIndicatorLampStyle,
             sessionDisplayCount: ProviderPreferenceDefaults.sanitizedSessionDisplayCount(document.sessionDisplayCount),
             latestResponseLineLimit: ProviderPreferenceDefaults.sanitizedLatestResponseLineLimit(document.latestResponseLineLimit),
             subagentLatestResponseLineLimit: ProviderPreferenceDefaults.sanitizedSubagentLatestResponseLineLimit(
@@ -2249,24 +2231,6 @@ private struct GeneralSettingsView: View {
                         },
                         set: { isEnabled in
                             launchAtLogin.setEnabled(isEnabled)
-                        }
-                    )
-                )
-            }
-
-            SettingsGroupBox(
-                title: "Appearance",
-                subtitle: "Provider branding in the menu bar, drop-down menu, and popup."
-            ) {
-                SettingsToggleRow(
-                    title: "Indicator Lamp Style",
-                    subtitle: "Replace provider logos with brand-colored indicator lamps and shorten names to Codex / Claude.",
-                    isOn: Binding(
-                        get: {
-                            providerVisibility.usesIndicatorLampStyle
-                        },
-                        set: { usesIndicatorLamp in
-                            providerVisibility.setUsesIndicatorLampStyle(usesIndicatorLamp)
                         }
                     )
                 )
@@ -3133,7 +3097,7 @@ private struct ProviderSettingsRow: View {
             .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(providerVisibility.usesIndicatorLampStyle ? agent.shortDisplayName : agent.providerSettingsTitle)
+                Text(agent.shortDisplayName)
                     .font(.body)
                 Text(subtitle)
                     .font(.caption)
@@ -5199,8 +5163,7 @@ final class SessionPopupController {
             responseCharacterLimit: providerVisibility.popupResponseCharacterLimit,
             responseLineLimit: providerVisibility.popupResponseLineLimit,
             responseCompactsBlankLines: providerVisibility.popupResponseCompactsBlankLines,
-            responseElidesShortFinalLine: providerVisibility.popupResponseElidesShortFinalLine,
-            usesIndicatorLampStyle: providerVisibility.usesIndicatorLampStyle
+            responseElidesShortFinalLine: providerVisibility.popupResponseElidesShortFinalLine
         )
         let hostingController = ensureHostingController(rootView: rootView)
         hostingController.rootView = rootView
@@ -5263,9 +5226,6 @@ final class SessionPopupController {
         stopMouseProximityTracking()
         renderedPopupSignature = nil
         guard let panel, panel.isVisible else {
-            if let view = hostingController?.view {
-                stopPopupIconAnimations(in: view)
-            }
             panel?.alphaValue = 1
             popupVisibilityState = .hidden
             return
@@ -5298,7 +5258,6 @@ final class SessionPopupController {
                 panel?.alphaValue = 1
                 if let view = self.hostingController?.view {
                     self.resetPopupContentAnimation(view)
-                    self.stopPopupIconAnimations(in: view)
                 }
                 self.renderedPopupSignature = nil
                 self.popupVisibilityState = .hidden
@@ -5328,8 +5287,7 @@ final class SessionPopupController {
             "\(providerVisibility.popupResponseCharacterLimit)",
             "\(providerVisibility.popupResponseLineLimit)",
             "\(providerVisibility.popupResponseCompactsBlankLines)",
-            "\(providerVisibility.popupResponseElidesShortFinalLine)",
-            "\(providerVisibility.usesIndicatorLampStyle)"
+            "\(providerVisibility.popupResponseElidesShortFinalLine)"
         ]
 
         for session in sessions {
@@ -5544,16 +5502,6 @@ final class SessionPopupController {
         layer.opacity = 1
         layer.transform = CATransform3DIdentity
         CATransaction.commit()
-    }
-
-    private func stopPopupIconAnimations(in view: NSView) {
-        if let iconView = view as? AnimatedAgentIconImageView {
-            iconView.stopAnimating()
-        }
-
-        for subview in view.subviews {
-            stopPopupIconAnimations(in: subview)
-        }
     }
 
     private func animatePopupContentIn(
@@ -5871,7 +5819,6 @@ private struct LatestParentSessionsPopupView: View {
     let responseLineLimit: Int
     let responseCompactsBlankLines: Bool
     let responseElidesShortFinalLine: Bool
-    let usesIndicatorLampStyle: Bool
 
     var body: some View {
         let metrics = PopupScaleMetrics(
@@ -5894,8 +5841,7 @@ private struct LatestParentSessionsPopupView: View {
                     responseCharacterLimit: responseCharacterLimit,
                     responseLineLimit: responseLineLimit,
                     responseCompactsBlankLines: responseCompactsBlankLines,
-                    responseElidesShortFinalLine: responseElidesShortFinalLine,
-                    usesIndicatorLampStyle: usesIndicatorLampStyle
+                    responseElidesShortFinalLine: responseElidesShortFinalLine
                 )
                 .padding(.horizontal, metrics.horizontalPadding + metrics.shadowBleedPadding)
                 .padding(.vertical, metrics.verticalPadding + metrics.shadowBleedPadding)
@@ -6045,7 +5991,6 @@ private struct PopupSessionRow: View {
     let responseLineLimit: Int
     let responseCompactsBlankLines: Bool
     let responseElidesShortFinalLine: Bool
-    let usesIndicatorLampStyle: Bool
 
     private static let pendingLatestResponseText = "Thinking..."
 
@@ -6141,25 +6086,12 @@ private struct PopupSessionRow: View {
             .popupTextShadow(metrics)
     }
 
-    @ViewBuilder
     private var providerIcon: some View {
-        Group {
-            if usesIndicatorLampStyle {
-                AgentIndicatorLampView(
-                    agent: session.agent,
-                    state: session.state,
-                    iconSize: metrics.iconSize
-                )
-            } else {
-                AnimatedAgentIconView(
-                    agent: session.agent,
-                    state: session.state,
-                    iconSize: metrics.iconSize,
-                    animatesWorkingIcon: true,
-                    usesMonochromeIdleIcon: false
-                )
-            }
-        }
+        AgentIndicatorLampView(
+            agent: session.agent,
+            state: session.state,
+            iconSize: metrics.iconSize
+        )
         .frame(width: metrics.iconSize, height: metrics.iconSize)
         .padding(.top, metrics.titleVerticalPadding)
         .accessibilityHidden(true)
@@ -6311,161 +6243,6 @@ private struct PopupSessionStateTimeText: View {
         formatter.unitsStyle = .abbreviated
         return formatter
     }()
-}
-
-private struct AnimatedAgentIconView: NSViewRepresentable {
-    let agent: AgentKind
-    let state: AgentState
-    let iconSize: CGFloat
-    let animatesWorkingIcon: Bool
-    let usesMonochromeIdleIcon: Bool
-
-    func makeNSView(context: Context) -> AnimatedAgentIconImageView {
-        let imageView = AnimatedAgentIconImageView()
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.imageAlignment = .alignCenter
-        imageView.wantsLayer = true
-        imageView.layer?.contentsGravity = .resizeAspect
-        imageView.setContentHuggingPriority(.required, for: .horizontal)
-        imageView.setContentHuggingPriority(.required, for: .vertical)
-        imageView.setContentCompressionResistancePriority(.required, for: .horizontal)
-        imageView.setContentCompressionResistancePriority(.required, for: .vertical)
-        imageView.configure(
-            agent: agent,
-            state: state,
-            iconSize: iconSize,
-            animatesWorkingIcon: animatesWorkingIcon,
-            usesMonochromeIdleIcon: usesMonochromeIdleIcon
-        )
-        return imageView
-    }
-
-    func updateNSView(_ imageView: AnimatedAgentIconImageView, context: Context) {
-        imageView.configure(
-            agent: agent,
-            state: state,
-            iconSize: iconSize,
-            animatesWorkingIcon: animatesWorkingIcon,
-            usesMonochromeIdleIcon: usesMonochromeIdleIcon
-        )
-    }
-
-    static func dismantleNSView(_ imageView: AnimatedAgentIconImageView, coordinator: ()) {
-        imageView.stopAnimating()
-    }
-}
-
-private final class AnimatedAgentIconImageView: NSImageView {
-    private var renderedAgent: AgentKind?
-    private var renderedState: AgentState?
-    private var renderedIconSize: CGFloat = 0
-    private var renderedAnimatesWorkingIcon = false
-    private var renderedUsesMonochromeIdleIcon = false
-
-    override var intrinsicContentSize: NSSize {
-        guard renderedIconSize > 0 else {
-            return super.intrinsicContentSize
-        }
-        return NSSize(width: renderedIconSize, height: renderedIconSize)
-    }
-
-    override func viewWillMove(toWindow newWindow: NSWindow?) {
-        if newWindow == nil {
-            stopAnimating()
-        }
-        super.viewWillMove(toWindow: newWindow)
-    }
-
-    override func layout() {
-        super.layout()
-        if let renderedAgent,
-           renderedState == .working,
-           renderedAnimatesWorkingIcon {
-            startAnimating(agent: renderedAgent)
-        }
-    }
-
-    func configure(
-        agent: AgentKind,
-        state: AgentState,
-        iconSize: CGFloat,
-        animatesWorkingIcon: Bool,
-        usesMonochromeIdleIcon: Bool
-    ) {
-        let sizeChanged = abs(renderedIconSize - iconSize) > 0.001
-        let identityChanged = renderedAgent != agent
-            || renderedState != state
-            || renderedAnimatesWorkingIcon != animatesWorkingIcon
-            || renderedUsesMonochromeIdleIcon != usesMonochromeIdleIcon
-
-        renderedAgent = agent
-        renderedState = state
-        renderedAnimatesWorkingIcon = animatesWorkingIcon
-        renderedUsesMonochromeIdleIcon = usesMonochromeIdleIcon
-
-        if sizeChanged {
-            renderedIconSize = iconSize
-            setFrameSize(NSSize(width: iconSize, height: iconSize))
-            invalidateIntrinsicContentSize()
-        }
-
-        guard state == .working, animatesWorkingIcon else {
-            stopAnimating()
-            renderStaticIcon(
-                agent: agent,
-                state: state,
-                usesMonochromeIdleIcon: usesMonochromeIdleIcon,
-                force: identityChanged
-            )
-            return
-        }
-
-        renderStaticIcon(
-            agent: agent,
-            state: state,
-            usesMonochromeIdleIcon: usesMonochromeIdleIcon,
-            force: identityChanged || image == nil
-        )
-        startAnimating(agent: agent)
-    }
-
-    func stopAnimating() {
-        AgentIconHighlightLayer.stop(in: self)
-    }
-
-    private func startAnimating(agent: AgentKind) {
-        guard let maskImage = AgentImages.menuHeaderIconMaskImage(for: agent, color: true) else {
-            return
-        }
-
-        let imageSize = image?.size ?? NSSize(width: renderedIconSize, height: renderedIconSize)
-        let imageRect = AgentIconHighlightLayer.aspectFitRect(
-            contentSize: imageSize,
-            in: bounds
-        )
-        AgentIconHighlightLayer.start(
-            in: self,
-            imageRect: imageRect,
-            maskImage: maskImage,
-            duration: AgentIconAnimation.highlightDuration
-        )
-    }
-
-    private func renderStaticIcon(
-        agent: AgentKind,
-        state: AgentState,
-        usesMonochromeIdleIcon: Bool,
-        force: Bool
-    ) {
-        guard force || image == nil else {
-            return
-        }
-        image = AgentImages.menuHeaderIcon(
-            for: agent,
-            color: !(usesMonochromeIdleIcon && state == .idle),
-            state: state
-        )
-    }
 }
 
 private enum AgentIndicatorLamp {
@@ -6723,26 +6500,13 @@ private struct MenuBarAgentIconView: View {
     let agent: AgentKind
     let state: AgentState
     let iconSize: NSSize
-    let usesIndicatorLampStyle: Bool
 
     var body: some View {
-        Group {
-            if usesIndicatorLampStyle {
-                AgentIndicatorLampView(
-                    agent: agent,
-                    state: state,
-                    iconSize: min(iconSize.width, iconSize.height)
-                )
-            } else {
-                AnimatedAgentIconView(
-                    agent: agent,
-                    state: state,
-                    iconSize: max(iconSize.width, iconSize.height),
-                    animatesWorkingIcon: true,
-                    usesMonochromeIdleIcon: true
-                )
-            }
-        }
+        AgentIndicatorLampView(
+            agent: agent,
+            state: state,
+            iconSize: min(iconSize.width, iconSize.height)
+        )
         .frame(width: iconSize.width, height: iconSize.height)
         .accessibilityHidden(true)
     }
@@ -7391,20 +7155,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             }
             .store(in: &cancellables)
 
-        providerVisibility.$usesIndicatorLampStyle
-            .receive(on: DispatchQueue.main)
-            .dropFirst()
-            .sink { [weak self] _ in
-                self?.applyIndicatorLampStyleChange()
-            }
-            .store(in: &cancellables)
-
         NSWorkspace.shared.notificationCenter.publisher(
             for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification
         )
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.applyIndicatorLampStyleChange()
+                self?.applyAccessibilityDisplayChange()
             }
             .store(in: &cancellables)
 
@@ -7544,18 +7300,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
-        let providerName = agent.map {
-            providerVisibility.usesIndicatorLampStyle ? $0.shortDisplayName : $0.displayName
-        }
+        let providerName = agent.map(\.shortDisplayName)
         let label = providerName.map { "Agent Sessions - \($0)" } ?? "Agent Sessions"
         button.toolTip = label
         button.setAccessibilityLabel(label)
     }
 
-    private func applyIndicatorLampStyleChange() {
-        for (agent, statusItem) in statusItems {
-            configureStatusButton(statusItem, agent: agent)
-        }
+    private func applyAccessibilityDisplayChange() {
         statusIconHostingViews.values.forEach { $0.removeFromSuperview() }
         statusIconHostingViews.removeAll()
         statusIconRenderKeys.removeAll()
@@ -7651,10 +7402,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         for (agent, statusItem) in statusItems {
             let displayState = statusIconDisplayState(for: agent, now: now, refreshDisplayState: refreshDisplayStates)
             hasAnimatedIcon = hasAnimatedIcon || displayState == .working
-            let renderKey = StatusIconRenderKey(
-                state: displayState,
-                usesIndicatorLampStyle: providerVisibility.usesIndicatorLampStyle
-            )
+            let renderKey = StatusIconRenderKey(state: displayState)
             if statusIconRenderKeys[agent] != renderKey || statusIconHostingViews[agent] == nil {
                 updateMenuBarIconView(
                     for: agent,
@@ -7669,7 +7417,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             guard !fallbackStatusIconRendered else {
                 return hasAnimatedIcon
             }
-            let image = AgentImages.menuBarStatus([])
+            let image = AgentImages.fallbackMenuBarStatus()
             fallbackStatusItem.button?.image = image
             fallbackStatusItem.length = image.size.width + Self.statusItemHorizontalPadding
             fallbackStatusIconRendered = true
@@ -7792,7 +7540,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private struct StatusIconRenderKey: Equatable {
         let state: AgentState
-        let usesIndicatorLampStyle: Bool
     }
 
     private func updateMenuBarIconView(for agent: AgentKind, state: AgentState, statusItem: NSStatusItem) {
@@ -7800,18 +7547,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             return
         }
 
-        let usesIndicatorLampStyle = providerVisibility.usesIndicatorLampStyle
-        let iconSize = usesIndicatorLampStyle
-            ? AgentIndicatorLamp.menuBarViewSize
-            : AgentImages.menuBarIconSize(for: agent)
+        let iconSize = AgentIndicatorLamp.menuBarViewSize
         statusItem.length = iconSize.width + Self.statusItemHorizontalPadding
         button.image = nil
 
         let iconView = MenuBarAgentIconView(
             agent: agent,
             state: state,
-            iconSize: iconSize,
-            usesIndicatorLampStyle: usesIndicatorLampStyle
+            iconSize: iconSize
         )
         if let hostingView = statusIconHostingViews[agent] {
             hostingView.rootView = iconView
@@ -7996,7 +7739,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             latestResponseHideAfterInterval: providerVisibility.latestResponseHideAfterInterval,
             latestResponseCompactsBlankLines: providerVisibility.latestResponseCompactsBlankLines,
             showsUserPrompt: providerVisibility.dropdownShowsUserPrompt,
-            usesIndicatorLampStyle: providerVisibility.usesIndicatorLampStyle,
             onLayoutMayChange: { [weak self] in
                 self?.resizeMenuIfOpen()
             }
@@ -8065,138 +7807,17 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 }
 
-private enum AgentIconHighlightLayer {
-    private static let layerName = "AgentSessionsWorkingHighlight"
-    private static let gradientLayerName = "AgentSessionsWorkingHighlightGradient"
-    private static let animationKey = "agentSessionsWorkingHighlightSweep"
-
-    @MainActor
-    static func start(in view: NSView, imageRect: CGRect, maskImage: CGImage, duration: TimeInterval) {
-        guard !Theme.Motion.reduceMotion else {
-            stop(in: view)
-            return
-        }
-
-        view.wantsLayer = true
-        guard let layer = view.layer else {
-            return
-        }
-
-        if let existingLayer = layer.sublayers?.first(where: { $0.name == layerName }) {
-            if abs(existingLayer.frame.width - imageRect.width) <= 0.5,
-               abs(existingLayer.frame.height - imageRect.height) <= 0.5 {
-                update(existingLayer, imageRect: imageRect)
-                return
-            }
-            existingLayer.removeFromSuperlayer()
-        }
-
-        let contentsScale = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        let highlightLayer = CALayer()
-        highlightLayer.name = layerName
-        highlightLayer.frame = imageRect
-        highlightLayer.masksToBounds = true
-        highlightLayer.contentsScale = contentsScale
-        highlightLayer.isGeometryFlipped = true
-
-        let maskLayer = CALayer()
-        maskLayer.frame = highlightLayer.bounds
-        maskLayer.contents = maskImage
-        maskLayer.contentsGravity = .resizeAspect
-        maskLayer.contentsScale = contentsScale
-        highlightLayer.mask = maskLayer
-
-        let gradientLayer = CAGradientLayer()
-        gradientLayer.name = gradientLayerName
-        gradientLayer.colors = [
-            NSColor.clear.cgColor,
-            NSColor.white.withAlphaComponent(0.08).cgColor,
-            NSColor.white.withAlphaComponent(0.26).cgColor,
-            NSColor.white.withAlphaComponent(0.65).cgColor,
-            NSColor.white.withAlphaComponent(0.26).cgColor,
-            NSColor.white.withAlphaComponent(0.08).cgColor,
-            NSColor.clear.cgColor
-        ]
-        gradientLayer.locations = [0, 0.2, 0.39, 0.5, 0.61, 0.8, 1]
-        gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
-        gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
-        gradientLayer.bounds = CGRect(
-            x: 0,
-            y: 0,
-            width: max(imageRect.width * 0.95, 8),
-            height: max(imageRect.height * 2.7, 16)
-        )
-        gradientLayer.position = startPosition(in: highlightLayer.bounds, stripeSize: gradientLayer.bounds.size)
-        gradientLayer.transform = CATransform3DMakeRotation(CGFloat.pi / 4, 0, 0, 1)
-
-        let animation = CABasicAnimation(keyPath: "position")
-        animation.fromValue = startPosition(in: highlightLayer.bounds, stripeSize: gradientLayer.bounds.size)
-        animation.toValue = endPosition(in: highlightLayer.bounds, stripeSize: gradientLayer.bounds.size)
-        animation.duration = duration
-        animation.repeatCount = .infinity
-        animation.timingFunction = CAMediaTimingFunction(name: .linear)
-        animation.isRemovedOnCompletion = false
-        gradientLayer.add(animation, forKey: animationKey)
-
-        highlightLayer.addSublayer(gradientLayer)
-        layer.addSublayer(highlightLayer)
-    }
-
-    @MainActor
-    static func stop(in view: NSView) {
-        view.layer?.sublayers?
-            .filter { $0.name == layerName }
-            .forEach { $0.removeFromSuperlayer() }
-    }
-
-    static func aspectFitRect(contentSize: NSSize, in bounds: CGRect) -> CGRect {
-        guard bounds.width > 0, bounds.height > 0, contentSize.width > 0, contentSize.height > 0 else {
-            return bounds
-        }
-
-        let scale = min(bounds.width / contentSize.width, bounds.height / contentSize.height)
-        let width = contentSize.width * scale
-        let height = contentSize.height * scale
-        return CGRect(
-            x: bounds.midX - width / 2,
-            y: bounds.midY - height / 2,
-            width: width,
-            height: height
-        )
-    }
-
-    private static func update(_ layer: CALayer, imageRect: CGRect) {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.frame = imageRect
-        layer.mask?.frame = layer.bounds
-        CATransaction.commit()
-    }
-
-    private static func startPosition(in bounds: CGRect, stripeSize: CGSize) -> CGPoint {
-        CGPoint(x: -stripeSize.width * 0.7, y: -stripeSize.height * 0.35)
-    }
-
-    private static func endPosition(in bounds: CGRect, stripeSize: CGSize) -> CGPoint {
-        CGPoint(
-            x: bounds.width + stripeSize.width * 0.7,
-            y: bounds.height + stripeSize.height * 0.35
-        )
-    }
-}
-
 private struct AgentHeaderView: View {
     let agent: AgentKind
     let state: AgentState
     let workingSessionCounts: AgentWorkingSessionCounts
-    let usesIndicatorLampStyle: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 7) {
                 iconView
 
-                Text(usesIndicatorLampStyle ? agent.shortDisplayName : agent.menuHeaderTitle)
+                Text(agent.shortDisplayName)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
@@ -8242,25 +7863,12 @@ private struct AgentHeaderView: View {
             )
     }
 
-    @ViewBuilder
     private var iconView: some View {
-        Group {
-            if usesIndicatorLampStyle {
-                AgentIndicatorLampView(
-                    agent: agent,
-                    state: state,
-                    iconSize: 16
-                )
-            } else {
-                AnimatedAgentIconView(
-                    agent: agent,
-                    state: state,
-                    iconSize: 16,
-                    animatesWorkingIcon: false,
-                    usesMonochromeIdleIcon: false
-                )
-            }
-        }
+        AgentIndicatorLampView(
+            agent: agent,
+            state: state,
+            iconSize: 16
+        )
         .frame(width: 16, height: 16)
         .accessibilityHidden(true)
     }
@@ -8279,7 +7887,6 @@ private struct AgentSectionView: View {
     let latestResponseHideAfterInterval: TimeInterval
     let latestResponseCompactsBlankLines: Bool
     let showsUserPrompt: Bool
-    let usesIndicatorLampStyle: Bool
     let onLayoutMayChange: () -> Void
 
     private static let pendingLatestResponseText = "Thinking..."
@@ -8302,8 +7909,7 @@ private struct AgentSectionView: View {
             AgentHeaderView(
                 agent: agent,
                 state: state,
-                workingSessionCounts: workingSessionCounts,
-                usesIndicatorLampStyle: usesIndicatorLampStyle
+                workingSessionCounts: workingSessionCounts
             )
 
             if rows.isEmpty {
@@ -8894,304 +8500,32 @@ private enum AgentColors {
     }
 }
 
-private enum AgentIconAnimation {
-    static let highlightDuration: TimeInterval = Theme.Motion.sweepDuration
-}
-
-struct AgentMenuBarStatus {
-    let agent: AgentKind
-    let state: AgentState
-}
-
 enum AgentImages {
-    private static let menuBarLogoDisplayScale: CGFloat = 0.7
-    private static let menuBarLogoGap: CGFloat = 2
     private static let fallbackMenuBarStatusSize = NSSize(width: 15, height: 15)
-    private static let assetScale: CGFloat = 3
-    private static let renderedImageCache = RenderedImageCache()
-    private static let codexIcons = AgentIconSet(
-        mono: loadMenuBarIcon(name: "Codex Mono@3x"),
-        color: loadMenuBarIcon(name: "Codex Color@3x")
-    )
-    private static let claudeIcons = AgentIconSet(
-        mono: loadMenuBarIcon(name: "claude Mono@3x"),
-        color: loadMenuBarIcon(name: "Claude Color@3x")
-    )
 
-    static func menuBarStatus(_ statuses: [AgentMenuBarStatus]) -> NSImage {
-        guard !statuses.isEmpty else {
-            return fallbackMenuBarStatus()
-        }
-
-        let size = menuBarStatusSize(for: statuses)
-        let cacheKey = menuBarStatusCacheKey(statuses: statuses)
-
-        return renderedImageCache.image(for: cacheKey) {
-            renderImage(size: size, isTemplate: false) {
-            var x: CGFloat = 0
-
-            for status in statuses {
-                let icons = iconSet(for: status.agent)
-                let displaySize = displaySize(for: icons.mono)
-                drawAgentLogo(
-                    icons,
-                    state: status.state,
-                    size: displaySize,
-                    x: x,
-                    canvasHeight: size.height
-                )
-                x += displaySize.width + menuBarLogoGap
-            }
-            }
-        }
-    }
-
-    static func menuHeaderIconMaskImage(for agent: AgentKind, color: Bool = true) -> CGImage? {
-        let image = menuHeaderIcon(for: agent, color: color, state: .working)
-        var rect = NSRect(origin: .zero, size: image.size)
-        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
-    }
-
-    static func menuBarIconSize(for agent: AgentKind) -> NSSize {
-        displaySize(for: iconSet(for: agent).mono)
-    }
-
-    static func menuHeaderIcon(for agent: AgentKind, color: Bool = false) -> NSImage {
-        renderedImageCache.image(for: "menuHeader|\(agent.rawValue)|color:\(color)|state:base") {
-            let icons = iconSet(for: agent)
-            if color {
-                return renderedColorIcon(icons.color)
-            }
-
-            guard let image = icons.mono.copy() as? NSImage else {
-                return icons.mono
-            }
-            image.isTemplate = true
-            return image
-        }
-    }
-
-    static func menuHeaderIcon(
-        for agent: AgentKind,
-        color: Bool = false,
-        state: AgentState
-    ) -> NSImage {
-        if color, state != .waiting {
-            return menuHeaderIcon(for: agent, color: true)
-        }
-
-        guard state == .working || state == .waiting else {
-            return menuHeaderIcon(for: agent, color: color)
-        }
-
-        let icons = iconSet(for: agent)
-        let size = icons.mono.size
-        let cacheKey = "menuHeader|\(agent.rawValue)|color:\(color)|state:\(state.rawValue)"
-
-        return renderedImageCache.image(for: cacheKey) {
-            renderImage(size: size, isTemplate: false) {
-                drawAgentLogo(
-                    icons,
-                    state: state,
-                    size: size,
-                    x: 0,
-                    canvasHeight: size.height
-                )
-            }
-        }
-    }
-
-    private static func menuBarStatusSize(for statuses: [AgentMenuBarStatus]) -> NSSize {
-        let displaySizes = statuses.map { displaySize(for: iconSet(for: $0.agent).mono) }
-        let totalLogoWidth = displaySizes.reduce(CGFloat(0)) { $0 + $1.width }
-        let totalGapWidth = CGFloat(max(statuses.count - 1, 0)) * menuBarLogoGap
-        return NSSize(
-            width: totalLogoWidth + totalGapWidth,
-            height: displaySizes.map(\.height).max() ?? fallbackMenuBarStatusSize.height
-        )
-    }
-
-    private static func fallbackMenuBarStatus() -> NSImage {
-        renderedImageCache.image(for: "menuBarStatus|fallback") {
-            renderImage(size: fallbackMenuBarStatusSize, isTemplate: true) {
-                let rect = NSRect(origin: .zero, size: fallbackMenuBarStatusSize)
-            guard let symbol = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Agent Sessions") else {
-                NSColor.labelColor.setStroke()
-                NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).stroke()
-                    return
-            }
-
-            var proposedRect = NSRect(origin: .zero, size: symbol.size)
-            guard let cgImage = symbol.cgImage(forProposedRect: &proposedRect, context: NSGraphicsContext.current, hints: nil),
-                  let context = NSGraphicsContext.current?.cgContext else {
-                symbol.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
-                    return
-            }
-
-            context.saveGState()
-            context.clip(to: rect, mask: cgImage)
-            NSColor.labelColor.setFill()
-            rect.fill()
-            context.restoreGState()
-            }
-        }
-    }
-
-    private static func menuBarStatusCacheKey(statuses: [AgentMenuBarStatus]) -> String {
-        let statusKey = statuses
-            .map { "\($0.agent.rawValue):\($0.state.rawValue)" }
-            .joined(separator: ",")
-        return "menuBarStatus|\(statusKey)"
-    }
-
-    private static func renderImage(size: NSSize, isTemplate: Bool, draw: () -> Void) -> NSImage {
-        let image = NSImage(size: size)
+    static func fallbackMenuBarStatus() -> NSImage {
+        let rect = NSRect(origin: .zero, size: fallbackMenuBarStatusSize)
+        let image = NSImage(size: rect.size)
         image.lockFocus()
         NSGraphicsContext.current?.imageInterpolation = .high
-        draw()
-        image.unlockFocus()
-        image.isTemplate = isTemplate
-        return image
-    }
-
-    private static func iconSet(for agent: AgentKind) -> AgentIconSet {
-        switch agent {
-        case .codex:
-            codexIcons
-        case .claudeCode:
-            claudeIcons
-        }
-    }
-
-    private static func loadMenuBarIcon(name: String) -> NSImage {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png")
-            ?? Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "icon")
-            ?? Bundle.module.url(forResource: "icon/\(name)", withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
-            return NSImage(size: NSSize(width: 13, height: 13))
-        }
-
-        let pixelWidth = image.representations.map(\.pixelsWide).max() ?? Int(image.size.width)
-        let pixelHeight = image.representations.map(\.pixelsHigh).max() ?? Int(image.size.height)
-        if pixelWidth > 0, pixelHeight > 0 {
-            image.size = NSSize(width: CGFloat(pixelWidth) / assetScale, height: CGFloat(pixelHeight) / assetScale)
-        }
-        image.isTemplate = false
-        return image
-    }
-
-    private static func displaySize(for logo: NSImage) -> NSSize {
-        NSSize(
-            width: logo.size.width * menuBarLogoDisplayScale,
-            height: logo.size.height * menuBarLogoDisplayScale
-        )
-    }
-
-    private static func renderedColorIcon(_ logo: NSImage) -> NSImage {
-        let size = logo.size
-        return renderImage(size: size, isTemplate: false) {
-            logo.draw(
-                in: NSRect(origin: .zero, size: size),
-                from: .zero,
-                operation: .sourceOver,
-                fraction: 1.0
-            )
-        }
-    }
-
-    private static func drawAgentLogo(
-        _ icons: AgentIconSet,
-        state: AgentState,
-        size: NSSize,
-        x: CGFloat,
-        canvasHeight: CGFloat
-    ) {
-        let logoRect = NSRect(
-            x: x,
-            y: (canvasHeight - size.height) / 2,
-            width: size.width,
-            height: size.height
-        )
-
-        switch state {
-        case .working:
-            icons.color.draw(in: logoRect, from: .zero, operation: .sourceOver, fraction: 1.0)
-        case .waiting:
-            drawTemplateLogo(icons.mono, in: logoRect, color: AgentColors.waiting)
-        case .idle, .ended:
-            drawTemplateLogo(icons.mono, in: logoRect, color: .labelColor)
-        }
-    }
-
-    private static func drawTemplateLogo(_ logo: NSImage, in rect: NSRect, color: NSColor) {
-        var proposedRect = NSRect(origin: .zero, size: logo.size)
-        guard let cgImage = logo.cgImage(forProposedRect: &proposedRect, context: NSGraphicsContext.current, hints: nil),
-              let context = NSGraphicsContext.current?.cgContext else {
-            logo.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
-            return
-        }
-
-        context.saveGState()
-        context.clip(to: rect, mask: cgImage)
-        color.setFill()
-        rect.fill()
-        context.restoreGState()
-    }
-
-    private struct AgentIconSet {
-        let mono: NSImage
-        let color: NSImage
-    }
-
-    private final class RenderedImageCache: @unchecked Sendable {
-        private let lock = NSLock()
-        private let capacity: Int
-        private var images: [String: NSImage] = [:]
-        private var insertionOrder: [String] = []
-
-        init(capacity: Int = 256) {
-            self.capacity = max(1, capacity)
-            self.insertionOrder.reserveCapacity(capacity)
-        }
-
-        func image(for key: String, make: () -> NSImage) -> NSImage {
-            lock.lock()
-            if let image = images[key] {
-                touchLocked(key)
-                lock.unlock()
-                return image
-            }
-            lock.unlock()
-
-            let image = make()
-
-            lock.lock()
-            if images[key] == nil {
-                images[key] = image
-                insertionOrder.append(key)
-                evictLocked()
+        if let symbol = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Agent Sessions") {
+            var proposedRect = NSRect(origin: .zero, size: symbol.size)
+            if let cgImage = symbol.cgImage(forProposedRect: &proposedRect, context: NSGraphicsContext.current, hints: nil),
+               let context = NSGraphicsContext.current?.cgContext {
+                context.saveGState()
+                context.clip(to: rect, mask: cgImage)
+                NSColor.labelColor.setFill()
+                rect.fill()
+                context.restoreGState()
             } else {
-                touchLocked(key)
+                symbol.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
             }
-            lock.unlock()
-
-            return image
+        } else {
+            NSColor.labelColor.setStroke()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).stroke()
         }
-
-        private func touchLocked(_ key: String) {
-            guard let idx = insertionOrder.firstIndex(of: key) else {
-                insertionOrder.append(key)
-                return
-            }
-            insertionOrder.remove(at: idx)
-            insertionOrder.append(key)
-        }
-
-        private func evictLocked() {
-            while insertionOrder.count > capacity {
-                let oldest = insertionOrder.removeFirst()
-                images.removeValue(forKey: oldest)
-            }
-        }
+        image.unlockFocus()
+        image.isTemplate = true
+        return image
     }
 }

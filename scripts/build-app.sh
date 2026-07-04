@@ -9,8 +9,6 @@ APP_DIR="${INSTALL_DIR}/${APP_DISPLAY_NAME}.app"
 BUILD_DIR="${ROOT}/.build/release"
 BINARY="${BUILD_DIR}/${EXECUTABLE_NAME}"
 BUNDLE_ID="app.agentsessions"
-ICON_FILE="Sources/AgentSessions/Resources/codex-icon.icns"
-ICON_PLIST_ENTRY=""
 
 cd "$ROOT"
 swift build -c release
@@ -32,11 +30,6 @@ if [ -n "${RESOURCE_BUNDLE:-}" ]; then
   cp -R "$RESOURCE_BUNDLE" "$STAGE_APP/Contents/Resources/"
 fi
 
-if [ -f "$ICON_FILE" ]; then
-  cp "$ICON_FILE" "$STAGE_APP/Contents/Resources/codex-icon.icns"
-  ICON_PLIST_ENTRY=$'  <key>CFBundleIconFile</key>\n  <string>codex-icon</string>'
-fi
-
 cat > "$STAGE_APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -46,7 +39,6 @@ cat > "$STAGE_APP/Contents/Info.plist" <<PLIST
   <string>en</string>
   <key>CFBundleExecutable</key>
   <string>${EXECUTABLE_NAME}</string>
-${ICON_PLIST_ENTRY}
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key>
