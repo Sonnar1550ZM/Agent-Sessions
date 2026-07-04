@@ -81,7 +81,7 @@ final class ClaudeHookScriptTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("scripts/agent-sessions-claude-hook.sh")
+            .appendingPathComponent("Sources/AgentSessions/Resources/hooks/agent-sessions-claude-hook.sh")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [scriptURL.path, state]

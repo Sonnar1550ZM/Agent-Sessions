@@ -19,8 +19,23 @@ codex_hooks_path = home / ".codex" / "hooks.json"
 codex_config_path = home / ".codex" / "config.toml"
 claude_settings_path = home / ".claude" / "settings.json"
 
-codex_script = root / "scripts" / "agent-sessions-codex-hook.sh"
-claude_script = root / "scripts" / "agent-sessions-claude-hook.sh"
+# Canonical scripts ship inside the app target's resources; installed copies
+# live in Application Support so registered paths survive checkout moves.
+# Keep this in sync with AgentHookInstaller in AgentSessionsCore.
+script_source_dir = root / "Sources" / "AgentSessions" / "Resources" / "hooks"
+install_dir = home / "Library" / "Application Support" / "Agent Sessions" / "hooks"
+
+
+def install_script(name: str) -> pathlib.Path:
+    install_dir.mkdir(parents=True, exist_ok=True)
+    destination = install_dir / name
+    shutil.copy2(script_source_dir / name, destination)
+    destination.chmod(0o755)
+    return destination
+
+
+codex_script = install_script("agent-sessions-codex-hook.sh")
+claude_script = install_script("agent-sessions-claude-hook.sh")
 CODEX_HOOK_MARKERS = (
     "agent-sessions-codex-hook",
 )
@@ -213,6 +228,7 @@ ensure_codex_config()
 if trust_project:
     ensure_agent_sessions_project_trust()
 
+print(f"Installed hook scripts in {install_dir}")
 print(f"Updated {codex_hooks_path}")
 print(f"Updated {codex_config_path}")
 print(f"Updated {claude_settings_path}")

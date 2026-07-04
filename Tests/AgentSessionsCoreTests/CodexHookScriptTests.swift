@@ -69,7 +69,7 @@ final class CodexHookScriptTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("scripts/agent-sessions-codex-hook.sh")
+            .appendingPathComponent("Sources/AgentSessions/Resources/hooks/agent-sessions-codex-hook.sh")
         let configURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("config.toml")

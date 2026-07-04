@@ -11,6 +11,10 @@ import SwiftUI
 struct AgentSessionsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        LoginItemCommandLine.handleAndExitIfNeeded()
+    }
+
     var body: some Scene {
         Settings {
             SettingsView()
@@ -2003,6 +2007,7 @@ private struct SettingsView: View {
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
     case general
+    case hooks
     case dropdownMenu
     case popup
     case menuBar
@@ -2013,6 +2018,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general:
             "General"
+        case .hooks:
+            "Hooks"
         case .dropdownMenu:
             "Dropdown Menu"
         case .popup:
@@ -2026,6 +2033,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general:
             "gearshape"
+        case .hooks:
+            "link"
         case .dropdownMenu:
             "list.bullet.rectangle"
         case .popup:
@@ -2039,6 +2048,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general:
             Color(nsColor: .secondaryLabelColor)
+        case .hooks:
+            Color(red: 0xFF / 255, green: 0x9F / 255, blue: 0x0A / 255)
         case .dropdownMenu:
             Theme.accentColor
         case .popup:
@@ -2080,6 +2091,8 @@ private struct SettingsDetailView: View {
         switch section {
         case .general:
             GeneralSettingsView()
+        case .hooks:
+            HooksSettingsView()
         case .dropdownMenu:
             DropdownMenuSettingsView(providerVisibility: providerVisibility)
         case .popup:
@@ -2113,6 +2126,53 @@ private struct SettingsForm<Content: View>: View {
     }
 }
 
+/// Command-line entry points for inspecting and managing the login item
+/// without the UI, e.g. for diagnosing SMAppService failures:
+/// `"Agent Sessions.app/Contents/MacOS/AgentSessions" --login-item-status`
+enum LoginItemCommandLine {
+    static func handleAndExitIfNeeded() {
+        let arguments = Set(CommandLine.arguments.dropFirst())
+        let commands = ["--login-item-status", "--register-login-item", "--unregister-login-item"]
+        guard let command = commands.first(where: { arguments.contains($0) }) else {
+            return
+        }
+
+        let service = SMAppService.mainApp
+        do {
+            switch command {
+            case "--register-login-item":
+                try service.register()
+            case "--unregister-login-item":
+                try service.unregister()
+            default:
+                break
+            }
+            print("login item status: \(description(of: service.status))")
+            exit(0)
+        } catch {
+            let nsError = error as NSError
+            print("login item status: \(description(of: service.status))")
+            print("error: \(nsError.domain) \(nsError.code): \(nsError.localizedDescription)")
+            exit(1)
+        }
+    }
+
+    private static func description(of status: SMAppService.Status) -> String {
+        switch status {
+        case .enabled:
+            "enabled"
+        case .notRegistered:
+            "notRegistered"
+        case .requiresApproval:
+            "requiresApproval"
+        case .notFound:
+            "notFound"
+        @unknown default:
+            "unknown(\(status.rawValue))"
+        }
+    }
+}
+
 @MainActor
 final class LaunchAtLoginStore: ObservableObject {
     static let shared = LaunchAtLoginStore()
@@ -2136,14 +2196,15 @@ final class LaunchAtLoginStore: ObservableObject {
 
         do {
             if enabled {
-                if service.status == .notRegistered {
+                if service.status != .enabled {
                     try service.register()
                 }
             } else if service.status == .enabled || service.status == .requiresApproval {
                 try service.unregister()
             }
         } catch {
-            errorText = error.localizedDescription
+            let nsError = error as NSError
+            errorText = nsError.localizedFailureReason ?? nsError.localizedDescription
         }
 
         refresh()
@@ -2255,6 +2316,210 @@ private struct GeneralSettingsView: View {
         .onAppear {
             launchAtLogin.refresh()
         }
+    }
+}
+
+@MainActor
+final class AgentHooksSettingsStore: ObservableObject {
+    static let shared = AgentHooksSettingsStore()
+
+    @Published private(set) var codexState: AgentHookState?
+    @Published private(set) var claudeState: AgentHookState?
+    @Published private(set) var codexErrorText: String?
+    @Published private(set) var claudeErrorText: String?
+
+    private let installer: AgentHookInstaller?
+
+    private init() {
+        if let codexScript = Bundle.module.url(forResource: "agent-sessions-codex-hook", withExtension: "sh"),
+           let claudeScript = Bundle.module.url(forResource: "agent-sessions-claude-hook", withExtension: "sh") {
+            installer = AgentHookInstaller(
+                bundledCodexScriptURL: codexScript,
+                bundledClaudeScriptURL: claudeScript
+            )
+        } else {
+            installer = nil
+        }
+        refresh()
+    }
+
+    var isAvailable: Bool {
+        installer != nil
+    }
+
+    var installDirectoryPath: String? {
+        installer?.installDirectory.path
+    }
+
+    func refresh() {
+        codexState = installer?.state(for: .codex)
+        claudeState = installer?.state(for: .claudeCode)
+    }
+
+    func install(_ agent: AgentKind) {
+        perform(agent) { try $0.install(for: agent) }
+    }
+
+    func remove(_ agent: AgentKind) {
+        perform(agent) { try $0.uninstall(for: agent) }
+    }
+
+    func revealInstallDirectory() {
+        guard let installer else {
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([installer.installDirectory])
+    }
+
+    private func perform(_ agent: AgentKind, _ action: (AgentHookInstaller) throws -> Void) {
+        var errorText: String?
+        if let installer {
+            do {
+                try action(installer)
+            } catch {
+                errorText = error.localizedDescription
+            }
+        }
+
+        switch agent {
+        case .codex:
+            codexErrorText = errorText
+        case .claudeCode:
+            claudeErrorText = errorText
+        }
+        refresh()
+    }
+}
+
+private struct HooksSettingsView: View {
+    @ObservedObject private var hooks = AgentHooksSettingsStore.shared
+
+    var body: some View {
+        SettingsForm(title: SettingsSection.hooks.title) {
+            SettingsGroupBox(
+                title: "Codex",
+                subtitle: "Registers hooks in ~/.codex/hooks.json and turns on codex_hooks in ~/.codex/config.toml. Existing files are backed up as <name>.bak.<timestamp> first."
+            ) {
+                AgentHookRow(
+                    agent: .codex,
+                    state: hooks.codexState,
+                    errorText: hooks.codexErrorText,
+                    isAvailable: hooks.isAvailable,
+                    install: { hooks.install(.codex) },
+                    remove: { hooks.remove(.codex) }
+                )
+            }
+
+            SettingsGroupBox(
+                title: "Claude Code",
+                subtitle: "Registers hooks in ~/.claude/settings.json. Existing files are backed up as <name>.bak.<timestamp> first."
+            ) {
+                AgentHookRow(
+                    agent: .claudeCode,
+                    state: hooks.claudeState,
+                    errorText: hooks.claudeErrorText,
+                    isAvailable: hooks.isAvailable,
+                    install: { hooks.install(.claudeCode) },
+                    remove: { hooks.remove(.claudeCode) }
+                )
+            }
+
+            SettingsGroupBox(
+                title: "Hook Scripts",
+                subtitle: "Scripts are copied to Application Support so hooks keep working even if this app moves. Running agent sessions pick up hook changes on their next restart."
+            ) {
+                HStack(alignment: .center, spacing: 16) {
+                    SettingsRowLabel(
+                        title: "Install Location",
+                        subtitle: hooks.installDirectoryPath ?? "Hook scripts are missing from the app bundle."
+                    )
+
+                    Spacer()
+
+                    Button {
+                        hooks.revealInstallDirectory()
+                    } label: {
+                        Label("Show in Finder", systemImage: "folder")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(!hooks.isAvailable)
+                }
+                .padding(.vertical, 5)
+            }
+        }
+        .onAppear {
+            hooks.refresh()
+        }
+    }
+}
+
+private struct AgentHookRow: View {
+    let agent: AgentKind
+    let state: AgentHookState?
+    let errorText: String?
+    let isAvailable: Bool
+    let install: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            SettingsRowLabel(
+                title: "\(agent.displayName) Hooks",
+                subtitle: subtitle
+            )
+
+            Spacer()
+
+            if showsRemoveButton {
+                Button(role: .destructive, action: remove) {
+                    Text("Remove")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .help("Remove Agent Sessions hooks from the \(agent.displayName) configuration")
+            }
+
+            if state == .installed {
+                Button("Reinstall", action: install)
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(!isAvailable)
+            } else {
+                Button(installButtonTitle, action: install)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    .disabled(!isAvailable)
+            }
+        }
+        .padding(.vertical, 5)
+    }
+
+    private var subtitle: String {
+        guard isAvailable else {
+            return "Hook scripts are missing from the app bundle."
+        }
+        if let errorText {
+            return errorText
+        }
+        switch state {
+        case .installed:
+            return "Installed. Session events post to 127.0.0.1:7823."
+        case .updateAvailable:
+            return "Installed, but older or modified. Update to match this app."
+        case .broken(let detail):
+            return "Configuration problem: \(detail)"
+        case .notInstalled, nil:
+            return "Not installed. \(agent.displayName) sessions won't appear in Agent Sessions."
+        }
+    }
+
+    private var showsRemoveButton: Bool {
+        state == .installed || state == .updateAvailable
+    }
+
+    private var installButtonTitle: String {
+        state == .updateAvailable ? "Update" : "Install"
     }
 }
 

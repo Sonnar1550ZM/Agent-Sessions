@@ -24,12 +24,14 @@ swift test
 swift run AgentSessions
 ```
 
-To build a menu-bar-only `.app` bundle:
+To build the menu-bar-only `.app` bundle and install it to `/Applications`:
 
 ```bash
 ./scripts/build-app.sh
-open "./Agent Sessions.app"
+open "/Applications/Agent Sessions.app"
 ```
+
+The app is assembled and ad-hoc signed on local disk, then installed to `/Applications` (override with `AGENT_SESSIONS_INSTALL_DIR`). Running it from local disk keeps Launch at Login working even before the Google Drive volume mounts.
 
 ## Event API
 
@@ -60,9 +62,16 @@ Accepted fields:
 
 ## Hooks
 
-Hook scripts live in `scripts/`:
+Hook scripts ship as app resources:
 
-- `scripts/agent-sessions-codex-hook.sh`
-- `scripts/agent-sessions-claude-hook.sh`
+- `Sources/AgentSessions/Resources/hooks/agent-sessions-codex-hook.sh`
+- `Sources/AgentSessions/Resources/hooks/agent-sessions-claude-hook.sh`
 
 They read hook JSON from stdin, post to `127.0.0.1:7823/event`, and always exit `0` so Codex or Claude Code continues normally when Agent Sessions is not running.
+
+Install them either way:
+
+- In-app: Settings > Hooks > Install (per agent).
+- CLI: `./scripts/install-hooks.sh` (add `AGENT_SESSIONS_TRUST_PROJECT=1` to also trust this checkout in Codex).
+
+Both copy the scripts to `~/Library/Application Support/Agent Sessions/hooks/` and register those copies in `~/.codex/hooks.json`, `~/.codex/config.toml` (`codex_hooks = true`), and `~/.claude/settings.json`, backing up each existing file as `<name>.bak.<timestamp>` first.

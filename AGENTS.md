@@ -8,7 +8,7 @@
 
 - このプロジェクトでコード、設定、リソースなどアプリ動作に関わる変更を行った場合は、作業完了前に必ずアプリを再作成し、起動中のアプリを再起動する。
 - `AGENTS.md` のみを変更した場合は、アプリの再作成・再起動は不要。
-- 標準手順は `swift test` を必要に応じて実行し、その後 `./scripts/build-app.sh` で `Agent Sessions.app` を再作成する。
+- 標準手順は `swift test` を必要に応じて実行し、その後 `./scripts/build-app.sh` で `Agent Sessions.app` を再作成する。ビルドしたアプリは `/Applications/Agent Sessions.app` に配置される(checkout 直下には置かない)。
 - この環境では SwiftPM がユーザー領域の ModuleCache に書き込むため、`./scripts/build-app.sh` は最初から承認付きで実行する。サンドボックス内で失敗してから再実行する手順にしない。
-- 再作成後は起動中の `Agent Sessions` を終了し、この checkout 直下の `Agent Sessions.app` を起動し直す。起動後のプロセス確認までは不要。
+- 再作成後は起動中の `Agent Sessions` を終了し、`/Applications/Agent Sessions.app` を起動し直す。起動後のプロセス確認までは不要。
 - 最終報告では、再作成と再起動が完了したか、または不要・実行できなかった理由を明記する。
